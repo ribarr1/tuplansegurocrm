@@ -88,6 +88,18 @@ Con el servidor corriendo (`npm run dev`), entra a [http://localhost:3000/login]
 
 Ver `.env.example`: `BETTER_AUTH_SECRET` (genera el tuyo con `npx @better-auth/cli secret`) y `BETTER_AUTH_URL`.
 
+## Capa de servicios
+
+La lógica de negocio vive en `src/services/*.service.ts`, no directamente en páginas/Route Handlers. Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el flujo completo (UI → autorización → servicio → Prisma).
+
+## Tests
+
+```bash
+npm run test
+```
+
+Corren contra el PostgreSQL local real (igual que las migraciones — sin mocks de Prisma). Requiere que `docker compose up -d` esté corriendo.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
