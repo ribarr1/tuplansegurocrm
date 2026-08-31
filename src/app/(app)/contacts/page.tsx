@@ -41,7 +41,7 @@ export default async function ContactsPage({
     : undefined;
 
   const { items, total, pageSize } = await listPeople(actor, {
-    search: sp.q,
+    search: sp.q || undefined,
     contactStatus: status,
     page,
   });

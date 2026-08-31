@@ -9,13 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CONTACT_STATUS_BADGE_VARIANT, CONTACT_STATUS_LABELS } from "@/lib/labels";
 import { FamilyTab } from "./family-tab";
 import { PoliciesTab } from "./policies-tab";
+import { TasksTab } from "./tasks-tab";
 
 const PROFILE_TABS = [
   { key: "resumen", label: "Resumen", enabled: true },
   { key: "familia", label: "Familia", enabled: true },
   { key: "polizas", label: "Pólizas", enabled: true },
   { key: "salud", label: "Salud", enabled: false },
-  { key: "tareas", label: "Tareas", enabled: false },
+  { key: "tareas", label: "Tareas", enabled: true },
   { key: "comisiones", label: "Comisiones", enabled: false },
   { key: "notas", label: "Notas", enabled: false },
 ] as const;
@@ -104,6 +105,8 @@ export default async function ContactDetailPage({
         <FamilyTab actor={actor} personId={person.id} />
       ) : activeTab === "polizas" ? (
         <PoliciesTab actor={actor} personId={person.id} />
+      ) : activeTab === "tareas" ? (
+        <TasksTab actor={actor} personId={person.id} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           <Card>

@@ -56,7 +56,13 @@ export default async function PoliciesPage({
     : undefined;
 
   const [{ items, total, pageSize }, carriers] = await Promise.all([
-    listPolicies(actor, { search: sp.q, status, policyType, carrierId: sp.carrierId, page }),
+    listPolicies(actor, {
+      search: sp.q || undefined,
+      status,
+      policyType,
+      carrierId: sp.carrierId || undefined,
+      page,
+    }),
     listActiveCarriers(actor),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));

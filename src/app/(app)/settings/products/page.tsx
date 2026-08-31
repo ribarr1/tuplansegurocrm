@@ -44,7 +44,7 @@ export default async function ProductsPage({
   const active = sp.active === "true" || sp.active === "false" ? sp.active : undefined;
 
   const [{ items, total, pageSize }, carriers] = await Promise.all([
-    listProducts(actor, { carrierId: sp.carrierId, policyType, active, page }),
+    listProducts(actor, { carrierId: sp.carrierId || undefined, policyType, active, page }),
     listCarriers(actor, {}),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));

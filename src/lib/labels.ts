@@ -8,6 +8,8 @@ import type {
   PolicyMemberRole,
   BillingFrequency,
   PaymentStatus,
+  TaskStatus,
+  TaskPriority,
 } from "@/generated/prisma/client";
 
 // Solo presentación — los valores de enum en la base de datos no cambian.
@@ -92,4 +94,38 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   CURRENT: "Al día",
   DUE: "Por vencer",
   PAST_DUE: "Vencido",
+};
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  OPEN: "Pendiente",
+  IN_PROGRESS: "En progreso",
+  COMPLETED: "Completada",
+  CANCELLED: "Cancelada",
+};
+
+export const TASK_STATUS_BADGE_VARIANT: Record<
+  TaskStatus,
+  "default" | "secondary" | "outline"
+> = {
+  OPEN: "secondary",
+  IN_PROGRESS: "default",
+  COMPLETED: "outline",
+  CANCELLED: "outline",
+};
+
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+  LOW: "Baja",
+  NORMAL: "Normal",
+  HIGH: "Alta",
+  URGENT: "Urgente",
+};
+
+export const TASK_PRIORITY_BADGE_VARIANT: Record<
+  TaskPriority,
+  "outline" | "secondary" | "default" | "destructive"
+> = {
+  LOW: "outline",
+  NORMAL: "secondary",
+  HIGH: "default",
+  URGENT: "destructive",
 };

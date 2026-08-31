@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { POLICY_TYPE_VALUES } from "@/schemas/policy.schema";
+import { optionalUuidFilter } from "@/schemas/common";
 
 export const productIdSchema = z.uuid("Identificador de producto inválido.");
 
 export const listProductsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  carrierId: z.uuid().optional(),
+  carrierId: optionalUuidFilter(),
   policyType: z.enum(POLICY_TYPE_VALUES).optional(),
   active: z
     .enum(["true", "false"])

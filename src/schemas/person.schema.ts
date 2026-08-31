@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalSearchFilter } from "@/schemas/common";
 
 // Valores reales de ContactStatus (prisma/schema.prisma). Duplicado aquí
 // como literales porque Zod no puede importar un enum de Prisma
@@ -16,7 +17,7 @@ export const personIdSchema = z.uuid();
 export const listPeopleQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  search: z.string().trim().min(1).max(200).optional(),
+  search: optionalSearchFilter(),
   contactStatus: z.enum(CONTACT_STATUS_VALUES).optional(),
 });
 export type ListPeopleQuery = z.infer<typeof listPeopleQuerySchema>;

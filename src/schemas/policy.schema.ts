@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalSearchFilter, optionalUuidFilter } from "@/schemas/common";
 
 // Valores reales de los enums de Policy (prisma/schema.prisma), duplicados
 // aquí como literales por la misma razón que en person.schema.ts /
@@ -55,10 +56,10 @@ const coveredMemberSchema = z.object({
 export const listPoliciesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  search: z.string().trim().min(1).max(200).optional(),
+  search: optionalSearchFilter(),
   status: z.enum(POLICY_STATUS_VALUES).optional(),
   policyType: z.enum(POLICY_TYPE_VALUES).optional(),
-  carrierId: z.uuid().optional(),
+  carrierId: optionalUuidFilter(),
 });
 export type ListPoliciesQuery = z.infer<typeof listPoliciesQuerySchema>;
 
@@ -120,6 +121,6 @@ export type UpdatePolicyInput = z.infer<typeof updatePolicySchema>;
 
 export const listActiveProductsQuerySchema = z.object({
   policyType: z.enum(POLICY_TYPE_VALUES).optional(),
-  carrierId: z.uuid().optional(),
+  carrierId: optionalUuidFilter(),
 });
 export type ListActiveProductsQuery = z.infer<typeof listActiveProductsQuerySchema>;

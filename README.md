@@ -112,8 +112,24 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/settings` | Configuración: acceso a Compañías y Productos |
 | `/settings/carriers` | Lista de compañías; crear/editar/activar-desactivar (solo ADMIN) |
 | `/settings/products` | Lista de productos: filtro por compañía/tipo/estado; crear/editar/activar-desactivar (solo ADMIN) |
+| `/contacts/[id]?tab=tareas` | Tab "Tareas": tareas de la persona |
+| `/tasks` | Lista de tareas: vistas rápidas (Hoy, Vencidas, Pendientes, Completadas) + filtros |
+| `/tasks/new?personId=<id>` / `?policyId=<id>` | Nueva tarea (contexto de contacto/póliza preseleccionado) |
+| `/tasks/[id]` | Detalle de tarea: completar, cancelar, editar |
+| `/tasks/[id]/edit` | Editar tarea (reabrir una tarea completada/cancelada requiere ADMIN) |
 
-Tareas, Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos, pólizas, compañías ni productos (no hay borrado físico en el CRM — todo se retira con un estado `isActive`/`inactivo`).
+Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos, pólizas, compañías, productos ni tareas (no hay borrado físico en el CRM — las tareas se cierran con estado `COMPLETED`/`CANCELLED`, el resto se retira con `isActive`/`inactivo`).
+
+### Tareas / Seguimiento
+
+`Task` es la base operativa del CRM ("¿qué tengo que hacer hoy?"). Puede vincularse a un `Person`, a una `Policy`, a ambas, o a ninguna (tarea general/administrativa).
+
+- **"Vencida" no es un estado guardado** — se deriva de `dueAt` en el pasado + estado todavía activo (`OPEN`/`IN_PROGRESS`). Una tarea completada o cancelada nunca aparece como vencida, aunque su fecha ya haya pasado.
+- **Responsable (`assignedToId`)**: un AGENT siempre queda asignado a sí mismo al crear una tarea y nunca puede reasignarla — ADMIN y ASSISTANT pueden asignar a cualquier agente activo o dejarla sin asignar.
+- **Reabrir una tarea completada o cancelada requiere ADMIN.**
+- La fecha/hora de vencimiento se interpreta en hora local (sin selector de zona horaria — el CRM asume una sola zona horaria para toda la operación).
+
+Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ### Familia / Hogares
 

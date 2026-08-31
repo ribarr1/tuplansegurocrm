@@ -93,7 +93,7 @@ export default async function NewPolicyPage({
         <HolderPolicyForm
           holderId={sp.holderId}
           policyType={policyType}
-          carrierId={sp.carrierId}
+          carrierId={sp.carrierId || undefined}
           carriers={carriers}
         />
       )}

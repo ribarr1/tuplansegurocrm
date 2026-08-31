@@ -35,10 +35,17 @@ describe("users.service.listActiveAgents", () => {
     expect(result.every((a) => a.id !== undefined)).toBe(true);
   });
 
-  it("AGENT/ASSISTANT no pueden consultar la lista de agentes", async () => {
+  it("AGENT no puede consultar la lista de agentes", async () => {
     const agent = await makeActor("AGENT", "agent-forbidden");
-    const assistant = await makeActor("ASSISTANT", "assistant-forbidden");
     await expect(listActiveAgents(agent)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(listActiveAgents(assistant)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  // ASSISTANT sí puede consultarla desde la Fase 014: necesita poder
+  // asignar tareas a agentes (ver tasks.service.ts / docs/DECISIONS.md).
+  it("ASSISTANT puede consultar la lista de agentes", async () => {
+    const assistant = await makeActor("ASSISTANT", "assistant-allowed");
+    const activeAgent = await makeActor("AGENT", "agent-active-2");
+    const result = await listActiveAgents(assistant);
+    expect(result.map((a) => a.id)).toContain(activeAgent.id);
   });
 });
