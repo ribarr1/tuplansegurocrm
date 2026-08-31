@@ -122,8 +122,11 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/tasks/[id]` | Detalle de tarea: completar, cancelar, editar |
 | `/tasks/[id]/edit` | Editar tarea (reabrir una tarea completada/cancelada requiere ADMIN) |
 | `/birthdays` | Cumpleaños: vistas rápidas (Hoy, Este mes, Próximos, Todos), marcar enviada/omitida |
+| `/commissions` | Lista de comisiones esperadas: búsqueda, filtro por período/agente/compañía/estado, paginación (ASSISTANT: sin acceso) |
+| `/commissions/new?policyId=<id>` | Nueva comisión esperada (solo ADMIN, desde el detalle de una póliza) |
+| `/commissions/[id]` | Detalle de comisión: montos, movimientos, editar/registrar pago/cancelar (solo ADMIN); AGENT ve la misma información en solo lectura |
 
-Comisiones aparece en la navegación pero deshabilitada — no tiene módulo todavía. No existe eliminación de contactos, pólizas, compañías, productos ni tareas (no hay borrado físico en el CRM — las tareas se cierran con estado `COMPLETED`/`CANCELLED`, el resto se retira con `isActive`/`inactivo`). La única excepción es "Restablecer felicitación" (solo ADMIN), que sí borra el registro anual de `BirthdayGreeting` — es un tracking, no una entidad de negocio con historial (ver docs/DECISIONS.md).
+No existe eliminación de contactos, pólizas, compañías, productos ni tareas (no hay borrado físico en el CRM — las tareas se cierran con estado `COMPLETED`/`CANCELLED`, el resto se retira con `isActive`/`inactivo`). La única excepción es "Restablecer felicitación" (solo ADMIN), que sí borra el registro anual de `BirthdayGreeting` — es un tracking, no una entidad de negocio con historial (ver docs/DECISIONS.md).
 
 ### Tareas / Seguimiento
 
@@ -186,6 +189,20 @@ Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáti
 - Marketplace (Application ID, estado de 2 letras), nombre del plan (snapshot histórico, editable pero no se resincroniza si el producto cambia de nombre después), financiero de Marketplace (crédito fiscal, ingreso utilizado) y cost sharing (deducibles y out-of-pocket individual/familiar).
 - **`incomeUsed` y `taxCreditAmount` son información financiera personal sensible.** ASSISTANT nunca los ve ni puede modificarlos — el servidor los omite de la respuesta y rechaza cualquier intento de escritura, no es solo un campo oculto en el formulario. Ver [docs/SECURITY.md](docs/SECURITY.md).
 - Nunca aparece en listados generales de pólizas — solo se consulta explícitamente desde el detalle de una póliza de Salud.
+
+### Comisiones
+
+`CommissionExpectation` (cuánto se espera recibir por una póliza en un período/mes) y `CommissionPayment` (pagos, chargebacks y ajustes reales) son entidades distintas — el total recibido y la diferencia **nunca se almacenan**, siempre se calculan a partir de `SUM(CommissionPayment.amount)`.
+
+- **Período es siempre el primer día del mes** (`2026-08-01` = agosto 2026); la UI trabaja con un selector de mes/año, nunca una fecha arbitraria.
+- **Convención de signo**: al registrar un pago, el usuario escribe montos "amigables" (positivos). Un `Pago` se guarda positivo, un `Chargeback` se guarda automáticamente negativo (el servidor invierte el signo), y solo un `Ajuste` acepta signo explícito (positivo o negativo), pero nunca 0.
+- **Estado mostrado es siempre derivado, nunca guardado**: Pendiente / Parcial / Pagada / Sobrepagada / Saldo negativo (según la relación entre lo esperado y lo recibido), además de Cancelada y dos casos especiales cuando lo esperado es $0.
+- **Nunca se borra ni se reescribe un pago ya registrado.** Cualquier corrección se hace con un `Ajuste` nuevo, preservando el historial completo de movimientos.
+- **Cancelar una comisión esperada no la borra** — solo bloquea nuevos movimientos; los ya registrados siguen visibles.
+- **ASSISTANT no tiene ningún acceso a este módulo** (ni en el menú, ni navegando directamente a `/commissions` — recibe un 403). AGENT ve en solo lectura las comisiones de pólizas a las que ya tiene acceso. Solo ADMIN crea/edita/cancela expectativas y registra movimientos. Ver [docs/SECURITY.md](docs/SECURITY.md).
+- Nunca aparece en Contactos, Hogares, Tareas, Cumpleaños ni el listado general de Pólizas — solo en `/commissions`, el detalle de una comisión, o la sección "Comisiones" (oculta para ASSISTANT) del detalle de una póliza.
+
+Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
 
 UI construida con [shadcn/ui](https://ui.shadcn.com) (preset `base-nova`, sobre [Base UI](https://base-ui.com), no Radix — los componentes que envuelven un `<Link>` u otro elemento no-botón usan `render={<Link ... />}` + `nativeButton={false}`, no `asChild`).
 

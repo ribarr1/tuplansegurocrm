@@ -19,7 +19,7 @@ export function Header({ name, role }: { name: string; role: UserRole }) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4">
       <div className="flex items-center gap-2">
-        <MobileNav />
+        <MobileNav role={role} />
         <h1 className="text-sm font-medium">{pageTitle(pathname)}</h1>
       </div>
       <UserMenu name={name} role={role} />

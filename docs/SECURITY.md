@@ -23,11 +23,11 @@ Notas de seguridad específicas del proyecto. No es una política general — so
 - **Sin endpoints de prueba dejados en el código.** `/api/admin-check`, creado exclusivamente para verificar `requireRole()` en la Fase 007, se eliminó al iniciar la Fase 008 — no debe quedar como precedente dejar rutas de verificación accesibles.
 - **`User.isActive = false` bloquea acceso de inmediato en la siguiente petición protegida**, aunque la cookie de sesión siga siendo técnicamente válida — verificado en pruebas (ver `docs/DECISIONS.md`). No hay revocación instantánea vía WebSocket (no necesaria para V1); el usuario pierde acceso en cuanto hace la siguiente petición a una ruta protegida, típicamente segundos después de la desactivación, no al expirar la sesión.
 - **El Proxy (`src/proxy.ts`) hace solo una verificación optimista** (existencia de cookie, sin tocar la base de datos) para redirigir rápido a `/login` — la verificación real (sesión válida + `isActive`) ocurre siempre en `requireUser()`/`requireRole()` dentro de la página o Route Handler. Nunca depender solo del Proxy para proteger datos sensibles.
-- **Matriz de roles inicial:** `ADMIN` (acceso total), `AGENT` y `ASSISTANT` (clientes, hogares, pólizas, tareas, cumpleaños; acceso financiero/salud a definir por regla específica cuando se construyan esos módulos). Reglas granulares por módulo se implementan cuando cada módulo se construya, no de forma anticipada.
+- **Matriz de roles inicial:** `ADMIN` (acceso total), `AGENT` y `ASSISTANT` (clientes, hogares, pólizas, tareas, cumpleaños; acceso financiero/salud a definir por regla específica cuando se construyan esos módulos). Reglas granulares por módulo se implementan cuando cada módulo se construya, no de forma anticipada. **Excepción explícita desde Fase 016:** Comisiones es el único módulo donde ASSISTANT no tiene ningún acceso (ni lectura ni escritura) — ver sección "Comisiones — Fase 016" más abajo.
 
 ## Información médica y financiera — acceso futuro
 
-`PersonProvider`, `PersonMedication`, `CommissionExpectation`, `CommissionPayment` requieren autorización server-side cuando sus módulos se construyan — nunca deben quedar accesibles solo porque alguien conozca la URL. Con Auth ya implementado (`requireUser()`/`requireRole()` disponibles), cada endpoint/Server Action de esos módulos debe usarlos explícitamente.
+`PersonProvider`, `PersonMedication` requieren autorización server-side cuando sus módulos se construyan — nunca deben quedar accesibles solo porque alguien conozca la URL. Con Auth ya implementado (`requireUser()`/`requireRole()` disponibles), cada endpoint/Server Action de esos módulos debe usarlos explícitamente. `CommissionExpectation`/`CommissionPayment` ya se implementaron en Fase 016 — ver esa sección para las reglas reales.
 
 ## `HealthPolicyDetail` — Fase 013
 
@@ -56,6 +56,18 @@ Reglas específicas para `PersonProvider`/`PersonMedication` (información médi
 
 - El CRM nunca almacena contraseñas de portales de aseguradoras, credenciales de Marketplace, número completo de tarjeta, CVV, ni cuentas bancarias completas. Ver [DECISIONS.md](./DECISIONS.md) para el detalle por entidad.
 - `User` (usuario interno) ya tiene autenticación (Better Auth); ver sección "Autenticación" arriba para el detalle.
+
+## Comisiones — Fase 016
+
+Clasificación: **FINANCIERO / RESTRINGIDO**. `CommissionExpectation` (monto esperado por póliza/período) y `CommissionPayment` (pagos, chargebacks y ajustes reales de carriers) son la información financiera más sensible del CRM hasta ahora — no son datos del cliente, son ingresos reales/esperados de la agencia.
+
+- **ASSISTANT no tiene ningún acceso a este módulo — ni lectura ni escritura, ni siquiera para pólizas donde sí tiene acceso administrativo en el resto de la aplicación.** `commissions.service.ts` lanza `FORBIDDEN` para ASSISTANT al inicio de cada función exportada (`listCommissionExpectations`, `getCommissionExpectationById`, `getCommissionsForPolicy`, `createCommissionExpectation`, `updateCommissionExpectation`, `cancelCommissionExpectation`, `addCommissionPayment`) — es la autoridad real, no una conveniencia de UI.
+- **La UI refuerza, pero no reemplaza, esa autorización:** el ítem "Comisiones" del menú se omite por completo para ASSISTANT (`nav-content.tsx`), la sección "Comisiones" del detalle de Póliza no se renderiza para ASSISTANT (ni siquiera se llama al servicio), y `/commissions`/`/commissions/[id]` invocan `forbidden()` (`next/navigation`) para ASSISTANT — un **403 real**, no un redirect silencioso a `/dashboard`. Se habilitó `experimental.authInterrupts` en `next.config.ts` específicamente para esto (ver `docs/DECISIONS.md`).
+- **AGENT tiene acceso de solo lectura, acotado a las pólizas donde ya tendría acceso operativo** (misma regla que `canAccessPolicy` de `Policy`/`Task`). Nunca puede crear expectativas, editarlas, cancelarlas, ni registrar pagos/chargebacks/ajustes — la UI oculta esos controles para AGENT, y el servicio los rechaza (`FORBIDDEN`) igualmente si se invocaran directamente.
+- **Solo ADMIN muta este módulo.** Crear, editar, cancelar expectativas y registrar cualquier movimiento (`PAYMENT`/`CHARGEBACK`/`ADJUSTMENT`) requiere `actor.role === "ADMIN"`, verificado dentro del servicio antes de tocar Prisma.
+- **Minimización de datos:** `getPolicyById`/`listPolicies` nunca incluyen `CommissionExpectation` en su `select` — se confirmó explícitamente en esta fase. Los montos de comisión solo se obtienen vía `getCommissionsForPolicy`/`listCommissionExpectations`/`getCommissionExpectationById`, llamados únicamente desde el módulo de Comisiones y la sección "Comisiones" (ya gateada por rol) del detalle de Póliza. Nunca aparecen en Contactos, Hogares, Tareas, Cumpleaños ni el listado general de Pólizas.
+- **`expectedAmount`, montos de pagos, chargebacks y cualquier agregado financiero nunca deben registrarse en logs normales de aplicación.** Si un log necesita referenciar un movimiento o una expectativa, debe usar su `id`, nunca los montos.
+- **Sin borrado de `CommissionPayment` en ningún rol, incluido ADMIN.** No existe una función de servicio para borrar o reescribir el monto/tipo de un pago ya creado — cualquier corrección exige un `ADJUSTMENT` nuevo, preservando el historial completo de movimientos como registro de auditoría implícito.
 
 ## Cumpleaños (Fase 015) — acceso más estricto que la vista general de Person
 

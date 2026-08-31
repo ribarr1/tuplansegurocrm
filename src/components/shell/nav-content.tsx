@@ -4,14 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS, SETTINGS_NAV_ITEM } from "@/components/shell/nav-items";
+import type { UserRole } from "@/generated/prisma/client";
 
-export function NavContent({ onNavigate }: { onNavigate?: () => void }) {
+// Comisiones es FINANCIERO/RESTRINGIDO — ASSISTANT no tiene acceso al
+// módulo (ver docs/DECISIONS.md, Fase 016), así que tampoco debe verlo
+// en el menú. No basta con deshabilitarlo: se omite por completo.
+export function NavContent({ role, onNavigate }: { role: UserRole; onNavigate?: () => void }) {
   const pathname = usePathname();
+  const items = NAV_ITEMS.filter((item) => !(role === "ASSISTANT" && item.href === "/commissions"));
 
   return (
     <div className="flex h-full flex-col justify-between">
       <nav className="flex flex-col gap-1 p-3">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const isActive = pathname.startsWith(item.href);
           const Icon = item.icon;
 

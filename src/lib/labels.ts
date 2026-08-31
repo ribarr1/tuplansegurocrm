@@ -12,7 +12,23 @@ import type {
   TaskPriority,
   BirthdayGreetingStatus,
   BirthdayGreetingChannel,
+  CommissionExpectationStatus,
+  CommissionPaymentType,
 } from "@/generated/prisma/client";
+
+// Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
+// (commissions.service.ts) — ese módulo es "server-only" y labels.ts se
+// importa también desde componentes cliente, así que no puede
+// depender de él directamente.
+type CommissionDerivedStatus =
+  | "CANCELLED"
+  | "ZERO"
+  | "NO_EXPECTATION"
+  | "NEGATIVE_BALANCE"
+  | "PENDING"
+  | "PARTIAL"
+  | "PAID"
+  | "OVERPAID";
 
 // Solo presentación — los valores de enum en la base de datos no cambian.
 export const CONTACT_STATUS_LABELS: Record<ContactStatus, string> = {
@@ -152,4 +168,42 @@ export const BIRTHDAY_GREETING_CHANNEL_LABELS: Record<BirthdayGreetingChannel, s
   SMS: "SMS",
   EMAIL: "Email",
   OTHER: "Otro",
+};
+
+export const COMMISSION_EXPECTATION_STATUS_LABELS: Record<CommissionExpectationStatus, string> = {
+  ACTIVE: "Activa",
+  CANCELLED: "Cancelada",
+};
+
+export const COMMISSION_PAYMENT_TYPE_LABELS: Record<CommissionPaymentType, string> = {
+  PAYMENT: "Pago",
+  CHARGEBACK: "Chargeback",
+  ADJUSTMENT: "Ajuste",
+};
+
+// PENDING/PARTIAL/PAID/OVERPAID/etc. son estados DERIVADOS (nunca se
+// guardan) — ver computeCommissionStatus en commissions.service.ts.
+export const COMMISSION_DERIVED_STATUS_LABELS: Record<CommissionDerivedStatus, string> = {
+  CANCELLED: "Cancelada",
+  ZERO: "Sin monto esperado",
+  NO_EXPECTATION: "Movimiento sin expectativa",
+  NEGATIVE_BALANCE: "Saldo negativo",
+  PENDING: "Pendiente",
+  PARTIAL: "Parcial",
+  PAID: "Pagada",
+  OVERPAID: "Sobrepagada",
+};
+
+export const COMMISSION_DERIVED_STATUS_BADGE_VARIANT: Record<
+  CommissionDerivedStatus,
+  "default" | "secondary" | "outline" | "destructive"
+> = {
+  CANCELLED: "outline",
+  ZERO: "outline",
+  NO_EXPECTATION: "destructive",
+  NEGATIVE_BALANCE: "destructive",
+  PENDING: "secondary",
+  PARTIAL: "secondary",
+  PAID: "default",
+  OVERPAID: "destructive",
 };
