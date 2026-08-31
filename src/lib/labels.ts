@@ -1,4 +1,14 @@
-import type { ContactStatus, HouseholdMemberRole, UserRole } from "@/generated/prisma/client";
+import type {
+  ContactStatus,
+  HouseholdMemberRole,
+  UserRole,
+  PolicyType,
+  PolicyStatus,
+  PolicyOperationType,
+  PolicyMemberRole,
+  BillingFrequency,
+  PaymentStatus,
+} from "@/generated/prisma/client";
 
 // Solo presentación — los valores de enum en la base de datos no cambian.
 export const CONTACT_STATUS_LABELS: Record<ContactStatus, string> = {
@@ -30,4 +40,56 @@ export const HOUSEHOLD_MEMBER_ROLE_LABELS: Record<HouseholdMemberRole, string> =
   CHILD: "Hijo/a",
   DEPENDENT: "Dependiente",
   OTHER: "Otro",
+};
+
+export const POLICY_TYPE_LABELS: Record<PolicyType, string> = {
+  HEALTH: "Salud",
+  LIFE: "Vida",
+  SUPPLEMENTAL: "Complementario",
+  DENTAL: "Dental",
+  FINAL_EXPENSE: "Gastos finales",
+};
+
+export const POLICY_STATUS_LABELS: Record<PolicyStatus, string> = {
+  PENDING: "Pendiente",
+  ACTIVE: "Activa",
+  CANCELLED: "Cancelada",
+  EXPIRED: "Expirada",
+};
+
+export const POLICY_STATUS_BADGE_VARIANT: Record<
+  PolicyStatus,
+  "default" | "secondary" | "outline"
+> = {
+  PENDING: "secondary",
+  ACTIVE: "default",
+  CANCELLED: "outline",
+  EXPIRED: "outline",
+};
+
+export const POLICY_OPERATION_TYPE_LABELS: Record<PolicyOperationType, string> = {
+  NEW_ENROLLMENT: "Nueva inscripción",
+  RENEWAL: "Renovación",
+  PLAN_CHANGE: "Cambio de plan",
+};
+
+export const POLICY_MEMBER_ROLE_LABELS: Record<PolicyMemberRole, string> = {
+  PRIMARY: "Titular cubierto",
+  SPOUSE: "Cónyuge",
+  DEPENDENT: "Dependiente",
+  OTHER: "Otro",
+};
+
+export const BILLING_FREQUENCY_LABELS: Record<BillingFrequency, string> = {
+  MONTHLY: "Mensual",
+  QUARTERLY: "Trimestral",
+  SEMIANNUAL: "Semestral",
+  ANNUAL: "Anual",
+  OTHER: "Otra",
+};
+
+export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  CURRENT: "Al día",
+  DUE: "Por vencer",
+  PAST_DUE: "Vencido",
 };

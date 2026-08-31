@@ -161,15 +161,19 @@ describe("households.service", () => {
       await createHouseholdWithInitialMember(admin, { personId: head.id, role: "HEAD" })
     );
 
-    const beforeCount = await prisma.person.count();
+    const uniqueLastName = `Hijo${Date.now()}${Math.random().toString(36).slice(2)}`;
     const updated = await createPersonAndAddToHousehold(admin, household.id, {
       firstName: "Nuevo",
-      lastName: `Hijo${Date.now()}`,
+      lastName: uniqueLastName,
       role: "CHILD",
     });
-    const afterCount = await prisma.person.count();
 
-    expect(afterCount).toBe(beforeCount + 1);
+    // Se verifica de forma acotada (por lastName único de este test) en
+    // vez de un conteo global de la tabla — un conteo global es
+    // inestable cuando otros archivos de test crean Person en paralelo
+    // (Vitest corre archivos de test concurrentemente).
+    const matchingPeople = await prisma.person.count({ where: { lastName: uniqueLastName } });
+    expect(matchingPeople).toBe(1);
     expect(updated.members).toHaveLength(2);
     const newMember = updated.members.find((m) => m.person.firstName === "Nuevo");
     expect(newMember?.role).toBe("CHILD");
@@ -187,18 +191,21 @@ describe("households.service", () => {
   // siquiera intentar la transacción.
   it("I) si el hogar no existe, no queda una Person creada a medias", async () => {
     const fakeHouseholdId = "00000000-0000-0000-0000-000000000000";
-    const beforeCount = await prisma.person.count();
+    // lastName único de este test: evita depender de un conteo global de
+    // la tabla, inestable cuando otros archivos de test crean Person en
+    // paralelo (Vitest corre archivos de test concurrentemente).
+    const uniqueLastName = `Huerfano${Date.now()}${Math.random().toString(36).slice(2)}`;
 
     await expect(
       createPersonAndAddToHousehold(admin, fakeHouseholdId, {
         firstName: "Huerfano",
-        lastName: "Test",
+        lastName: uniqueLastName,
         role: "CHILD",
       })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
 
-    const afterCount = await prisma.person.count();
-    expect(afterCount).toBe(beforeCount);
+    const afterCount = await prisma.person.count({ where: { lastName: uniqueLastName } });
+    expect(afterCount).toBe(0);
   });
 
   it("J) AGENT permitido cuando tiene acceso a un miembro del hogar (propio o sin asignar)", async () => {

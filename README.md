@@ -103,8 +103,13 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/contacts/[id]` | Detalle de contacto (datos personales + resumen de pólizas/tareas/notas) |
 | `/contacts/[id]/edit` | Editar contacto (sujeto a la política de permisos por rol) |
 | `/contacts/[id]?tab=familia` | Tab "Familia": hogares de la persona, agregar/quitar miembros, cambiar rol |
+| `/contacts/[id]?tab=polizas` | Tab "Pólizas": pólizas donde la persona es titular y/o miembro cubierto |
+| `/policies` | Lista de pólizas: búsqueda, filtro por estado/tipo/compañía, paginación |
+| `/policies/new?holderId=<id>` | Nueva póliza (titular preseleccionado, cambiable) |
+| `/policies/[id]` | Detalle de póliza: resumen, fechas/pago, personas cubiertas |
+| `/policies/[id]/edit` | Editar póliza (campos administrativos; producto solo si está Pendiente) |
 
-Pólizas, Tareas, Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos (no hay borrado físico en el CRM).
+Tareas, Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos ni de pólizas (no hay borrado físico en el CRM).
 
 ### Familia / Hogares
 
@@ -116,6 +121,24 @@ Una `Person` puede pertenecer a cero, uno o varios hogares (`Household`) — la 
 - Quitar a alguien del hogar — esto borra solo la membresía, **nunca** el contacto.
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y [docs/DECISIONS.md](docs/DECISIONS.md).
+
+### Pólizas
+
+Núcleo `Policy` + `PolicyMember` sobre el catálogo `Carrier`/`Product` ya existente. Ideas clave:
+
+- **Titular (`holderId`) y miembro cubierto (`PolicyMember`) son conceptos distintos.** El titular no está cubierto automáticamente — el formulario pregunta explícitamente "¿El titular está cubierto?"; solo si la respuesta es sí se crea su `PolicyMember` con `role = PRIMARY`.
+- **`Policy` nunca guarda `carrierId` ni `policyType` propios** — siempre se derivan de `Policy → Product → Carrier`.
+- Crear una póliza (titular + miembros cubiertos) es una operación atómica (transacción) — nunca dos pasos separados.
+- Una póliza `ACTIVE` siempre requiere `effectiveDate` (regla de aplicación, no de base de datos).
+- El producto de una póliza solo puede cambiarse mientras está `PENDING`.
+
+Catálogo de desarrollo (Carrier/Product ficticios, para poder probar el flujo sin datos reales):
+
+```bash
+npm run seed:dev
+```
+
+Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáticamente en ningún flujo, y no crea personas/hogares/pólizas — solo el catálogo, con nombres claramente marcados `(Dev Seed)`.
 
 UI construida con [shadcn/ui](https://ui.shadcn.com) (preset `base-nova`, sobre [Base UI](https://base-ui.com), no Radix — los componentes que envuelven un `<Link>` u otro elemento no-botón usan `render={<Link ... />}` + `nativeButton={false}`, no `asChild`).
 

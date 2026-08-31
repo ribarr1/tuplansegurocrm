@@ -1,0 +1,125 @@
+import { z } from "zod";
+
+// Valores reales de los enums de Policy (prisma/schema.prisma), duplicados
+// aquí como literales por la misma razón que en person.schema.ts /
+// household.schema.ts: Zod no puede importar un enum de Prisma
+// directamente en un schema portable a cliente/servidor.
+export const POLICY_TYPE_VALUES = [
+  "HEALTH",
+  "LIFE",
+  "SUPPLEMENTAL",
+  "DENTAL",
+  "FINAL_EXPENSE",
+] as const;
+
+export const POLICY_STATUS_VALUES = ["PENDING", "ACTIVE", "CANCELLED", "EXPIRED"] as const;
+
+export const POLICY_OPERATION_TYPE_VALUES = [
+  "NEW_ENROLLMENT",
+  "RENEWAL",
+  "PLAN_CHANGE",
+] as const;
+
+// PRIMARY se excluye deliberadamente de los roles seleccionables para un
+// "covered member" — PRIMARY está reservado exclusivamente para el
+// titular cuando holderCovered = true (ver policies.service.ts).
+export const POLICY_MEMBER_ROLE_VALUES = ["PRIMARY", "SPOUSE", "DEPENDENT", "OTHER"] as const;
+export const COVERED_MEMBER_ROLE_VALUES = ["SPOUSE", "DEPENDENT", "OTHER"] as const;
+
+export const BILLING_FREQUENCY_VALUES = [
+  "MONTHLY",
+  "QUARTERLY",
+  "SEMIANNUAL",
+  "ANNUAL",
+  "OTHER",
+] as const;
+
+export const PAYMENT_STATUS_VALUES = ["CURRENT", "DUE", "PAST_DUE"] as const;
+
+export const policyIdSchema = z.uuid("Identificador de póliza inválido.");
+
+// Decimal como string validado, nunca number — evita aritmética de punto
+// flotante en un monto financiero. Prisma acepta un string validado
+// directamente para un campo Decimal.
+const decimalAmountSchema = z
+  .string()
+  .trim()
+  .regex(/^\d+(\.\d{1,2})?$/, "Ingresa un monto válido (ej. 125.50).")
+  .refine((v) => Number(v) >= 0, "El monto no puede ser negativo.");
+
+const coveredMemberSchema = z.object({
+  personId: z.uuid("Selecciona una persona válida."),
+  role: z.enum(COVERED_MEMBER_ROLE_VALUES, "Selecciona un rol de cobertura válido."),
+});
+
+export const listPoliciesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().trim().min(1).max(200).optional(),
+  status: z.enum(POLICY_STATUS_VALUES).optional(),
+  policyType: z.enum(POLICY_TYPE_VALUES).optional(),
+  carrierId: z.uuid().optional(),
+});
+export type ListPoliciesQuery = z.infer<typeof listPoliciesQuerySchema>;
+
+export const createPolicySchema = z
+  .object({
+    holderId: z.uuid("Selecciona un titular válido."),
+    productId: z.uuid("Selecciona un producto válido."),
+    holderCovered: z.enum(["true", "false"]).transform((v) => v === "true"),
+    coveredMembers: z.array(coveredMemberSchema).default([]),
+    policyNumber: z.string().trim().min(1).max(100).optional(),
+    status: z.enum(POLICY_STATUS_VALUES).default("PENDING"),
+    effectiveDate: z.coerce.date().optional(),
+    terminationDate: z.coerce.date().optional(),
+    premiumAmount: decimalAmountSchema.optional(),
+    billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
+    nextPaymentDueDate: z.coerce.date().optional(),
+    autopay: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+    needsPaymentAssistance: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
+    operationType: z.enum(POLICY_OPERATION_TYPE_VALUES).default("NEW_ENROLLMENT"),
+    // Solo ADMIN puede enviar un valor distinto de sí mismo — la
+    // política real se resuelve en el servicio, este schema solo valida
+    // forma (uuid si viene).
+    processedById: z.uuid("Selecciona un usuario válido.").optional(),
+  })
+  .refine((data) => data.status !== "ACTIVE" || data.effectiveDate !== undefined, {
+    message: "La fecha efectiva es requerida cuando el estado es Activa.",
+    path: ["effectiveDate"],
+  });
+export type CreatePolicyInput = z.infer<typeof createPolicySchema>;
+
+// Sin holderId/productId/coveredMembers — la edición V1 no toca
+// titular, producto (salvo regla PENDING, resuelta en el servicio) ni
+// miembros cubiertos (ver docs/DECISIONS.md).
+export const updatePolicySchema = z
+  .object({
+    productId: z.uuid("Selecciona un producto válido.").optional(),
+    policyNumber: z.string().trim().min(1).max(100).optional(),
+    status: z.enum(POLICY_STATUS_VALUES).optional(),
+    effectiveDate: z.coerce.date().optional(),
+    terminationDate: z.coerce.date().optional(),
+    premiumAmount: decimalAmountSchema.optional(),
+    billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
+    nextPaymentDueDate: z.coerce.date().optional(),
+    autopay: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
+    needsPaymentAssistance: z
+      .enum(["true", "false"])
+      .transform((v) => v === "true")
+      .optional(),
+    paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
+    operationType: z.enum(POLICY_OPERATION_TYPE_VALUES).optional(),
+    processedById: z.uuid("Selecciona un usuario válido.").optional(),
+  })
+  .partial();
+export type UpdatePolicyInput = z.infer<typeof updatePolicySchema>;
+
+export const listActiveProductsQuerySchema = z.object({
+  policyType: z.enum(POLICY_TYPE_VALUES).optional(),
+  carrierId: z.uuid().optional(),
+});
+export type ListActiveProductsQuery = z.infer<typeof listActiveProductsQuerySchema>;
