@@ -57,7 +57,7 @@ const detailSelect = {
   source: true,
   updatedAt: true,
   _count: {
-    select: { holderPolicies: true, tasks: true, notes: true },
+    select: { holderPolicies: true, tasks: true, notes: true, householdMembers: true },
   },
 } satisfies Prisma.PersonSelect;
 
@@ -98,7 +98,10 @@ function assertCanEdit(
   }
 }
 
-async function resolveAssignedAgentIdForCreate(
+// Exportada para que households.service.ts la reutilice al crear una
+// Person nueva directamente desde el flujo "agregar miembro" de un
+// hogar — misma política de asignación, una sola fuente de verdad.
+export async function resolveAssignedAgentIdForCreate(
   actor: AuthorizedUser,
   requested: string | undefined
 ): Promise<string | null> {

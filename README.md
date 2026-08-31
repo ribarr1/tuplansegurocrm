@@ -102,8 +102,20 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/contacts/new` | Crear contacto |
 | `/contacts/[id]` | Detalle de contacto (datos personales + resumen de pólizas/tareas/notas) |
 | `/contacts/[id]/edit` | Editar contacto (sujeto a la política de permisos por rol) |
+| `/contacts/[id]?tab=familia` | Tab "Familia": hogares de la persona, agregar/quitar miembros, cambiar rol |
 
 Pólizas, Tareas, Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos (no hay borrado físico en el CRM).
+
+### Familia / Hogares
+
+Una `Person` puede pertenecer a cero, uno o varios hogares (`Household`) — la relación es N:M vía `HouseholdMember`, nunca 1:N. Desde el tab "Familia" de un contacto se puede:
+
+- Crear un hogar con esa persona como primer miembro (rol elegido en el momento, no inferido).
+- Agregar un miembro existente (buscador) o crear un contacto nuevo directamente dentro del hogar — ambos casos son operaciones atómicas (transacción), nunca dos pasos separados que puedan dejar datos huérfanos.
+- Cambiar el rol de un miembro (`HEAD`/`SPOUSE`/`CHILD`/`DEPENDENT`/`OTHER`).
+- Quitar a alguien del hogar — esto borra solo la membresía, **nunca** el contacto.
+
+Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y [docs/DECISIONS.md](docs/DECISIONS.md).
 
 UI construida con [shadcn/ui](https://ui.shadcn.com) (preset `base-nova`, sobre [Base UI](https://base-ui.com), no Radix — los componentes que envuelven un `<Link>` u otro elemento no-botón usan `render={<Link ... />}` + `nativeButton={false}`, no `asChild`).
 
