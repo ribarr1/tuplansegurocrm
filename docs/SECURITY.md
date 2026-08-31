@@ -2,15 +2,31 @@
 
 Notas de seguridad específicas del proyecto. No es una política general — solo decisiones concretas que no son obvias a partir del código.
 
-## Información médica operacional (`PersonProvider`, `PersonMedication`)
+## Autenticación
 
-Estas dos tablas contienen información más sensible que el resto del CRM, aunque deliberadamente limitada a datos operativos (proveedores conocidos, medicamentos informados) — el CRM no es un sistema clínico y no almacena diagnósticos ni historial médico (ver [DECISIONS.md](./DECISIONS.md)).
+- **Librería:** [Better Auth](https://www.better-auth.com/), self-hosted, open source (MIT). Elegida sobre Auth.js/NextAuth porque soporta sesiones respaldadas por base de datos junto con el proveedor de email+password — Auth.js solo permite JWT con `CredentialsProvider`, lo cual no permite revocar acceso en tiempo real cuando `User.isActive` cambia. Ver [DECISIONS.md](./DECISIONS.md) para el análisis completo.
+- **Password hashing:** scrypt (implementación interna de Better Auth sobre `node:crypto`, sin dependencias nativas). Nunca criptografía propia. El hash vive en `Account.password` — **nunca** en `User` ni en ningún log.
+- **Longitud mínima de contraseña:** 10 caracteres (`emailAndPassword.minPasswordLength` en `src/lib/auth.ts`), reforzada también en el script de bootstrap.
+- **Sesiones:** cookie `HttpOnly`, `Secure` en producción, `SameSite` por defecto de Better Auth. Nunca tokens de sesión en `localStorage`. Sesiones respaldadas por la tabla `session` (base de datos), no JWT-only.
+- **Sin login social todavía** (Google/Facebook/Microsoft) — solo email + password. El modelo `Account` ya soporta múltiples proveedores si se agrega después, sin nueva migración estructural para eso.
+- **Sin registro público.** No existe endpoint `/signup` ni flujo de alta abierto. El único mecanismo de creación de usuarios es `npm run create-admin` (ver README.md) para el primer ADMIN; altas posteriores serán una función administrativa dentro del CRM (no implementada todavía).
+- **Bootstrap del primer ADMIN:** `scripts/create-admin.ts`. Usa `auth.api.signUpEmail` (la misma lógica de hash/creación que el resto de la app) en vez de reinventar criptografía. Valida email y longitud de password, rechaza duplicados, nunca imprime la contraseña, y no persiste credenciales en ningún archivo — se reciben por variable de entorno de proceso o prompt interactivo con eco oculto.
+- **MFA:** no implementado en esta fase. Better Auth tiene un plugin oficial de TOTP (`better-auth/plugins/two-factor`) — camino claro para agregarlo después sin cambiar de librería.
+- **Recuperación de contraseña por email:** no implementada — no hay proveedor de email configurado todavía. La tabla `verification` ya existe (creada por Better Auth) para cuando se agregue ese flujo, sin necesitar otra migración solo para la tabla.
+- **Rate limiting de login:** habilitado (`rateLimit.enabled: true` en `src/lib/auth.ts`), storage `"memory"` — suficiente para una sola instancia de servidor (desarrollo/V1). **En producción con más de una instancia**, cambiar a `storage: "database"` o `"secondary-storage"` (ej. Redis) para que el límite se comparta entre procesos; con memoria cada instancia cuenta intentos por separado, debilitando la protección.
 
-Mientras no exista autenticación:
+## Autorización
 
-- No hay controles de acceso implementados todavía — esto es un riesgo aceptado temporalmente, propio de esta fase del proyecto (base técnica sin Auth).
+- **Server-side, siempre.** `src/lib/authorization.ts` expone `requireUser()` y `requireRole(...roles)`. Ambas vuelven a consultar `User.role`/`isActive` en Prisma en cada llamada — nunca confían en los datos de sesión cacheados por Better Auth ni en lo que el cliente envíe (`userId`, `role`, etc. nunca se aceptan desde el request).
+- **`User.isActive = false` bloquea acceso de inmediato en la siguiente petición protegida**, aunque la cookie de sesión siga siendo técnicamente válida — verificado en pruebas (ver `docs/DECISIONS.md`). No hay revocación instantánea vía WebSocket (no necesaria para V1); el usuario pierde acceso en cuanto hace la siguiente petición a una ruta protegida, típicamente segundos después de la desactivación, no al expirar la sesión.
+- **El Proxy (`src/proxy.ts`) hace solo una verificación optimista** (existencia de cookie, sin tocar la base de datos) para redirigir rápido a `/login` — la verificación real (sesión válida + `isActive`) ocurre siempre en `requireUser()`/`requireRole()` dentro de la página o Route Handler. Nunca depender solo del Proxy para proteger datos sensibles.
+- **Matriz de roles inicial:** `ADMIN` (acceso total), `AGENT` y `ASSISTANT` (clientes, hogares, pólizas, tareas, cumpleaños; acceso financiero/salud a definir por regla específica cuando se construyan esos módulos). Reglas granulares por módulo se implementan cuando cada módulo se construya, no de forma anticipada.
 
-Cuando se implemente autenticación y roles (`ADMIN`/`AGENT`/`ASSISTANT`), aplicar para `PersonProvider` y `PersonMedication`:
+## Información médica y financiera — acceso futuro
+
+`PersonProvider`, `PersonMedication`, `HealthPolicyDetail`, `CommissionExpectation`, `CommissionPayment` requieren autorización server-side cuando sus módulos se construyan — nunca deben quedar accesibles solo porque alguien conozca la URL. Con Auth ya implementado (`requireUser()`/`requireRole()` disponibles), cada endpoint/Server Action de esos módulos debe usarlos explícitamente.
+
+Reglas específicas para `PersonProvider`/`PersonMedication` (información médica operacional, más sensible que el resto del CRM — el CRM no es un sistema clínico, ver [DECISIONS.md](./DECISIONS.md)):
 
 - **Autorización server-side obligatoria** en cualquier endpoint/acción que lea o escriba estas tablas — nunca confiar solo en ocultar la UI.
 - **No deben aparecer en logs normales de aplicación** (logs de requests, errores genéricos, etc.). Si un log necesita referenciar una de estas filas, usar su `id`, nunca su contenido (`name`, `dosage`, `notes`).
@@ -25,9 +41,18 @@ Cuando se implemente autenticación y roles (`ADMIN`/`AGENT`/`ASSISTANT`), aplic
 ## Credenciales y datos de pago
 
 - El CRM nunca almacena contraseñas de portales de aseguradoras, credenciales de Marketplace, número completo de tarjeta, CVV, ni cuentas bancarias completas. Ver [DECISIONS.md](./DECISIONS.md) para el detalle por entidad.
-- `User` (usuario interno) no tiene campos de autenticación todavía (sin password/sesiones/MFA) — se diseñarán en una migración dedicada.
+- `User` (usuario interno) ya tiene autenticación (Better Auth); ver sección "Autenticación" arriba para el detalle.
 
 ## Variables de entorno y secretos
 
 - `.env` está excluido de Git (`.gitignore`); solo `.env.example` con valores ficticios se versiona.
 - `DATABASE_URL` y credenciales de PostgreSQL viven únicamente en `.env` local, nunca hardcodeadas en `schema.prisma`, código fuente o configuración versionada.
+- `BETTER_AUTH_SECRET` sigue la misma regla: generado localmente (`npx @better-auth/cli secret`), vive solo en `.env`, nunca se reutiliza entre entornos — producción necesita su propio secreto generado por separado.
+
+## Riesgos pendientes antes de producción
+
+- **Rate limiting con storage `"memory"`** no protege contra fuerza bruta distribuida entre múltiples instancias del servidor — cambiar a `"database"`/Redis antes de escalar horizontalmente.
+- **Sin HTTPS forzado todavía** a nivel de aplicación (depende de dónde se despliegue) — `Secure` en cookies solo se activa cuando el entorno es de producción según la detección de Better Auth; confirmar que el proxy/balanceador de producción sirva siempre sobre HTTPS.
+- **Sin MFA** — camino ya evaluado (plugin TOTP de Better Auth), no implementado.
+- **Sin recuperación de contraseña por email** — requiere elegir y configurar un proveedor de email antes de construirla.
+- **Sin auditoría de intentos de login fallidos** más allá de los logs por defecto de Better Auth — considerar un `AuditLog` dedicado (ya identificado como entidad futura) antes de producción.

@@ -56,6 +56,38 @@ Para detener PostgreSQL (conserva los datos):
 docker compose down
 ```
 
+## Autenticación
+
+El login usa email + contraseña (Better Auth), con sesiones respaldadas por base de datos. No hay registro público — el primer usuario ADMIN se crea con un script de bootstrap.
+
+### Crear el primer administrador local
+
+```bash
+npm run create-admin
+```
+
+Pide nombre, correo y contraseña por terminal (contraseña oculta, mínimo 10 caracteres). También puedes pasarlos por variable de entorno de proceso, sin escribirlos en ningún archivo:
+
+```bash
+ADMIN_NAME="Tu Nombre" ADMIN_EMAIL="tu@correo.com" ADMIN_PASSWORD="una-contraseña-segura" npm run create-admin
+```
+
+El script rechaza correos duplicados o inválidos y contraseñas demasiado cortas, y usa la misma lógica de hash que el resto de la aplicación (no reinventa criptografía).
+
+### Iniciar sesión
+
+Con el servidor corriendo (`npm run dev`), entra a [http://localhost:3000/login](http://localhost:3000/login) con el correo/contraseña del administrador creado. Tras iniciar sesión llegas a `/dashboard`, una página mínima que confirma nombre, correo y rol — todavía no es el CRM funcional.
+
+### Cómo funciona la autorización
+
+- **Autenticación** (¿quién eres?): sesión de Better Auth, cookie `HttpOnly`.
+- **Autorización** (¿qué puedes hacer?): server-side, vía `requireUser()`/`requireRole(...)` en [src/lib/authorization.ts](src/lib/authorization.ts). Cada request protegido vuelve a consultar `User.isActive`/`role` en la base de datos — un usuario desactivado pierde acceso en su siguiente petición, aunque su cookie siga siendo válida.
+- Un usuario con `isActive = false` no puede usar el sistema aunque su sesión/password sean válidos.
+
+### Variables de entorno nuevas
+
+Ver `.env.example`: `BETTER_AUTH_SECRET` (genera el tuyo con `npx @better-auth/cli secret`) y `BETTER_AUTH_URL`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

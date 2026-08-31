@@ -43,16 +43,20 @@ enum PolicyType {
   FINAL_EXPENSE
 }
 
-// Usuario/agente interno. Sin credenciales todavía: se agregarán cuando se
-// diseñe autenticación (password, sesiones, MFA).
+// Usuario/agente interno. Identidad de negocio (role, isActive) vive
+// aquí; credenciales (password) y sesiones viven en Account/Session
+// (Better Auth), separadas de este modelo. emailVerified/image son
+// campos técnicos requeridos por Better Auth, sin uso de negocio.
 model User {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  email     String   @unique
-  role      UserRole @default(AGENT)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  role          UserRole @default(AGENT)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   assignedPeople         Person[]                @relation("PersonAssignedAgent")
   processedPolicies      Policy[]                @relation("PolicyProcessedBy")
@@ -60,6 +64,8 @@ model User {
   createdTasks           Task[]                  @relation("TaskCreatedBy")
   createdNotes           Note[]                  @relation("NoteCreatedBy")
   commissionExpectations CommissionExpectation[]
+  sessions               Session[]
+  accounts               Account[]
 
   @@map("users")
 }
@@ -534,4 +540,78 @@ model PersonMedication {
   @@index([personId])
   @@index([personId, isActive])
   @@map("person_medications")
+}
+
+// ---------------------------------------------------------------------------
+// Migración 007 — Auth Foundation
+// ---------------------------------------------------------------------------
+// Tablas técnicas de Better Auth. Deliberadamente separadas del modelo de
+// negocio (User conserva role/isActive como fuente de autorización).
+// Nombres en minúscula singular (user/session/account/verification son la
+// convención de Better Auth) para distinguirlas a simple vista de las
+// tablas de negocio en snake_case plural del resto del esquema.
+
+// Sesión de login activa. Respaldada por base de datos (no JWT-only):
+// permite revocar acceso en tiempo real cuando User.isActive pasa a false,
+// sin esperar a que expire un token firmado.
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String   @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+// Credencial de login (email+password) u otro proveedor futuro. El
+// password hasheado vive aquí, NUNCA en User — separación recomendada
+// por Better Auth. accessToken/refreshToken/idToken/scope quedan sin
+// uso mientras no se agregue login social (fuera de alcance de esta fase).
+model Account {
+  id                    String    @id @default(uuid()) @db.Uuid
+  // Identifica el proveedor de login concreto (ej. "local:credential"
+  // para email+password). Requerido por Better Auth 1.7; distingue
+  // cuentas del mismo providerId emitidas por distintos orígenes.
+  issuer                String
+  accountId             String
+  providerId            String
+  userId                String    @db.Uuid
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+// Tokens de un solo uso (verificación de email, reset de password).
+// No se usa todavía en esta fase (sin proveedor de email configurado),
+// pero la tabla ya existe para cuando se agregue esa funcionalidad sin
+// requerir otra migración.
+model Verification {
+  id         String   @id @default(uuid()) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
 }
