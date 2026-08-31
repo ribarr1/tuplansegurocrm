@@ -54,11 +54,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  assignedPeople    Person[] @relation("PersonAssignedAgent")
-  processedPolicies Policy[] @relation("PolicyProcessedBy")
-  assignedTasks     Task[]   @relation("TaskAssignedTo")
-  createdTasks      Task[]   @relation("TaskCreatedBy")
-  createdNotes      Note[]   @relation("NoteCreatedBy")
+  assignedPeople         Person[]                @relation("PersonAssignedAgent")
+  processedPolicies      Policy[]                @relation("PolicyProcessedBy")
+  assignedTasks          Task[]                  @relation("TaskAssignedTo")
+  createdTasks           Task[]                  @relation("TaskCreatedBy")
+  createdNotes           Note[]                  @relation("NoteCreatedBy")
+  commissionExpectations CommissionExpectation[]
 
   @@map("users")
 }
@@ -223,16 +224,17 @@ model Policy {
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
 
-  holder         Person              @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
-  household      Household?          @relation(fields: [householdId], references: [id], onDelete: SetNull)
-  product        Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
-  processedBy    User?               @relation("PolicyProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
-  previousPolicy Policy?             @relation("PolicyRenewal", fields: [previousPolicyId], references: [id], onDelete: Restrict)
-  renewedInto    Policy?             @relation("PolicyRenewal")
-  members        PolicyMember[]
-  healthDetail   HealthPolicyDetail?
-  tasks          Task[]
-  notes          Note[]
+  holder                 Person                  @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
+  household              Household?              @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  product                Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  processedBy            User?                   @relation("PolicyProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  previousPolicy         Policy?                 @relation("PolicyRenewal", fields: [previousPolicyId], references: [id], onDelete: Restrict)
+  renewedInto            Policy?                 @relation("PolicyRenewal")
+  members                PolicyMember[]
+  healthDetail           HealthPolicyDetail?
+  tasks                  Task[]
+  notes                  Note[]
+  commissionExpectations CommissionExpectation[]
 
   @@index([holderId])
   @@index([productId])
@@ -394,4 +396,68 @@ model BirthdayGreeting {
   @@unique([personId, year])
   @@index([year, status])
   @@map("birthday_greetings")
+}
+
+// ---------------------------------------------------------------------------
+// Migración 004 — Financial
+// ---------------------------------------------------------------------------
+
+enum CommissionExpectationStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum CommissionPaymentType {
+  PAYMENT
+  CHARGEBACK
+  ADJUSTMENT
+}
+
+// Cuánto esperamos recibir por una póliza en un período (mes) determinado.
+// No almacena carrier: se deriva vía policy -> product -> carrier. status
+// es un hecho de negocio propio (¿seguimos esperando este dinero?), no
+// derivado de los pagos — PARTIAL/PAID/UNPAID se calculan siempre a partir
+// de SUM(CommissionPayment.amount) vs expectedAmount, nunca se almacenan.
+model CommissionExpectation {
+  id             String                      @id @default(uuid()) @db.Uuid
+  policyId       String                      @db.Uuid
+  agentId        String?                     @db.Uuid
+  // Primer día del mes de comisión (convención): 2026-08-01 = agosto 2026.
+  period         DateTime                    @db.Date
+  expectedAmount Decimal                     @db.Decimal(12, 2)
+  status         CommissionExpectationStatus @default(ACTIVE)
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+
+  policy   Policy              @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  agent    User?               @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  payments CommissionPayment[]
+
+  @@unique([policyId, period])
+  @@index([period])
+  @@index([agentId, period])
+  @@map("commission_expectations")
+}
+
+// Movimiento real contra una expectativa: pago, chargeback o ajuste.
+// amount puede ser positivo o negativo; la coherencia entre type y el
+// signo de amount se valida en la aplicación, no mediante CHECK en la
+// base de datos. Un chargeback es simplemente un CommissionPayment con
+// amount negativo y type = CHARGEBACK — no existe una tabla separada.
+// Los pagos nunca se editan ni se borran: cada ajuste es una fila nueva.
+model CommissionPayment {
+  id                      String                @id @default(uuid()) @db.Uuid
+  commissionExpectationId String                @db.Uuid
+  amount                  Decimal               @db.Decimal(12, 2)
+  type                    CommissionPaymentType
+  receivedAt              DateTime
+  externalReference       String?
+  notes                   String?
+  createdAt               DateTime              @default(now())
+
+  commissionExpectation CommissionExpectation @relation(fields: [commissionExpectationId], references: [id], onDelete: Restrict)
+
+  @@index([commissionExpectationId])
+  @@index([receivedAt])
+  @@map("commission_payments")
 }

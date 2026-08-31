@@ -107,3 +107,50 @@ Agrega trabajo operativo (tareas, notas, cumpleaños), sin comisiones, datos mé
 ### Fuera de alcance de esta migración
 
 `CommissionExpectation`, `CommissionPayment`, `PersonProvider`, `PersonMedication`, `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, `ActivityLog`, `AuditLog`, autenticación, UI funcional. Ver [DECISIONS.md](./DECISIONS.md).
+
+## Migración 004 — Financial
+
+Agrega el modelo de comisiones: cuánto esperamos recibir por póliza/mes y los movimientos reales contra esa expectativa.
+
+### Tablas
+
+- **`commission_expectations`** — Cuánto se espera recibir por una póliza en un período (mes). No almacena carrier: se deriva vía `policyId → policy.productId → product.carrierId`. `status` (`ACTIVE`/`CANCELLED`) es un hecho de negocio propio — si la agencia sigue esperando ese dinero o no — y **no** intenta representar cuánto se ha cobrado; eso se calcula.
+- **`commission_payments`** — Movimiento real contra una expectativa: pago, chargeback o ajuste. `amount` puede ser positivo o negativo. Un chargeback **es** un `CommissionPayment` con `amount` negativo y `type = CHARGEBACK` — no existe una tabla `Chargeback` separada. Los pagos no se editan ni se borran: cada corrección es una fila nueva, preservando el historial completo de movimientos.
+
+### Enums
+
+- `CommissionExpectationStatus`: ACTIVE, CANCELLED (sin `PARTIAL`/`PAID` — se calculan, ver Cálculos)
+- `CommissionPaymentType`: PAYMENT, CHARGEBACK, ADJUSTMENT
+
+### Convención de `period`
+
+`commission_expectations.period` es `DATE` y **siempre representa el primer día del mes de comisión**: `2026-08-01` = agosto 2026. No se usan columnas `year`/`month` separadas ni un string `"2026-08"`.
+
+### Cálculos (no almacenados)
+
+```
+totalReceived = SUM(CommissionPayment.amount) WHERE commissionExpectationId = X
+difference    = CommissionExpectation.expectedAmount - totalReceived
+
+UNPAID  si totalReceived = 0
+PARTIAL si 0 < totalReceived < expectedAmount
+PAID    si totalReceived >= expectedAmount
+```
+
+Un chargeback posterior puede volver a bajar `totalReceived` por debajo de `expectedAmount` — por eso este estado nunca se almacena, siempre se calcula en el momento de la consulta.
+
+### Constraints e índices
+
+- `commission_expectations(policyId, period)` — UNIQUE (una única expectativa por póliza/mes en V1)
+- `commission_expectations.expectedAmount` — **CHECK `>= 0`** (agregado manualmente al SQL de la migración; Prisma no tiene todavía sintaxis declarativa estable para CHECK en `schema.prisma`, se editó el archivo de migración generado con `--create-only` antes de aplicarlo)
+- `commission_expectations.period`, `commission_expectations(agentId, period)` — índices para reportes mensuales/por agente (CLAUDE.md §14)
+- `commission_payments.commissionExpectationId`, `commission_payments.receivedAt` — índices (FK no se indexa automáticamente en Postgres; `receivedAt` para conciliación por fecha)
+- `commission_payments.externalReference` — sin índice todavía, sin necesidad demostrada
+
+### Dinero
+
+`expectedAmount` y `amount` usan `Decimal(12,2)` (verificado como `numeric(12,2)` en PostgreSQL), nunca `Float`.
+
+### Fuera de alcance de esta migración
+
+`PersonProvider`, `PersonMedication`, `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, `AuditLog`, autenticación, UI funcional, importación automática de archivos de carriers. Ver [DECISIONS.md](./DECISIONS.md).
