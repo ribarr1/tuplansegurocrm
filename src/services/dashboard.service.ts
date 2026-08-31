@@ -5,9 +5,8 @@ import { listTasks, isTaskOverdue } from "@/services/tasks.service";
 import { listPremiumTracking } from "@/services/premiums.service";
 import { listBirthdays } from "@/services/birthdays.service";
 import { listPolicies } from "@/services/policies.service";
-import { listCommissionExpectations } from "@/services/commissions.service";
+import { getCommissionTotalsForPeriod } from "@/services/commissions.service";
 import { TASK_CLOSED_STATUSES } from "@/schemas/task.schema";
-import { Prisma } from "@/generated/prisma/client";
 
 // ---------------------------------------------------------------------------
 // Dashboard — Fase 018
@@ -185,28 +184,15 @@ async function getPoliciesBlock(actor: AuthorizedUser) {
 // "expectedAmount realmente es 0" (ver docs/DECISIONS.md) — nunca se
 // muestra $0 como si fuera un hecho contable confirmado cuando en
 // realidad no hay ningún registro.
+// Delega la agregación completa a commissions.service.ts
+// (getCommissionTotalsForPeriod) — nunca suma en memoria sobre una
+// lista paginada. Ver docs/DECISIONS.md, Fase 019: un total financiero
+// truncado a las primeras 100 expectativas sería simplemente
+// incorrecto, no solo una limitación aceptable como en un listado.
 async function getCommissionsBlock(actor: AuthorizedUser) {
   const { year, month } = getTodayBusinessRange();
   const period = `${year}-${String(month).padStart(2, "0")}`;
-
-  const { items } = await listCommissionExpectations(actor, { period, pageSize: 100 });
-  if (items.length === 0) {
-    return { hasData: false as const, period: new Date(Date.UTC(year, month - 1, 1)) };
-  }
-
-  const expected = items.reduce(
-    (sum, i) => sum.plus(new Prisma.Decimal(i.expectedAmount)),
-    new Prisma.Decimal(0)
-  );
-  const received = items.reduce((sum, i) => sum.plus(i.receivedAmount), new Prisma.Decimal(0));
-
-  return {
-    hasData: true as const,
-    period: new Date(Date.UTC(year, month - 1, 1)),
-    expected,
-    received,
-    difference: expected.minus(received),
-  };
+  return getCommissionTotalsForPeriod(actor, { period });
 }
 
 export async function getDashboard(actor: AuthorizedUser) {

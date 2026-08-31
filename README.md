@@ -235,6 +235,25 @@ Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTU
 
 UI construida con [shadcn/ui](https://ui.shadcn.com) (preset `base-nova`, sobre [Base UI](https://base-ui.com), no Radix — los componentes que envuelven un `<Link>` u otro elemento no-botón usan `render={<Link ... />}` + `nativeButton={false}`, no `asChild`).
 
+### Importación de datos legacy
+
+Pipeline de migración controlada del Excel histórico de TuPlanSeguro USA — no forma parte de la aplicación web, vive en `src/import/` y se ejecuta manualmente:
+
+```bash
+# Dry run (por defecto, nunca escribe nada):
+npm run import:legacy -- --file "C:\ruta\al\archivo.xlsx"
+
+# Aplicar de verdad (requiere ambos flags):
+npm run import:legacy -- --file "C:\ruta\al\archivo.xlsx" --apply --confirm
+```
+
+- El workbook real y el reporte generado **nunca se commitean** (`.gitignore` excluye `*.xlsx`/`*.xls`, `/private-imports/`, `import-report*.json`).
+- Nunca importa SSN, datos bancarios/tarjeta completos, credenciales de aseguradoras, ni ficha médica (diferida a una fase futura explícita).
+- Person nunca se duplica por tener varias pólizas — matching con niveles de confianza (STRONG/MEDIUM/WEAK), nunca fusión automática por coincidencia débil.
+- Sin `legacyImportId` en el schema — la idempotencia se logra re-resolviendo cada entidad contra el estado real de la base de datos en cada `--apply` (correr el import dos veces no duplica nada).
+
+Detalle completo del pipeline, mappings e inventario del workbook: [docs/IMPORTING_LEGACY_DATA.md](docs/IMPORTING_LEGACY_DATA.md).
+
 ## Tests
 
 ```bash

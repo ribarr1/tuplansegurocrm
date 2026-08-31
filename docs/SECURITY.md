@@ -87,6 +87,19 @@ El Dashboard es una vista compuesta, no un módulo con reglas propias — su sup
 - **Los conteos y listas del Dashboard heredan el scoping de AGENT de cada servicio de origen** — un AGENT nunca ve en el Dashboard una tarea, póliza, pago o comisión fuera de su cartera, porque `dashboard.service.ts` pasa el `actor` real a cada llamada (`listTasks(actor, ...)`, `listPremiumTracking(actor, ...)`, etc.) sin construir ningún acceso propio. No existe combinación "conteo global + lista filtrada" en ningún bloque — ambos se calculan con el mismo `actor` scoped.
 - **Minimización de datos**: el DTO del Dashboard nunca incluye `HealthPolicyDetail`, `incomeUsed`, `taxCreditAmount`, `PersonProvider`, `PersonMedication`, notas completas de Task, ni ningún dato de método de pago — verificado explícitamente en tests (caso Y).
 
+## Importación de datos legacy — Fase 019
+
+Ver `docs/IMPORTING_LEGACY_DATA.md` para el detalle completo del pipeline. Resumen de seguridad:
+
+- **El workbook real y el reporte generado nunca deben llegar al repositorio.** `.gitignore` excluye `*.xlsx`/`*.xls` por extensión (no solo por carpeta), `/private-imports/` completo, y `import-report*.json` en cualquier ubicación.
+- **Columnas prohibidas de forma absoluta** (SSN, USCIS#, datos bancarios completos, datos de tarjeta completos) — nunca se leen más allá de "¿tiene valor o no?" (`workbook.ts::cellByHeader` lanza si algo intenta leer su valor). Solo se reporta una cantidad de filas afectadas, nunca cuáles ni sus valores.
+- **La hoja `cuentas aseguradoras` (credenciales de portales de aseguradoras) se excluye completa** — ni una celda de esa hoja se lee más allá de confirmar su existencia.
+- **`fichamedica` queda DEFERRED_SENSITIVE** — se cuenta cuántas filas parecen tener datos médicos, nunca se importa el detalle (medicamentos, PCP, especialistas). Una migración médica separada y explícita queda para una fase futura, fuera de esta.
+- **Nunca se registra en logs/consola/reporte una fila completa, un objeto de persona, ni el valor de una celda sensible.** `ImportIssue.message` se redacta a mano en cada punto de emisión del código — nunca interpola el valor crudo de una celda del Excel.
+- **El reporte JSON (`import-report.json`) solo contiene conteos agregados y códigos de error con `sheet`/`row`** — nunca serializa nombre, email, teléfono, fecha de nacimiento ni ningún valor de columna. Verificado en tests (`import.test.ts`, casos V/W/X/AH).
+- **DRY RUN es el comportamiento por defecto.** Escribir en PostgreSQL requiere `--apply` y `--confirm` simultáneos — ninguno solo es suficiente. `apply.ts` además rechaza escribir si el plan tiene algún error `BLOCKING` (`READY_TO_IMPORT = false`).
+- **El CLI de importación no crea `User`/cuentas de acceso** bajo ninguna circunstancia — nombres de agente sin mapping explícito quedan como `agentId`/`processedById` nulos, nunca inventan un usuario.
+
 ## Cumpleaños (Fase 015) — acceso más estricto que la vista general de Person
 
 `/birthdays` surfacea nombre, teléfono, email, fecha de nacimiento y estado de contacto de forma escaneable en una sola pantalla — más expuesto que navegar `/contacts` uno por uno. Por eso, a diferencia de la política general de `Person` (Fase 008, donde cualquier usuario activo puede ver la lista completa de contactos), `listBirthdays` restringe explícitamente a AGENT a solo los contactos a los que ya tiene acceso operativo (sin asignar o asignados a sí mismo), filtrado server-side en el `where` de Prisma — nunca se trae la lista completa y se oculta después en el cliente. ADMIN y ASSISTANT ven todos.

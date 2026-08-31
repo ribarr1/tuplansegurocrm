@@ -41,3 +41,18 @@ coverage/
 .turbo/
 
 /src/generated/prisma
+
+# Importación de datos legacy (Fase 019) — el workbook real de
+# TuPlanSeguro USA y sus reportes NUNCA deben llegar al repositorio:
+# contienen SSN, datos bancarios/tarjeta y otra información sensible.
+# Ignorado por extensión (no solo por carpeta) para que un XLSX real
+# copiado por error a cualquier ubicación del proyecto nunca se
+# stagee accidentalmente. Los fixtures de test NO se versionan como
+# .xlsx — se generan programáticamente en memoria durante los tests
+# (ver docs/IMPORTING_LEGACY_DATA.md); si alguna vez hiciera falta un
+# fixture binario versionado, usar una excepción explícita
+# (`!ruta/al/fixture.xlsx`) en vez de remover esta regla.
+*.xlsx
+*.xls
+/private-imports/
+import-report*.json

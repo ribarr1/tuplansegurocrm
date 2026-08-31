@@ -10,6 +10,7 @@ import {
   addCommissionPayment,
   computeCommissionStatus,
   sumPayments,
+  getCommissionTotalsForPeriod,
 } from "@/services/commissions.service";
 import { createPolicy, getPolicyById } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
@@ -646,4 +647,40 @@ describe("commissions.service", () => {
     expect(current.derivedStatus).toBe("OVERPAID");
     expect(current.difference.toString()).toBe("-20");
   });
+
+  it("AP) getCommissionTotalsForPeriod suma TODO el período, no solo una página (>100 expectativas)", async () => {
+    const period = nextPeriod();
+    const ROW_COUNT = 105;
+    let expectedTotal = 0;
+    let receivedTotal = 0;
+
+    for (let i = 0; i < ROW_COUNT; i += 1) {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      const exp = trackExpectation(
+        await createCommissionExpectation(admin, {
+          policyId: policy.id,
+          period,
+          expectedAmount: "10.00",
+        })
+      );
+      expectedTotal += 10;
+      if (i % 2 === 0) {
+        await addCommissionPayment(admin, exp.id, {
+          type: "PAYMENT",
+          amount: "4.00",
+          receivedAt: new Date(),
+        });
+        receivedTotal += 4;
+      }
+    }
+
+    const totals = await getCommissionTotalsForPeriod(admin, { period });
+    expect(totals.hasData).toBe(true);
+    if (totals.hasData) {
+      expect(totals.expected.toString()).toBe(String(expectedTotal));
+      expect(totals.received.toString()).toBe(String(receivedTotal));
+      expect(totals.difference.toString()).toBe(String(expectedTotal - receivedTotal));
+    }
+  }, 30000);
 });

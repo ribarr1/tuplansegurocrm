@@ -30,7 +30,7 @@ const signedDecimalSchema = z
 // El <input type="month"> del navegador entrega "2026-08" — se normaliza
 // server-side al primer día de ese mes (convención de CommissionExpectation.period,
 // ver prisma/schema.prisma). Nunca se acepta una fecha arbitraria.
-const periodSchema = z
+export const periodSchema = z
   .string()
   .trim()
   .regex(/^\d{4}-\d{2}$/, "Selecciona un período (mes y año) válido.")
@@ -50,6 +50,12 @@ function nullableAgentId() {
     .pipe(z.union([z.null(), z.uuid("Selecciona un agente válido.")]))
     .optional();
 }
+
+// Usado por getCommissionTotalsForPeriod (commissions.service.ts,
+// Fase 019) — a diferencia de listCommissionExpectationsQuerySchema,
+// period es requerido: un total agregado siempre necesita saber de
+// qué mes, nunca "todos los períodos".
+export const commissionTotalsQuerySchema = z.object({ period: periodSchema });
 
 export const listCommissionExpectationsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

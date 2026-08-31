@@ -7,6 +7,7 @@ import { policyIdSchema } from "@/schemas/policy.schema";
 import {
   commissionExpectationIdSchema,
   listCommissionExpectationsQuerySchema,
+  commissionTotalsQuerySchema,
   createCommissionExpectationSchema,
   updateCommissionExpectationSchema,
   addCommissionPaymentSchema,
@@ -232,6 +233,59 @@ export async function listCommissionExpectations(actor: AuthorizedUser, rawQuery
   ]);
 
   return { items: items.map(attachDerived), total, page, pageSize };
+}
+
+// Total agregado esperado/recibido/diferencia de UN período, para TODO
+// el alcance autorizado del actor — a diferencia de listCommissionExpectations
+// (paginado, pensado para una tabla en pantalla), esta función nunca debe
+// truncar: un total financiero que solo sume la primera página sería
+// simplemente incorrecto si hay más expectativas que pageSize (ver
+// docs/DECISIONS.md, Fase 019 — hardening del Dashboard).
+//
+// Se agrega en la base de datos (Prisma aggregate), nunca cargando cada
+// fila a memoria para sumar con JS — SUM(expectedAmount) y
+// SUM(CommissionPayment.amount) son dos consultas de agregación
+// separadas (la segunda filtrando por la relación commissionExpectation),
+// ambas devuelven Prisma.Decimal, nunca Number.
+export async function getCommissionTotalsForPeriod(actor: AuthorizedUser, rawQuery: unknown) {
+  assertModuleAccess(actor);
+  const { period } = parseOrThrow(commissionTotalsQuerySchema, rawQuery);
+
+  const agentWhere = agentCommissionAccessWhere(actor);
+  const expectationWhere: Prisma.CommissionExpectationWhereInput = agentWhere
+    ? { AND: [{ period }, agentWhere] }
+    : { period };
+
+  const [count, expectedAgg, paymentAgg] = await Promise.all([
+    prisma.commissionExpectation.count({ where: expectationWhere }),
+    prisma.commissionExpectation.aggregate({
+      where: expectationWhere,
+      _sum: { expectedAmount: true },
+    }),
+    prisma.commissionPayment.aggregate({
+      where: { commissionExpectation: expectationWhere },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  // Distingue "sin expectativas registradas este período" de
+  // "expectedAmount realmente es 0" — count() es la única forma
+  // confiable de saberlo, ya que ambos _sum resultarían en 0/null en
+  // cualquier caso cuando no hay filas.
+  if (count === 0) {
+    return { hasData: false as const, period };
+  }
+
+  const expected = new Prisma.Decimal(expectedAgg._sum.expectedAmount ?? 0);
+  const received = new Prisma.Decimal(paymentAgg._sum.amount ?? 0);
+
+  return {
+    hasData: true as const,
+    period,
+    expected,
+    received,
+    difference: expected.minus(received),
+  };
 }
 
 export async function getCommissionExpectationById(actor: AuthorizedUser, rawId: unknown) {
