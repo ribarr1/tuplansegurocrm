@@ -123,11 +123,21 @@ function assertActiveHasEffectiveDate(status: string, effectiveDate: Date | null
 async function assertActiveProduct(productId: string) {
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    select: { id: true, isActive: true },
+    select: { id: true, isActive: true, carrier: { select: { isActive: true } } },
   });
   if (!product) throw new AppError("NOT_FOUND", "Producto no encontrado.");
   if (!product.isActive) {
     throw new AppError("VALIDATION_ERROR", "productId: Este producto no está activo.");
+  }
+  // Un Product activo bajo un Carrier inactivo tampoco es elegible para
+  // una Policy nueva (ver docs/DECISIONS.md, Fase 012) — desactivar una
+  // compañía debe volver ineligibles todos sus productos sin tener que
+  // desactivarlos uno por uno.
+  if (!product.carrier.isActive) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "productId: La compañía de este producto está inactiva."
+    );
   }
   return product;
 }
@@ -193,6 +203,7 @@ export async function listActiveProducts(actor: AuthorizedUser, rawQuery: unknow
   return prisma.product.findMany({
     where: {
       isActive: true,
+      carrier: { isActive: true },
       ...(policyType ? { policyType } : {}),
       ...(carrierId ? { carrierId } : {}),
     },

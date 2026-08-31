@@ -16,10 +16,10 @@ export type NavItem = {
   enabled: boolean;
 };
 
-// Solo "Dashboard", "Contactos" y "Pólizas" tienen módulo real en esta
-// fase. El resto queda visible (para transmitir el mapa completo del
-// CRM) pero deshabilitado — nunca navegan a una página que finja
-// funcionalidad que no existe todavía.
+// Solo "Dashboard", "Contactos", "Pólizas" y "Configuración" tienen
+// módulo real en esta fase. El resto queda visible (para transmitir el
+// mapa completo del CRM) pero deshabilitado — nunca navegan a una
+// página que finja funcionalidad que no existe todavía.
 export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, enabled: true },
   { label: "Contactos", href: "/contacts", icon: Users, enabled: true },
@@ -33,5 +33,5 @@ export const SETTINGS_NAV_ITEM: NavItem = {
   label: "Configuración",
   href: "/settings",
   icon: Settings,
-  enabled: false,
+  enabled: true,
 };

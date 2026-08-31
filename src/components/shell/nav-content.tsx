@@ -48,13 +48,29 @@ export function NavContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="p-3">
-        <span
-          className="flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground/50"
-          title="Disponible próximamente"
-        >
-          <SETTINGS_NAV_ITEM.icon className="size-4" aria-hidden="true" />
-          {SETTINGS_NAV_ITEM.label}
-        </span>
+        {SETTINGS_NAV_ITEM.enabled ? (
+          <Link
+            href={SETTINGS_NAV_ITEM.href}
+            onClick={onNavigate}
+            className={cn(
+              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              pathname.startsWith(SETTINGS_NAV_ITEM.href)
+                ? "bg-secondary text-secondary-foreground"
+                : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground"
+            )}
+          >
+            <SETTINGS_NAV_ITEM.icon className="size-4" aria-hidden="true" />
+            {SETTINGS_NAV_ITEM.label}
+          </Link>
+        ) : (
+          <span
+            className="flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground/50"
+            title="Disponible próximamente"
+          >
+            <SETTINGS_NAV_ITEM.icon className="size-4" aria-hidden="true" />
+            {SETTINGS_NAV_ITEM.label}
+          </span>
+        )}
       </div>
     </div>
   );

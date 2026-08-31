@@ -108,8 +108,11 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/policies/new?holderId=<id>` | Nueva póliza (titular preseleccionado, cambiable) |
 | `/policies/[id]` | Detalle de póliza: resumen, fechas/pago, personas cubiertas |
 | `/policies/[id]/edit` | Editar póliza (campos administrativos; producto solo si está Pendiente) |
+| `/settings` | Configuración: acceso a Compañías y Productos |
+| `/settings/carriers` | Lista de compañías; crear/editar/activar-desactivar (solo ADMIN) |
+| `/settings/products` | Lista de productos: filtro por compañía/tipo/estado; crear/editar/activar-desactivar (solo ADMIN) |
 
-Tareas, Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos ni de pólizas (no hay borrado físico en el CRM).
+Tareas, Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos, pólizas, compañías ni productos (no hay borrado físico en el CRM — todo se retira con un estado `isActive`/`inactivo`).
 
 ### Familia / Hogares
 
@@ -139,6 +142,8 @@ npm run seed:dev
 ```
 
 Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáticamente en ningún flujo, y no crea personas/hogares/pólizas — solo el catálogo, con nombres claramente marcados `(Dev Seed)`.
+
+`seed:dev` es solo para desarrollo. La administración real del catálogo (crear compañías/productos, editarlos, activarlos/desactivarlos) se hace desde **Configuración → Compañías / Productos** (`/settings/carriers`, `/settings/products`), solo ADMIN puede crear/editar/desactivar — AGENT/ASSISTANT pueden consultar el catálogo pero no modificarlo. Un producto que ya fue usado en al menos una póliza no puede cambiar de compañía, tipo de seguro ni año de plan (protege el significado histórico de pólizas ya emitidas); desactivar una compañía vuelve inelegibles todos sus productos para pólizas nuevas, sin afectar las ya emitidas.
 
 UI construida con [shadcn/ui](https://ui.shadcn.com) (preset `base-nova`, sobre [Base UI](https://base-ui.com), no Radix — los componentes que envuelven un `<Link>` u otro elemento no-botón usan `render={<Link ... />}` + `nativeButton={false}`, no `asChild`).
 
