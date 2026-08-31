@@ -54,7 +54,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  assignedPeople Person[] @relation("PersonAssignedAgent")
+  assignedPeople    Person[] @relation("PersonAssignedAgent")
+  processedPolicies Policy[] @relation("PolicyProcessedBy")
 
   @@map("users")
 }
@@ -77,8 +78,10 @@ model Person {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  assignedAgent    User?             @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
-  householdMembers HouseholdMember[]
+  assignedAgent     User?             @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  householdMembers  HouseholdMember[]
+  holderPolicies    Policy[]          @relation("PolicyHolder")
+  policyMemberships PolicyMember[]    @relation("PolicyMemberPerson")
 
   @@index([lastName])
   @@index([phone])
@@ -94,7 +97,8 @@ model Household {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members HouseholdMember[]
+  members  HouseholdMember[]
+  policies Policy[]
 
   @@map("households")
 }
@@ -142,8 +146,138 @@ model Product {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  carrier  Carrier  @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  policies Policy[]
 
   @@index([carrierId, policyType, planYear])
   @@map("products")
+}
+
+// ---------------------------------------------------------------------------
+// Migración 002 — Policies
+// ---------------------------------------------------------------------------
+
+enum PolicyStatus {
+  PENDING
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  RENEWED
+}
+
+enum PolicyOperationType {
+  NEW_ENROLLMENT
+  RENEWAL
+  PLAN_CHANGE
+}
+
+enum PolicyMemberRole {
+  PRIMARY
+  SPOUSE
+  DEPENDENT
+  OTHER
+}
+
+enum BillingFrequency {
+  MONTHLY
+  QUARTERLY
+  SEMIANNUAL
+  ANNUAL
+  OTHER
+}
+
+enum PaymentStatus {
+  CURRENT
+  DUE
+  PAST_DUE
+}
+
+// Póliza emitida y su historial. No duplica carrier ni policyType: se
+// derivan siempre vía product -> carrier. Las renovaciones crean una
+// nueva Policy encadenada mediante previousPolicyId; nunca se sobrescribe
+// una póliza histórica.
+model Policy {
+  id                     String               @id @default(uuid()) @db.Uuid
+  holderId               String               @db.Uuid
+  householdId            String?              @db.Uuid
+  productId              String               @db.Uuid
+  policyNumber           String?
+  status                 PolicyStatus         @default(PENDING)
+  effectiveDate          DateTime             @db.Date
+  terminationDate        DateTime?            @db.Date
+  previousPolicyId       String?              @unique @db.Uuid
+  processedById          String?              @db.Uuid
+  premiumAmount          Decimal?             @db.Decimal(12, 2)
+  billingFrequency       BillingFrequency?
+  nextPaymentDueDate     DateTime?            @db.Date
+  autopay                Boolean              @default(false)
+  needsPaymentAssistance Boolean              @default(false)
+  paymentStatus          PaymentStatus?
+  operationType          PolicyOperationType?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  holder         Person              @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
+  household      Household?          @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  product        Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  processedBy    User?               @relation("PolicyProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  previousPolicy Policy?             @relation("PolicyRenewal", fields: [previousPolicyId], references: [id], onDelete: Restrict)
+  renewedInto    Policy?             @relation("PolicyRenewal")
+  members        PolicyMember[]
+  healthDetail   HealthPolicyDetail?
+
+  @@index([holderId])
+  @@index([productId])
+  @@index([status])
+  @@index([effectiveDate])
+  @@index([policyNumber])
+  @@map("policies")
+}
+
+// Cobertura efectiva de una póliza emitida. Una fila = una persona
+// realmente cubierta. Si el titular está cubierto, también debe tener
+// fila aquí (role = PRIMARY): PolicyMember es siempre la fuente de
+// verdad de cobertura, nunca se infiere a partir de Policy.holderId.
+// Personas evaluadas/excluidas durante cotización pertenecerán a una
+// futura Application/Quote, no a esta tabla.
+model PolicyMember {
+  id        String           @id @default(uuid()) @db.Uuid
+  policyId  String           @db.Uuid
+  personId  String           @db.Uuid
+  role      PolicyMemberRole
+  createdAt DateTime         @default(now())
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  person Person @relation("PolicyMemberPerson", fields: [personId], references: [id], onDelete: Restrict)
+
+  @@unique([policyId, personId])
+  @@index([personId])
+  @@map("policy_members")
+}
+
+// Extensión 1:1 de Policy solo para pólizas de salud (Policy.product
+// con policyType = HEALTH). Esa regla se valida en la aplicación, no
+// mediante trigger de base de datos. planNameSnapshot conserva el
+// nombre del plan al momento de la póliza, porque el catálogo Product
+// es mutable y el historial de la póliza no debe cambiar si el
+// catálogo se renombra o desactiva después.
+model HealthPolicyDetail {
+  id                       String   @id @default(uuid()) @db.Uuid
+  policyId                 String   @unique @db.Uuid
+  marketplaceApplicationId String?
+  marketplaceState         String?  @db.VarChar(2)
+  planNameSnapshot         String?
+  taxCreditAmount          Decimal? @db.Decimal(12, 2)
+  incomeUsed               Decimal? @db.Decimal(12, 2)
+  deductibleIndividual     Decimal? @db.Decimal(12, 2)
+  deductibleFamily         Decimal? @db.Decimal(12, 2)
+  outOfPocketIndividual    Decimal? @db.Decimal(12, 2)
+  outOfPocketFamily        Decimal? @db.Decimal(12, 2)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([marketplaceApplicationId])
+  @@map("health_policy_details")
 }

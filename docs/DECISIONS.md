@@ -13,13 +13,22 @@ Registro de decisiones importantes sobre el modelo de datos del CRM. No es docum
 
 ## Carriers y productos
 
-- **`Product` es la fuente de verdad del tipo de seguro (`policyType`) y del carrier.** Cuando se implemente `Policy` (migración futura), no tendrá columnas `carrierId` ni `policyType` propias — se derivan siempre vía `Policy → Product → Carrier`. Se evaluó explícitamente si existía un motivo de negocio real (no de rendimiento) para duplicar `carrierId` en `Policy` — no se encontró ninguno: un cambio real de carrier equivale a una renovación hacia una nueva póliza con su propio `Product`.
+- **`Product` es la fuente de verdad del tipo de seguro (`policyType`) y del carrier.** `Policy` no tiene columnas `carrierId` ni `policyType` propias — se derivan siempre vía `Policy → Product → Carrier`. Se evaluó explícitamente si existía un motivo de negocio real (no de rendimiento) para duplicar `carrierId` en `Policy` — no se encontró ninguno: un cambio real de carrier equivale a una renovación hacia una nueva póliza con su propio `Product`.
 - **`Product.planYear` puede ser `null`.** Aplica a productos con vigencia anual (ej. planes de Marketplace: "Ambetter Plan X 2026" vs "2027"); productos sin ciclo anual (ej. ciertos seguros de vida) simplemente no lo usan.
 
-## Cobertura de pólizas (diseño futuro)
+## Cobertura de pólizas
 
-- **`PolicyMember` (futuro) representará únicamente cobertura efectiva de una póliza ya emitida.** Solo existirán filas para personas realmente cubiertas — la ausencia de fila significa "no cubierto". No se agregará un campo `coverageStatus` a `PolicyMember` para distinguir excluido/nunca evaluado.
-- **La evaluación/exclusión durante cotización pertenecerá a `Application`/`Quote` + `ApplicationMember` (futuras, no implementadas).** Esa es una etapa de negocio anterior y distinta a la póliza emitida. Antes de agregar esa lógica a `PolicyMember`, se debe diseñar `Application`/`Quote` explícitamente — no resolverlo ad-hoc más adelante.
+- **`PolicyMember` representa únicamente cobertura efectiva de una póliza ya emitida.** Solo existen filas para personas realmente cubiertas — la ausencia de fila significa "no cubierto". No se agregó un campo `coverageStatus` a `PolicyMember` para distinguir excluido/nunca evaluado.
+- **Si el titular (`Policy.holderId`) está efectivamente cubierto, también debe tener su propia fila en `PolicyMember`** (con `role = PRIMARY`). Esto hace que `PolicyMember` sea siempre la única fuente de verdad de cobertura — nunca se infiere comparando `PolicyMember.personId` con `Policy.holderId` en la aplicación. Si el titular es solo responsable administrativo sin estar él mismo cubierto, no tiene fila.
+- **La evaluación/exclusión durante cotización pertenecerá a `Application`/`Quote` + `ApplicationMember` (futuras, no implementadas).** Esa es una etapa de negocio anterior y distinta a la póliza emitida. Antes de agregar esa lógica a `PolicyMember`, se debe diseñar `Application`/`Quote` explícitamente — **no se debe resolver agregando `coverageStatus` a `PolicyMember` sin revisar primero esta decisión.**
+
+## Renovaciones e historial de pólizas
+
+- **Una renovación crea una nueva fila de `Policy`**, encadenada hacia la anterior mediante `previousPolicyId` (self-relation). Una póliza histórica **nunca se sobrescribe** con los datos de la renovación.
+- **`Policy.previousPolicyId` es único**: cada póliza histórica solo puede tener una renovación apuntándole, manteniendo la cadena lineal (sin ramificaciones).
+- **El FK de `previousPolicyId` usa `onDelete: Restrict`**, no `SetNull` ni `Cascade`: bloquea activamente el borrado de una póliza histórica mientras una renovación la referencia, en vez de permitir el borrado y dejar el enlace huérfano en silencio. La misma lógica de protección aplica a `holder`, `product` (Restrict) y a `PolicyMember → Policy` (Restrict): una póliza con miembros de cobertura no se puede borrar sin limpiar antes esos registros explícitamente.
+- **`HealthPolicyDetail.planNameSnapshot` congela el nombre del plan al momento de la póliza.** El catálogo `Product` es mutable (se puede renombrar/desactivar); el historial de una póliza no debe cambiar si el catálogo cambia después. No se duplican otros campos de `Product` (carrier, policyType) porque no cambian de forma que genere confusión histórica real.
+- **La regla "`HealthPolicyDetail` solo debe existir si `Policy.product.policyType == HEALTH`" se valida en la aplicación/servicio, no mediante trigger de base de datos.** Un FK normal no puede expresar esa condición, y no se implementaron triggers para evitar complejidad innecesaria en esta fase.
 
 ## Cumpleaños
 
@@ -32,6 +41,7 @@ Registro de decisiones importantes sobre el modelo de datos del CRM. No es docum
 ## Seguridad y minimización de datos
 
 - **El CRM no almacena credenciales de ningún tipo dentro de sus tablas de negocio**: ni contraseñas de portales de aseguradoras, ni credenciales de Marketplace, ni datos bancarios, ni número completo de tarjeta ni CVV. `User` (usuario interno del CRM) tampoco tiene campos de autenticación todavía — se agregarán en una migración dedicada cuando se diseñe el módulo de autenticación.
+- **`Policy` solo registra seguimiento operativo de prima** (`premiumAmount`, `billingFrequency`, `nextPaymentDueDate`, `autopay`, `needsPaymentAssistance`, `paymentStatus`), no datos de pago reales: sin número de tarjeta, CVV, cuenta bancaria ni tokens de pago. Un `PaymentMethodReference` con datos mínimos y seguros (tipo, últimos 4 dígitos) queda para una fase posterior si se necesita.
 - **`Person` no incluye SSN completo, dirección, datos médicos ni datos de pago en la migración 001.** Esos campos se incorporarán solo cuando exista una necesidad operacional clara y se haya evaluado explícitamente, siguiendo el principio de minimización de datos del proyecto.
 
 ## Identificadores

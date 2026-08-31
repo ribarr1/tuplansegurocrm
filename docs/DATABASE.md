@@ -37,3 +37,39 @@ Todas las tablas usan `UUID` (tipo nativo `uuid` de PostgreSQL) como clave prima
 ### Fuera de alcance de esta migración
 
 `Policy`, `PolicyMember`, `HealthPolicyDetail`, `Task`, `Note`, `BirthdayGreeting`, `CommissionExpectation`, `CommissionPayment`, `PersonProvider`, `PersonMedication`, `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, autenticación. Ver [DECISIONS.md](./DECISIONS.md) para el razonamiento detrás del modelo completo.
+
+## Migración 002 — Policies
+
+Agrega las pólizas y su cobertura efectiva sobre la base de identidad de la migración 001.
+
+### Tablas
+
+- **`policies`** — Póliza emitida y su historial. No almacena `carrierId` ni `policyType` propios: se derivan siempre vía `productId → product.carrierId / product.policyType`. Las renovaciones no sobrescriben: se crea una nueva fila de `Policy` encadenada mediante `previousPolicyId` (self-relation 1:1, única) hacia la póliza anterior.
+- **`policy_members`** — Cobertura efectiva de una póliza emitida. Una fila = una persona realmente cubierta. Si el titular (`Policy.holderId`) está cubierto, también tiene su propia fila aquí con `role = PRIMARY` — `policy_members` es siempre la única fuente de verdad de cobertura, nunca se infiere comparando con `holderId`.
+- **`health_policy_details`** — Extensión 1:1 de `policies`, solo para pólizas cuyo producto es de tipo `HEALTH`. Incluye `planNameSnapshot`, que congela el nombre del plan al momento de la póliza (el catálogo `products` es mutable; el historial de una póliza no debe cambiar si el catálogo se renombra o desactiva después).
+
+### Enums
+
+- `PolicyStatus`: PENDING, ACTIVE, CANCELLED, EXPIRED, RENEWED
+- `PolicyOperationType`: NEW_ENROLLMENT, RENEWAL, PLAN_CHANGE
+- `PolicyMemberRole`: PRIMARY, SPOUSE, DEPENDENT, OTHER
+- `BillingFrequency`: MONTHLY, QUARTERLY, SEMIANNUAL, ANNUAL, OTHER
+- `PaymentStatus`: CURRENT, DUE, PAST_DUE (nullable en `Policy`: `null` = no se ha determinado, no existe un valor `UNKNOWN`)
+
+### Constraints e índices
+
+- `policies.previousPolicyId` — UNIQUE (cada póliza histórica solo puede tener una renovación apuntándole; evita cadenas ramificadas)
+- `policy_members(policyId, personId)` — UNIQUE (una persona no puede aparecer dos veces como miembro de la misma póliza)
+- `health_policy_details.policyId` — UNIQUE (relación 1:1)
+- `policies.holderId`, `policies.productId`, `policies.status`, `policies.effectiveDate`, `policies.policyNumber` — índices de búsqueda/filtrado
+- `policy_members.personId` — índice (necesario aparte del índice único compuesto, que no sirve para buscar solo por `personId`)
+- `health_policy_details.marketplaceApplicationId` — índice de búsqueda
+- `policyNumber` **sin** constraint de unicidad: la unicidad real es por carrier, pero `Policy` no almacena `carrierId` directamente por diseño; forzarlo habría requerido denormalizar ese dato solo para el constraint.
+
+### Dinero y fechas
+
+Todos los montos usan `Decimal(12,2)` (nunca `Float`): `premiumAmount`, `taxCreditAmount`, `incomeUsed`, deducibles y out-of-pocket. `effectiveDate`, `terminationDate` y `nextPaymentDueDate` son `DATE`; `createdAt`/`updatedAt` son `TIMESTAMP`.
+
+### Fuera de alcance de esta migración
+
+`Task`, `Note`, `BirthdayGreeting`, `CommissionExpectation`, `CommissionPayment`, `PersonProvider`, `PersonMedication`, `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, autenticación, dashboard/UI. Ver [DECISIONS.md](./DECISIONS.md).
