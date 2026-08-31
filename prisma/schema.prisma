@@ -56,6 +56,9 @@ model User {
 
   assignedPeople    Person[] @relation("PersonAssignedAgent")
   processedPolicies Policy[] @relation("PolicyProcessedBy")
+  assignedTasks     Task[]   @relation("TaskAssignedTo")
+  createdTasks      Task[]   @relation("TaskCreatedBy")
+  createdNotes      Note[]   @relation("NoteCreatedBy")
 
   @@map("users")
 }
@@ -78,10 +81,13 @@ model Person {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  assignedAgent     User?             @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  assignedAgent     User?              @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
   householdMembers  HouseholdMember[]
-  holderPolicies    Policy[]          @relation("PolicyHolder")
-  policyMemberships PolicyMember[]    @relation("PolicyMemberPerson")
+  holderPolicies    Policy[]           @relation("PolicyHolder")
+  policyMemberships PolicyMember[]     @relation("PolicyMemberPerson")
+  tasks             Task[]
+  notes             Note[]
+  birthdayGreetings BirthdayGreeting[]
 
   @@index([lastName])
   @@index([phone])
@@ -225,6 +231,8 @@ model Policy {
   renewedInto    Policy?             @relation("PolicyRenewal")
   members        PolicyMember[]
   healthDetail   HealthPolicyDetail?
+  tasks          Task[]
+  notes          Note[]
 
   @@index([holderId])
   @@index([productId])
@@ -280,4 +288,110 @@ model HealthPolicyDetail {
 
   @@index([marketplaceApplicationId])
   @@map("health_policy_details")
+}
+
+// ---------------------------------------------------------------------------
+// Migración 003 — Operations
+// ---------------------------------------------------------------------------
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum BirthdayGreetingStatus {
+  PENDING
+  SENT
+  SKIPPED
+}
+
+enum BirthdayGreetingChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+  OTHER
+}
+
+// Trabajo operativo pendiente o completado. Se relaciona con Person/Policy
+// mediante FKs explícitas y opcionales, sin polimorfismo (entityType/entityId).
+// "Vencida" es un estado derivado (status activo + dueAt < now) y
+// deliberadamente no se almacena como valor de TaskStatus.
+model Task {
+  id           String       @id @default(uuid()) @db.Uuid
+  title        String
+  description  String?
+  status       TaskStatus   @default(OPEN)
+  priority     TaskPriority @default(NORMAL)
+  dueAt        DateTime?
+  completedAt  DateTime?
+  personId     String?      @db.Uuid
+  policyId     String?      @db.Uuid
+  assignedToId String?      @db.Uuid
+  createdById  String?      @db.Uuid
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  person     Person? @relation(fields: [personId], references: [id], onDelete: Restrict)
+  policy     Policy? @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  assignedTo User?   @relation("TaskAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy  User?   @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([assignedToId, status, dueAt])
+  @@index([personId])
+  @@index([policyId])
+  @@map("tasks")
+}
+
+// Nota operativa/histórica en texto plano, ligada opcionalmente a una
+// persona y/o póliza. No es un sustituto de AuditLog (cambios
+// estructurados del sistema): eso será una entidad futura separada.
+model Note {
+  id          String   @id @default(uuid()) @db.Uuid
+  content     String
+  personId    String?  @db.Uuid
+  policyId    String?  @db.Uuid
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  person    Person? @relation(fields: [personId], references: [id], onDelete: Restrict)
+  policy    Policy? @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  createdBy User?   @relation("NoteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([personId])
+  @@index([policyId])
+  @@map("notes")
+}
+
+// Gestión de la tarjeta de cumpleaños de una persona en un año
+// específico. Person.dateOfBirth sigue siendo la única fuente de la
+// fecha de nacimiento; esta tabla no la duplica. La ausencia de una
+// fila para (personId, año actual) se interpreta como "aún no
+// gestionado" — no se crean filas automáticamente para todas las
+// personas cada enero, solo cuando el flujo de trabajo interactúa
+// con ese cumpleaños.
+model BirthdayGreeting {
+  id        String                   @id @default(uuid()) @db.Uuid
+  personId  String                   @db.Uuid
+  year      Int
+  status    BirthdayGreetingStatus   @default(PENDING)
+  channel   BirthdayGreetingChannel?
+  sentAt    DateTime?
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@unique([personId, year])
+  @@index([year, status])
+  @@map("birthday_greetings")
 }

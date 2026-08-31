@@ -30,9 +30,19 @@ Registro de decisiones importantes sobre el modelo de datos del CRM. No es docum
 - **`HealthPolicyDetail.planNameSnapshot` congela el nombre del plan al momento de la póliza.** El catálogo `Product` es mutable (se puede renombrar/desactivar); el historial de una póliza no debe cambiar si el catálogo cambia después. No se duplican otros campos de `Product` (carrier, policyType) porque no cambian de forma que genere confusión histórica real.
 - **La regla "`HealthPolicyDetail` solo debe existir si `Policy.product.policyType == HEALTH`" se valida en la aplicación/servicio, no mediante trigger de base de datos.** Un FK normal no puede expresar esa condición, y no se implementaron triggers para evitar complejidad innecesaria en esta fase.
 
+## Tareas y notas
+
+- **`Task` y `Note` usan FKs explícitas y opcionales hacia `Person`/`Policy`** (`personId`, `policyId`), no un sistema polimórfico (`entityType`/`entityId`). Con solo dos entidades relacionables en V1, el polimorfismo genérico es complejidad prematura.
+- **"Vencida" (overdue) es un estado calculado, no un valor de `TaskStatus`.** Se deriva como `status NOT IN (COMPLETED, CANCELLED) AND dueAt < now()`. No se almacena para evitar que quede desactualizado respecto a la hora real.
+- **`Task.assignedToId` y `Task.createdById` son conceptos distintos y ambos existen**: quién debe ejecutar la tarea vs. quién la creó. Ambos nullable con `onDelete: SetNull` porque todavía no hay autenticación real — durante migraciones/importaciones puede no haber un actor conocido.
+- **`Note` es historial operativo de negocio, no un sustituto de `AuditLog`.** `AuditLog` (futuro) registrará cambios estructurados del sistema (qué campo cambió, cuándo, quién); `Note` es texto libre que un agente escribe sobre un cliente o póliza. No mezclar ambos conceptos en la misma tabla.
+
 ## Cumpleaños
 
-- **La fecha de nacimiento vive únicamente en `Person.dateOfBirth`.** No existe ni existirá una tabla separada que duplique personas para manejar cumpleaños. El proceso comercial de la tarjeta (pendiente/enviada, año, medio) se registrará en una entidad futura `BirthdayGreeting`, relacionada a `Person` + año.
+- **La fecha de nacimiento vive únicamente en `Person.dateOfBirth`.** No existe ni existirá una tabla separada que duplique personas para manejar cumpleaños. `BirthdayGreeting` (implementada en la migración 003) solo registra la gestión anual de la tarjeta (pendiente/enviada/omitida, canal, fecha de envío) — nunca otra fecha de nacimiento.
+- **`BirthdayGreeting` tiene `UNIQUE(personId, year)`** — una gestión por persona y año.
+- **La ausencia de una fila `BirthdayGreeting` para (persona, año actual) se interpreta como "aún no gestionado"**, equivalente a pendiente implícito. El futuro dashboard consulta `Person.dateOfBirth` directamente para calcular cumpleaños de hoy/mes/próximos, y hace `LEFT JOIN` contra `BirthdayGreeting` del año actual para saber si ya se gestionó.
+- **No se generan automáticamente filas de `BirthdayGreeting` para todas las personas cada enero.** La fila se crea solo cuando el flujo de trabajo interactúa realmente con ese cumpleaños (o cuando en el futuro se decida automatizarlo explícitamente) — evita crear cientos de registros sin uso real.
 
 ## Comisiones (diseño futuro)
 

@@ -73,3 +73,37 @@ Todos los montos usan `Decimal(12,2)` (nunca `Float`): `premiumAmount`, `taxCred
 ### Fuera de alcance de esta migración
 
 `Task`, `Note`, `BirthdayGreeting`, `CommissionExpectation`, `CommissionPayment`, `PersonProvider`, `PersonMedication`, `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, autenticación, dashboard/UI. Ver [DECISIONS.md](./DECISIONS.md).
+
+## Migración 003 — Operations
+
+Agrega trabajo operativo (tareas, notas, cumpleaños), sin comisiones, datos médicos ni autenticación.
+
+### Tablas
+
+- **`tasks`** — Trabajo pendiente o completado. Se relaciona con `people`/`policies` mediante FKs explícitas y opcionales (`personId`, `policyId`), sin polimorfismo. Distingue `assignedToId` (quién debe ejecutarla) de `createdById` (quién la creó); ambos nullable y con `onDelete: SetNull` porque todavía no hay autenticación real.
+- **`notes`** — Nota operativa en texto plano, ligada opcionalmente a persona y/o póliza. No es un sustituto de auditoría técnica (`AuditLog`, futura): registra contexto de negocio, no cambios estructurados del sistema.
+- **`birthday_greetings`** — Gestión de la tarjeta de cumpleaños de una persona en un año específico. `people.dateOfBirth` sigue siendo la única fuente de la fecha de nacimiento; esta tabla no la duplica, solo registra el proceso comercial (pendiente/enviada/omitida) por año.
+
+### Enums
+
+- `TaskStatus`: OPEN, IN_PROGRESS, COMPLETED, CANCELLED (sin `OVERDUE` — es un estado derivado, ver Decisiones)
+- `TaskPriority`: LOW, NORMAL, HIGH, URGENT
+- `BirthdayGreetingStatus`: PENDING, SENT, SKIPPED
+- `BirthdayGreetingChannel`: WHATSAPP, SMS, EMAIL, OTHER (nullable, solo aplica una vez enviada)
+
+### Constraints e índices
+
+- `birthday_greetings(personId, year)` — UNIQUE
+- `tasks(assignedToId, status, dueAt)` — índice compuesto para la consulta más común del dashboard futuro ("mis tareas abiertas por vencimiento"); evita crear tres índices sueltos redundantes
+- `tasks.personId`, `tasks.policyId` — índices independientes (no cubiertos por el prefijo del compuesto anterior)
+- `notes.personId`, `notes.policyId` — índices de búsqueda
+- `birthday_greetings(year, status)` — índice para "tarjetas pendientes de este año" (no cubierto por el UNIQUE, cuyo prefijo es `personId`)
+- `people.dateOfBirth` **sigue sin índice** — a este volumen, consultar cumpleaños por mes/día sin índice funcional es viable; se difiere hasta tener evidencia real de necesidad
+
+### Fechas
+
+`tasks.dueAt` y `tasks.completedAt` son `TIMESTAMP`, no `DATE` — permite ordenar tareas del mismo día por hora y admitir horarios específicos ("llamar mañana a las 3 PM"), sin lógica de timezone custom en esta fase.
+
+### Fuera de alcance de esta migración
+
+`CommissionExpectation`, `CommissionPayment`, `PersonProvider`, `PersonMedication`, `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, `ActivityLog`, `AuditLog`, autenticación, UI funcional. Ver [DECISIONS.md](./DECISIONS.md).
