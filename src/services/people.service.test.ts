@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { createPerson, getPersonById, updatePerson, listPeople } from "@/services/people.service";
+import {
+  createPerson,
+  getPersonById,
+  updatePerson,
+  listPeople,
+  canEditPerson,
+} from "@/services/people.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -164,5 +170,16 @@ describe("people.service", () => {
     await expect(
       createPerson(admin, { firstName: "Bad", lastName: "Assign", assignedAgentId: assistant.id })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  // canEditPerson es la misma función que usa la UI (contacts/[id]/edit)
+  // para decidir si mostrar el formulario o "no autorizado" — probarla
+  // directamente cubre esa decisión de presentación sin duplicar lógica.
+  it("canEditPerson refleja exactamente la política de edición", () => {
+    expect(canEditPerson(admin, { assignedAgentId: agentB.id })).toBe(true);
+    expect(canEditPerson(assistant, { assignedAgentId: agentB.id })).toBe(true);
+    expect(canEditPerson(agent, { assignedAgentId: null })).toBe(true);
+    expect(canEditPerson(agent, { assignedAgentId: agent.id })).toBe(true);
+    expect(canEditPerson(agent, { assignedAgentId: agentB.id })).toBe(false);
   });
 });

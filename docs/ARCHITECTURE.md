@@ -5,9 +5,9 @@ Documento breve. Describe el flujo de una operación y qué capa hace qué — n
 ## Flujo de una operación
 
 ```
-UI (Client Component)
-  ↓  fetch / Server Action (futuro)
-Server Action / Route Handler        ← resuelve identidad
+UI (Client Component: formulario)
+  ↓  <form action={...}> (useActionState)
+Server Action                        [src/app/(app)/contacts/actions.ts]
   ↓
 requireSessionUser() / requireSessionRole(...)   [src/lib/authorization.ts]
   ↓  produce un "actor" (AuthorizedUser) ya verificado
@@ -18,7 +18,9 @@ Prisma                               [src/lib/prisma.ts]
 PostgreSQL
 ```
 
-Para páginas/Server Components que solo necesitan proteger una ruta (sin llamar un servicio), se usa `requireUser()`/`requireRole()` directamente — ver `src/app/dashboard/page.tsx`.
+Para páginas/Server Components que solo leen datos (sin mutación), se llama al servicio **directamente desde el Server Component** — no hace falta una Server Action para una lectura en el render inicial. Ejemplo: `src/app/(app)/contacts/page.tsx` llama `listPeople(actor, ...)` directo. Las Server Actions existen específicamente para mutaciones disparadas desde un Client Component (formularios) — ver `src/app/(app)/contacts/actions.ts`.
+
+Para páginas/Server Components que solo necesitan proteger una ruta sin llamar un servicio, se usa `requireUser()`/`requireRole()` directamente — ver `src/app/(app)/dashboard/page.tsx`. Toda el área protegida comparte un layout común: `src/app/(app)/layout.tsx` llama `requireUser()` una vez y renderiza el shell (sidebar + header); `src/proxy.ts` solo hace una redirección optimista (existencia de cookie) antes de eso.
 
 ## Por qué la autorización está partida en dos
 
@@ -55,3 +57,17 @@ No implementado ni planeado. TuPlanSeguro USA es una sola agencia — no hay `te
 ## Tests
 
 Vitest, contra el PostgreSQL local real (mismo patrón usado en cada migración: sin mocks de Prisma). `server-only` se alias a un no-op en `vitest.config.mts` porque ese paquete lanza intencionalmente fuera del compilador de Next.js. Los tests de servicio construyen el `actor` directamente (sin pasar por sesión real); un test separado (`src/lib/authorization.test.ts`) prueba la resolución de sesión real usando `auth.api.signInEmail`.
+
+Los flujos que dependen del servidor Next.js real corriendo (protección de rutas por proxy/layout, formularios completos con Server Action, permisos reflejados en la UI) se verifican con el servidor de desarrollo levantado (`npm run dev`) — mismo patrón manual usado en la Fase 007 para Auth, no Playwright (no instalado, sin necesidad real todavía).
+
+## CRM Shell + Contactos — Fase 009
+
+- **Shell:** `src/app/(app)/layout.tsx` (protegido) + `src/components/shell/*` (`Sidebar`, `Header`, `MobileNav`, `UserMenu`, `NavContent`). Navegación centralizada en `src/components/shell/nav-items.ts` — un módulo sin implementar se marca `enabled: false` ahí y aparece deshabilitado en la UI, nunca como una página que finja funcionar.
+- **UI library:** [shadcn/ui](https://ui.shadcn.com), preset `base-nova`, construido sobre **Base UI** (no Radix). Composición polimórfica usa `render={<Elemento />}` en vez de `asChild` + hijo — ej. `<Button render={<Link href="..." />}>Texto</Button>`. Cuando el elemento renderizado no es un `<button>` real (como `Link`), se agrega `nativeButton={false}` — de lo contrario Base UI emite un warning de accesibilidad en consola.
+- **Contactos es el primer (y único) módulo funcional.** `listPeople`/`getPersonById`/`createPerson`/`updatePerson` (Fase 008) alimentan `/contacts`, `/contacts/[id]`, `/contacts/new`, `/contacts/[id]/edit`. Sin `deletePerson` — no hay eliminación física de contactos en el CRM.
+- **Búsqueda/filtro/paginación viven en la URL** (`?q=&status=&page=`), no en estado de cliente — el formulario de filtro es un `<form method="GET">` nativo, sin JavaScript necesario para funcionar.
+- **`assignedAgentId` en los formularios:** el `<select>` de agente solo se renderiza para ADMIN (`showAgentSelect = actor.role === "ADMIN"`) — AGENT/ASSISTANT ni lo ven, para no sugerir un control que la política del servicio va a ignorar de todas formas. La UI es conveniencia, nunca la autoridad: `people.service.ts` aplica la política igual si alguien arma el POST a mano.
+- **`canEditPerson` (people.service.ts) es la misma función que decide si `/contacts/[id]/edit` muestra el formulario o "no tienes permiso".** No hay una segunda copia de la regla en la UI — si se relaja o endurece la política de edición, cambia en un solo lugar.
+- **Errores de formulario en español, nunca el texto crudo de Zod.** Los `.min()`/`.email()`/etc. en `src/schemas/person.schema.ts` llevan mensaje explícito (ej. `"El teléfono debe tener al menos 7 caracteres."`) — sin esto, el usuario vería el mensaje interno en inglés de Zod tal cual.
+- **`ContactForm` repite los valores enviados tras un error** (`state.values`, `src/app/(app)/contacts/form-helpers.ts`) y usa un `key` en el `<form>` para forzar remount. React 19 limpia los campos no controlados de un formulario al terminar una Server Action — sin este mecanismo, un error de validación borraría lo que el usuario ya había escrito.
+- **`formDataToPersonInput`/`toFormState` viven en `form-helpers.ts`, no en `actions.ts`.** Un archivo `"use server"` solo puede exportar funciones `async` — separar la lógica pura permite probarla con Vitest sin esa restricción.

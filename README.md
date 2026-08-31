@@ -76,7 +76,7 @@ El script rechaza correos duplicados o inválidos y contraseñas demasiado corta
 
 ### Iniciar sesión
 
-Con el servidor corriendo (`npm run dev`), entra a [http://localhost:3000/login](http://localhost:3000/login) con el correo/contraseña del administrador creado. Tras iniciar sesión llegas a `/dashboard`, una página mínima que confirma nombre, correo y rol — todavía no es el CRM funcional.
+Con el servidor corriendo (`npm run dev`), entra a [http://localhost:3000/login](http://localhost:3000/login) con el correo/contraseña del administrador creado. Tras iniciar sesión llegas a `/dashboard`.
 
 ### Cómo funciona la autorización
 
@@ -91,6 +91,21 @@ Ver `.env.example`: `BETTER_AUTH_SECRET` (genera el tuyo con `npx @better-auth/c
 ## Capa de servicios
 
 La lógica de negocio vive en `src/services/*.service.ts`, no directamente en páginas/Route Handlers. Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el flujo completo (UI → autorización → servicio → Prisma).
+
+## Rutas del CRM
+
+| Ruta | Descripción |
+|---|---|
+| `/login` | Login (email + contraseña) |
+| `/dashboard` | Placeholder — bienvenida y acceso a Contactos |
+| `/contacts` | Lista de contactos: búsqueda, filtro por estado, paginación |
+| `/contacts/new` | Crear contacto |
+| `/contacts/[id]` | Detalle de contacto (datos personales + resumen de pólizas/tareas/notas) |
+| `/contacts/[id]/edit` | Editar contacto (sujeto a la política de permisos por rol) |
+
+Pólizas, Tareas, Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos (no hay borrado físico en el CRM).
+
+UI construida con [shadcn/ui](https://ui.shadcn.com) (preset `base-nova`, sobre [Base UI](https://base-ui.com), no Radix — los componentes que envuelven un `<Link>` u otro elemento no-botón usan `render={<Link ... />}` + `nativeButton={false}`, no `asChild`).
 
 ## Tests
 

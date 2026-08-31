@@ -5,9 +5,9 @@ import { getSessionCookie } from "better-auth/cookies";
 // con forma válida (Proxy en Next.js 16 corre en runtime Node.js por
 // defecto, pero igualmente no debe hacer queries pesadas a la base de
 // datos en cada request). La verificación real (sesión válida +
-// User.isActive) ocurre en requireUser(), dentro de la página
-// protegida, en cada request.
-const PROTECTED_PREFIXES = ["/dashboard"];
+// User.isActive) ocurre en requireUser(), dentro del layout del área
+// protegida ((app)/layout.tsx), en cada request.
+const PROTECTED_PREFIXES = ["/dashboard", "/contacts"];
 
 export function proxy(request: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some((prefix) =>
@@ -24,5 +24,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  matcher: ["/dashboard/:path*", "/contacts/:path*"],
 };

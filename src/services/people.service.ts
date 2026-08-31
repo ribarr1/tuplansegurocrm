@@ -72,15 +72,28 @@ function assertCanCreate(actor: AuthorizedUser): void {
   void actor;
 }
 
+// Exportada (no solo interna) para que la UI decida qué renderizar
+// (mostrar formulario vs. mensaje "no autorizado") sin duplicar la
+// regla — la única fuente de verdad sigue siendo assertCanEdit, que la
+// usa para lo que realmente importa: bloquear la escritura en el
+// servicio. canEditPerson es una conveniencia de presentación, nunca
+// el límite de seguridad real.
+export function canEditPerson(
+  actor: AuthorizedUser,
+  person: { assignedAgentId: string | null }
+): boolean {
+  if (actor.role === "ADMIN" || actor.role === "ASSISTANT") return true;
+  if (actor.role === "AGENT") {
+    return person.assignedAgentId === null || person.assignedAgentId === actor.id;
+  }
+  return false;
+}
+
 function assertCanEdit(
   actor: AuthorizedUser,
   person: { assignedAgentId: string | null }
 ): void {
-  if (actor.role === "ADMIN" || actor.role === "ASSISTANT") return;
-  if (actor.role === "AGENT") {
-    if (person.assignedAgentId === null || person.assignedAgentId === actor.id) {
-      return;
-    }
+  if (!canEditPerson(actor, person)) {
     throw new AppError("FORBIDDEN", "Solo puedes editar contactos asignados a ti.");
   }
 }
