@@ -186,3 +186,33 @@ Agrega información médica operativa **mínima** para atender al cliente. El CR
 ### Fuera de alcance de esta migración
 
 `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, `AuditLog`, autenticación, documentos médicos, claims, recetas electrónicas, UI funcional. Ver [DECISIONS.md](./DECISIONS.md) y [SECURITY.md](./SECURITY.md).
+
+## Migración 006 — Model Hardening
+
+Sin entidades nuevas. Corrige invariantes detectados en la auditoría integral del modelo V1 (Core Identity → Health Operational Data) antes de comenzar Auth/UI. Todos los cambios son aditivos o correctivos sobre tablas existentes.
+
+### Cambios de esquema
+
+- **`PolicyStatus.RENEWED` eliminado.** Enum final: `PENDING`, `ACTIVE`, `CANCELLED`, `EXPIRED`. "Renovada" se deriva de la relación `previousPolicyId` (`renewedInto != null` en la póliza anterior) — nunca se vuelve a almacenar como status. Ver [DECISIONS.md](./DECISIONS.md).
+- **`Policy.effectiveDate` ahora nullable.** Una póliza `PENDING` puede existir antes de conocer su fecha efectiva definitiva. Regla de aplicación (no DB): requerida cuando `status = ACTIVE`.
+
+### Constraints nuevos
+
+- `CHECK (id <> previousPolicyId)` en `policies` — impide que una póliza se marque como renovación de sí misma. Ciclos de más de un nivel (`A → B → A`) se validan en aplicación, no en DB (desproporcionado implementarlo como trigger para un caso solo alcanzable por bug de servicio).
+- Índice único parcial `ON policy_members(policyId) WHERE role = 'PRIMARY'` — como máximo un `PolicyMember` con `role = PRIMARY` por póliza. Que ese `PRIMARY` coincida con `Policy.holderId` sigue siendo responsabilidad de la aplicación (requeriría trigger cross-tabla).
+- `CHECK (personId IS NOT NULL OR policyId IS NOT NULL)` en `notes` — una nota debe estar asociada a persona y/o póliza, nunca a ninguna de las dos. No aplica a `Task` (las tareas generales internas sí pueden carecer de ambas).
+- Dos `CHECK` en `birthday_greetings`: `status <> 'SENT' OR (channel IS NOT NULL AND sentAt IS NOT NULL)` y `status = 'SENT' OR sentAt IS NULL` — `SENT` siempre tiene canal y fecha de envío; cualquier otro estado nunca tiene fecha de envío.
+
+### Índices nuevos
+
+- `people.assignedAgentId` — "clientes asignados a este agente".
+- `household_members.householdId` — "miembros de este hogar" (el índice único existente `(personId, householdId)` no servía esta consulta por la regla del prefijo izquierdo).
+- `policies.householdId` — "pólizas de este hogar".
+
+### Nota técnica sobre esta migración
+
+`prisma migrate dev --create-only` no funciona en modo no interactivo cuando hay una advertencia de pérdida de datos potencial (eliminar un valor de enum). Se generó el SQL con `prisma migrate diff` (comparando la base actual contra el schema objetivo), se creó manualmente la carpeta de migración con ese SQL, se agregaron los `CHECK`/índice parcial (no expresables en `schema.prisma`) editando el archivo, y se aplicó con `prisma migrate deploy`. El SQL de cambio de enum sigue el patrón estándar y seguro de Prisma (crear tipo nuevo, castear con `USING`, eliminar el tipo viejo) — sin riesgo real porque la base estaba vacía en el momento de aplicarla.
+
+### Fuera de alcance de esta migración
+
+`Address` (en cualquiera de sus formas), `sex`, `preferredLanguage`, `countryOfOrigin`, `Opportunity`, `Application`/`Quote`, `PaymentMethodReference`, `AuditLog`, autenticación, UI. Ver [DECISIONS.md](./DECISIONS.md).

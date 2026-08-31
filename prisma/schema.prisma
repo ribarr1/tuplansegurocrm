@@ -95,6 +95,7 @@ model Person {
   @@index([lastName])
   @@index([phone])
   @@index([email])
+  @@index([assignedAgentId])
   @@map("people")
 }
 
@@ -126,6 +127,7 @@ model HouseholdMember {
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@unique([personId, householdId])
+  @@index([householdId])
   @@map("household_members")
 }
 
@@ -166,12 +168,14 @@ model Product {
 // Migración 002 — Policies
 // ---------------------------------------------------------------------------
 
+// "Renovada" NO es un valor de este enum: es derivable de la relación
+// previousPolicyId (renewedInto != null en la póliza anterior). Ver
+// docs/DECISIONS.md — evita dos fuentes de verdad para el mismo hecho.
 enum PolicyStatus {
   PENDING
   ACTIVE
   CANCELLED
   EXPIRED
-  RENEWED
 }
 
 enum PolicyOperationType {
@@ -204,7 +208,9 @@ enum PaymentStatus {
 // Póliza emitida y su historial. No duplica carrier ni policyType: se
 // derivan siempre vía product -> carrier. Las renovaciones crean una
 // nueva Policy encadenada mediante previousPolicyId; nunca se sobrescribe
-// una póliza histórica.
+// una póliza histórica. CHECK (id <> previousPolicyId) a nivel DB impide
+// que una póliza se marque como renovación de sí misma; ciclos de más de
+// un nivel (A -> B -> A) se validan en aplicación, no en DB.
 model Policy {
   id                     String               @id @default(uuid()) @db.Uuid
   holderId               String               @db.Uuid
@@ -212,7 +218,10 @@ model Policy {
   productId              String               @db.Uuid
   policyNumber           String?
   status                 PolicyStatus         @default(PENDING)
-  effectiveDate          DateTime             @db.Date
+  // Nullable: una póliza PENDING puede existir antes de conocer su fecha
+  // efectiva definitiva. Regla de aplicación (no DB): requerida cuando
+  // status = ACTIVE.
+  effectiveDate          DateTime?            @db.Date
   terminationDate        DateTime?            @db.Date
   previousPolicyId       String?              @unique @db.Uuid
   processedById          String?              @db.Uuid
@@ -243,6 +252,7 @@ model Policy {
   @@index([status])
   @@index([effectiveDate])
   @@index([policyNumber])
+  @@index([householdId])
   @@map("policies")
 }
 
@@ -251,7 +261,10 @@ model Policy {
 // fila aquí (role = PRIMARY): PolicyMember es siempre la fuente de
 // verdad de cobertura, nunca se infiere a partir de Policy.holderId.
 // Personas evaluadas/excluidas durante cotización pertenecerán a una
-// futura Application/Quote, no a esta tabla.
+// futura Application/Quote, no a esta tabla. Índice único parcial en DB
+// garantiza como máximo un PRIMARY por póliza; que ese PRIMARY coincida
+// con Policy.holderId se valida en aplicación (requeriría trigger
+// cross-tabla en DB, desproporcionado para esta fase).
 model PolicyMember {
   id        String           @id @default(uuid()) @db.Uuid
   policyId  String           @db.Uuid
@@ -355,9 +368,10 @@ model Task {
   @@map("tasks")
 }
 
-// Nota operativa/histórica en texto plano, ligada opcionalmente a una
-// persona y/o póliza. No es un sustituto de AuditLog (cambios
-// estructurados del sistema): eso será una entidad futura separada.
+// Nota operativa/histórica en texto plano, ligada a una persona y/o
+// póliza (al menos una, nunca ninguna: CHECK en DB). No es un sustituto
+// de AuditLog (cambios estructurados del sistema): eso será una entidad
+// futura separada.
 model Note {
   id          String   @id @default(uuid()) @db.Uuid
   content     String
@@ -382,7 +396,8 @@ model Note {
 // fila para (personId, año actual) se interpreta como "aún no
 // gestionado" — no se crean filas automáticamente para todas las
 // personas cada enero, solo cuando el flujo de trabajo interactúa
-// con ese cumpleaños.
+// con ese cumpleaños. CHECKs en DB garantizan: SENT siempre tiene
+// channel y sentAt; PENDING/SKIPPED nunca tienen sentAt.
 model BirthdayGreeting {
   id        String                   @id @default(uuid()) @db.Uuid
   personId  String                   @db.Uuid
