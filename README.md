@@ -22,19 +22,37 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ## Desarrollo local
 
-Este proyecto usa PostgreSQL en Docker Compose (no requiere instalar PostgreSQL en tu sistema).
+Este proyecto usa PostgreSQL en Docker Compose (no requiere instalar PostgreSQL en tu sistema) y Prisma como ORM.
 
 ```bash
-# 1. Copiar el archivo de variables de entorno
+# 1. Instalar dependencias
+npm install
+
+# 2. Copiar el archivo de variables de entorno
 cp .env.example .env
 
-# 2. Levantar PostgreSQL
+# 3. Levantar PostgreSQL
 docker compose up -d
 
-# 3. Comprobar estado (debe mostrar "healthy")
+# 4. Comprobar estado (debe mostrar "healthy")
 docker compose ps
 
-# 4. Detener PostgreSQL (conserva los datos)
+# 5. Generar el cliente de Prisma
+npx prisma generate
+
+# 6. Iniciar la app
+npm run dev
+```
+
+Cuando el modelo de datos del CRM esté definido, las migraciones se aplican con:
+
+```bash
+npx prisma migrate dev
+```
+
+Para detener PostgreSQL (conserva los datos):
+
+```bash
 docker compose down
 ```
 
