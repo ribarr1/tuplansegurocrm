@@ -1,8 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -10,4 +8,142 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Migración 001 — Core Identity
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  AGENT
+  ASSISTANT
+}
+
+enum ContactStatus {
+  PROSPECT
+  CLIENT
+  FORMER_CLIENT
+  OTHER
+}
+
+enum HouseholdMemberRole {
+  HEAD
+  SPOUSE
+  CHILD
+  DEPENDENT
+  OTHER
+}
+
+enum PolicyType {
+  HEALTH
+  LIFE
+  SUPPLEMENTAL
+  DENTAL
+  FINAL_EXPENSE
+}
+
+// Usuario/agente interno. Sin credenciales todavía: se agregarán cuando se
+// diseñe autenticación (password, sesiones, MFA).
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  email     String   @unique
+  role      UserRole @default(AGENT)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignedPeople Person[] @relation("PersonAssignedAgent")
+
+  @@map("users")
+}
+
+// Identidad central. Nunca se duplica al pasar de prospecto a cliente:
+// el cambio se refleja en contactStatus.
+model Person {
+  id              String        @id @default(uuid()) @db.Uuid
+  firstName       String
+  middleName      String?
+  lastName        String
+  secondLastName  String?
+  preferredName   String?
+  dateOfBirth     DateTime?     @db.Date
+  email           String?
+  phone           String?
+  contactStatus   ContactStatus @default(PROSPECT)
+  source          String?
+  assignedAgentId String?       @db.Uuid
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  assignedAgent    User?             @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  householdMembers HouseholdMember[]
+
+  @@index([lastName])
+  @@index([phone])
+  @@index([email])
+  @@map("people")
+}
+
+// Agrupación de personas en un hogar/familia. Una persona puede
+// pertenecer a más de un hogar (N:M vía HouseholdMember).
+model Household {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members HouseholdMember[]
+
+  @@map("households")
+}
+
+// Tabla intermedia Person <-> Household, con el rol de la persona
+// dentro de ese hogar.
+model HouseholdMember {
+  id          String              @id @default(uuid()) @db.Uuid
+  personId    String              @db.Uuid
+  householdId String              @db.Uuid
+  role        HouseholdMemberRole
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  person    Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, householdId])
+  @@map("household_members")
+}
+
+// Aseguradora. Administrable como dato, nunca hardcodeada en código.
+model Carrier {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@map("carriers")
+}
+
+// Producto/plan ofrecido por un carrier. Fuente de verdad del tipo de
+// seguro y del carrier de una póliza (Policy no duplica estos datos).
+model Product {
+  id           String     @id @default(uuid()) @db.Uuid
+  carrierId    String     @db.Uuid
+  name         String
+  policyType   PolicyType
+  planYear     Int?
+  externalCode String?
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+
+  @@index([carrierId, policyType, planYear])
+  @@map("products")
 }
