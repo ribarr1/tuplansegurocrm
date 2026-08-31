@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -43,12 +44,14 @@ export function UserMenu({ name, role }: { name: string; role: UserRole }) {
         <span className="hidden text-sm font-medium sm:inline">{name}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel className="flex flex-col">
-          <span className="text-sm font-medium">{name}</span>
-          <span className="text-xs font-normal text-muted-foreground">
-            {ROLE_LABELS[role]}
-          </span>
-        </DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="flex flex-col">
+            <span className="text-sm font-medium">{name}</span>
+            <span className="text-xs font-normal text-muted-foreground">
+              {ROLE_LABELS[role]}
+            </span>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleLogout}>
           <LogOut className="size-4" />

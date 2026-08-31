@@ -108,6 +108,7 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/policies/new?holderId=<id>` | Nueva póliza (titular preseleccionado, cambiable) |
 | `/policies/[id]` | Detalle de póliza: resumen, fechas/pago, personas cubiertas |
 | `/policies/[id]/edit` | Editar póliza (campos administrativos; producto solo si está Pendiente) |
+| `/policies/[id]/health` | Agregar/editar información de salud (solo pólizas tipo Salud) |
 | `/settings` | Configuración: acceso a Compañías y Productos |
 | `/settings/carriers` | Lista de compañías; crear/editar/activar-desactivar (solo ADMIN) |
 | `/settings/products` | Lista de productos: filtro por compañía/tipo/estado; crear/editar/activar-desactivar (solo ADMIN) |
@@ -144,6 +145,14 @@ npm run seed:dev
 Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáticamente en ningún flujo, y no crea personas/hogares/pólizas — solo el catálogo, con nombres claramente marcados `(Dev Seed)`.
 
 `seed:dev` es solo para desarrollo. La administración real del catálogo (crear compañías/productos, editarlos, activarlos/desactivarlos) se hace desde **Configuración → Compañías / Productos** (`/settings/carriers`, `/settings/products`), solo ADMIN puede crear/editar/desactivar — AGENT/ASSISTANT pueden consultar el catálogo pero no modificarlo. Un producto que ya fue usado en al menos una póliza no puede cambiar de compañía, tipo de seguro ni año de plan (protege el significado histórico de pólizas ya emitidas); desactivar una compañía vuelve inelegibles todos sus productos para pólizas nuevas, sin afectar las ya emitidas.
+
+### Pólizas de salud
+
+`HealthPolicyDetail` es una extensión 1:1 de `Policy`, solo para pólizas con producto de tipo Salud. No se crea automáticamente al crear la póliza — desde `/policies/[id]` aparece la sección "Información del plan de salud" con un botón para agregarla cuando todavía no existe.
+
+- Marketplace (Application ID, estado de 2 letras), nombre del plan (snapshot histórico, editable pero no se resincroniza si el producto cambia de nombre después), financiero de Marketplace (crédito fiscal, ingreso utilizado) y cost sharing (deducibles y out-of-pocket individual/familiar).
+- **`incomeUsed` y `taxCreditAmount` son información financiera personal sensible.** ASSISTANT nunca los ve ni puede modificarlos — el servidor los omite de la respuesta y rechaza cualquier intento de escritura, no es solo un campo oculto en el formulario. Ver [docs/SECURITY.md](docs/SECURITY.md).
+- Nunca aparece en listados generales de pólizas — solo se consulta explícitamente desde el detalle de una póliza de Salud.
 
 UI construida con [shadcn/ui](https://ui.shadcn.com) (preset `base-nova`, sobre [Base UI](https://base-ui.com), no Radix — los componentes que envuelven un `<Link>` u otro elemento no-botón usan `render={<Link ... />}` + `nativeButton={false}`, no `asChild`).
 

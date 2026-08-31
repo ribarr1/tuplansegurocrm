@@ -15,6 +15,7 @@ import {
   BILLING_FREQUENCY_LABELS,
   PAYMENT_STATUS_LABELS,
 } from "@/lib/labels";
+import { HealthPolicySection } from "./health-section";
 
 function formatDate(date: Date | null): string {
   if (!date) return "—";
@@ -183,6 +184,10 @@ export default async function PolicyDetailPage({
           )}
         </CardContent>
       </Card>
+
+      {policy.product.policyType === "HEALTH" && (
+        <HealthPolicySection actor={actor} policyId={policy.id} />
+      )}
     </div>
   );
 }

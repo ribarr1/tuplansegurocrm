@@ -27,7 +27,18 @@ Notas de seguridad específicas del proyecto. No es una política general — so
 
 ## Información médica y financiera — acceso futuro
 
-`PersonProvider`, `PersonMedication`, `HealthPolicyDetail`, `CommissionExpectation`, `CommissionPayment` requieren autorización server-side cuando sus módulos se construyan — nunca deben quedar accesibles solo porque alguien conozca la URL. Con Auth ya implementado (`requireUser()`/`requireRole()` disponibles), cada endpoint/Server Action de esos módulos debe usarlos explícitamente.
+`PersonProvider`, `PersonMedication`, `CommissionExpectation`, `CommissionPayment` requieren autorización server-side cuando sus módulos se construyan — nunca deben quedar accesibles solo porque alguien conozca la URL. Con Auth ya implementado (`requireUser()`/`requireRole()` disponibles), cada endpoint/Server Action de esos módulos debe usarlos explícitamente.
+
+## `HealthPolicyDetail` — Fase 013
+
+Clasificación: **SENSIBLE / FINANCIERO relacionado con salud**. Particularmente `incomeUsed` (ingreso usado en la aplicación de Marketplace) y `taxCreditAmount` (crédito fiscal): son datos financieros personales del cliente, no datos operativos del plan.
+
+- **Autorización server-side, nunca solo ocultar en UI.** `health-policies.service.ts` reutiliza exactamente `assertCanAccessPolicy` (misma política que `Policy`) para ver/crear/editar: ADMIN y ASSISTANT sin restricción de asignación, AGENT solo si tiene acceso al titular o a algún miembro cubierto.
+- **ASSISTANT nunca recibe `incomeUsed`/`taxCreditAmount` en la respuesta del servicio.** `getHealthPolicyDetail` omite esas dos propiedades del objeto devuelto para ASSISTANT (no solo las pone en `null` — la clave ni siquiera existe en el objeto), y ese objeto ya redactado es lo único que llega al Client Component. `createHealthPolicyDetail`/`updateHealthPolicyDetail` rechazan explícitamente (`FORBIDDEN`) cualquier intento de ASSISTANT de escribir esos dos campos, incluso si el request los incluye a mano — la UI simplemente no renderiza esos inputs para ASSISTANT, pero esa omisión es conveniencia, no el control real.
+- **Resto de campos** (`marketplaceApplicationId`, `marketplaceState`, `planNameSnapshot`, deducibles, out-of-pocket) se consideran datos administrativos/del plan, no financieros personales — ASSISTANT los lee y escribe sin restricción.
+- **No debe aparecer en listados generales.** `listPolicies`, `getPoliciesForPerson` y el `getPolicyById` básico (usado por `/policies`, el tab "Pólizas" de un contacto, y el resumen de `/policies/[id]`) **nunca** incluyen `HealthPolicyDetail` — se consulta únicamente vía `getHealthPolicyDetail`, llamado explícitamente solo desde la sección "Información del plan de salud" de `/policies/[id]` y desde `/policies/[id]/health`. Verificado en tests (`health-policies.service.test.ts`, casos U/V): ni el listado de pólizas ni el detalle básico de una póliza exponen la clave `healthDetail`.
+- **`incomeUsed`/`taxCreditAmount` nunca deben registrarse en logs** — igual que el resto de montos financieros del proyecto (ver principio general en la sección de Comisiones de `docs/DECISIONS.md`), un log de error debe referenciar el `id` de la póliza, nunca los valores del `HealthPolicyDetail`.
+- **`HealthPolicyDetail` solo existe para `Policy.product.policyType === HEALTH`**, validado en el servicio (`assertIsHealthPolicy`) antes de crear/editar — nunca mediante trigger de base de datos (mismo patrón que la regla equivalente documentada en la migración 002).
 
 Reglas específicas para `PersonProvider`/`PersonMedication` (información médica operacional, más sensible que el resto del CRM — el CRM no es un sistema clínico, ver [DECISIONS.md](./DECISIONS.md)):
 

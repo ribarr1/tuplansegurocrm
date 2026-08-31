@@ -80,9 +80,9 @@ const policySelect = {
   members: { select: memberSelect, orderBy: { createdAt: "asc" } },
 } satisfies Prisma.PolicySelect;
 
-type AccessPersons = { assignedAgentId: string | null }[];
+export type PolicyAccessPersons = { assignedAgentId: string | null }[];
 
-function canAccessPolicy(actor: AuthorizedUser, involved: AccessPersons): boolean {
+export function canAccessPolicy(actor: AuthorizedUser, involved: PolicyAccessPersons): boolean {
   if (actor.role === "ADMIN" || actor.role === "ASSISTANT") return true;
   if (actor.role === "AGENT") {
     return involved.some((p) => p.assignedAgentId === null || p.assignedAgentId === actor.id);
@@ -90,7 +90,10 @@ function canAccessPolicy(actor: AuthorizedUser, involved: AccessPersons): boolea
   return false;
 }
 
-function assertCanAccessPolicy(actor: AuthorizedUser, involved: AccessPersons): void {
+// Exportada para que health-policies.service.ts reutilice exactamente la
+// misma política de acceso a Policy — un HealthPolicyDetail es una
+// extensión de su Policy, nunca tiene una regla de acceso propia.
+export function assertCanAccessPolicy(actor: AuthorizedUser, involved: PolicyAccessPersons): void {
   if (!canAccessPolicy(actor, involved)) {
     throw new AppError("FORBIDDEN", "No tienes acceso a esta póliza.");
   }
