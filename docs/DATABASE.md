@@ -154,3 +154,35 @@ Un chargeback posterior puede volver a bajar `totalReceived` por debajo de `expe
 ### Fuera de alcance de esta migración
 
 `PersonProvider`, `PersonMedication`, `PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, `AuditLog`, autenticación, UI funcional, importación automática de archivos de carriers. Ver [DECISIONS.md](./DECISIONS.md).
+
+## Migración 005 — Health Operational Data
+
+Agrega información médica operativa **mínima** para atender al cliente. El CRM no es un sistema clínico — ver [SECURITY.md](./SECURITY.md) para los controles de acceso previstos sobre estas dos tablas.
+
+### Tablas
+
+- **`person_providers`** — Médico/proveedor conocido asociado a una persona (PCP o especialista). Una persona puede tener cero, uno o varios.
+- **`person_medications`** — Medicamento informado por el cliente. `isActive` permite discontinuarlo conservando su historial, sin borrar la fila (igual patrón que `contactStatus` en `Person`, no `deletedAt`).
+
+### Enums
+
+- `ProviderType`: PCP, SPECIALIST, OTHER
+
+### Constraints e índices
+
+- **Sin constraints de unicidad** — una persona puede tener dos proveedores con el mismo nombre, o historial de medicamentos repetidos con distinta dosis/período; forzar unicidad sería artificial.
+- `person_providers.personId`, `person_medications.personId` — índices de acceso principal
+- `person_medications(personId, isActive)` — índice compuesto para el caso de uso principal: "medicamentos activos de esta persona"
+- Sin índices sobre `name`/`specialty` todavía, sin necesidad demostrada
+
+### Alcance de `notes`
+
+`notes` en ambas tablas es de uso **estrictamente operativo** (ej. preferencias de horario, cambios de contacto del proveedor, "el cliente ya no ve a este especialista"). **Nunca** diagnósticos, condiciones médicas, resultados de laboratorio o narrativa clínica.
+
+### Campos deliberadamente excluidos
+
+`diagnosis`, `condition`, códigos ICD, historial médico, resultados de laboratorio, alergias, cirugías, historial de hospitalización, información de embarazo, historial de salud mental, detalles de discapacidad, documentos de recetas. Ninguno de estos pertenece a esta migración ni al alcance actual del CRM.
+
+### Fuera de alcance de esta migración
+
+`PaymentMethodReference`, `Opportunity`, `Application`/`Quote`, `AuditLog`, autenticación, documentos médicos, claims, recetas electrónicas, UI funcional. Ver [DECISIONS.md](./DECISIONS.md) y [SECURITY.md](./SECURITY.md).

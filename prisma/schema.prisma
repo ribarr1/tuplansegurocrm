@@ -89,6 +89,8 @@ model Person {
   tasks             Task[]
   notes             Note[]
   birthdayGreetings BirthdayGreeting[]
+  providers         PersonProvider[]
+  medications       PersonMedication[]
 
   @@index([lastName])
   @@index([phone])
@@ -460,4 +462,61 @@ model CommissionPayment {
   @@index([commissionExpectationId])
   @@index([receivedAt])
   @@map("commission_payments")
+}
+
+// ---------------------------------------------------------------------------
+// Migración 005 — Health Operational Data
+// ---------------------------------------------------------------------------
+
+enum ProviderType {
+  PCP
+  SPECIALIST
+  OTHER
+}
+
+// Médico/proveedor conocido asociado a una persona. Información
+// operativa mínima para atender al cliente (a quién contactar, con
+// quién coordinar) — NO es un sistema clínico. notes es de uso
+// estrictamente operativo (ej. preferencias de horario, cambios de
+// contacto); nunca debe usarse para diagnósticos, condiciones o
+// historia médica. Ver docs/SECURITY.md sobre control de acceso.
+model PersonProvider {
+  id           String       @id @default(uuid()) @db.Uuid
+  personId     String       @db.Uuid
+  type         ProviderType
+  name         String
+  specialty    String?
+  phone        String?
+  organization String?
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@index([personId])
+  @@map("person_providers")
+}
+
+// Medicamento informado por el cliente, relevante para su operación
+// de seguros. Mismo alcance operativo limitado que PersonProvider:
+// no diagnósticos, no condiciones, no narrativa clínica. isActive
+// permite discontinuar un medicamento conservando su historial, en
+// vez de borrar la fila.
+model PersonMedication {
+  id        String   @id @default(uuid()) @db.Uuid
+  personId  String   @db.Uuid
+  name      String
+  dosage    String?
+  frequency String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@index([personId])
+  @@index([personId, isActive])
+  @@map("person_medications")
 }
