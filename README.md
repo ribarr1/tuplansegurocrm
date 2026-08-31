@@ -125,6 +125,8 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/commissions` | Lista de comisiones esperadas: búsqueda, filtro por período/agente/compañía/estado, paginación (ASSISTANT: sin acceso) |
 | `/commissions/new?policyId=<id>` | Nueva comisión esperada (solo ADMIN, desde el detalle de una póliza) |
 | `/commissions/[id]` | Detalle de comisión: montos, movimientos, editar/registrar pago/cancelar (solo ADMIN); AGENT ve la misma información en solo lectura |
+| `/premiums` | Lista de seguimiento de pago: vistas rápidas (Vence hoy, Próximos 7/30 días, Vencidas) + filtros |
+| `/policies/[id]/premium` | Editar seguimiento de pago de una póliza (prima, frecuencia, próximo vencimiento, autopay, asistencia, estado de pago) |
 
 No existe eliminación de contactos, pólizas, compañías, productos ni tareas (no hay borrado físico en el CRM — las tareas se cierran con estado `COMPLETED`/`CANCELLED`, el resto se retira con `isActive`/`inactivo`). La única excepción es "Restablecer felicitación" (solo ADMIN), que sí borra el registro anual de `BirthdayGreeting` — es un tracking, no una entidad de negocio con historial (ver docs/DECISIONS.md).
 
@@ -201,6 +203,19 @@ Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáti
 - **Cancelar una comisión esperada no la borra** — solo bloquea nuevos movimientos; los ya registrados siguen visibles.
 - **ASSISTANT no tiene ningún acceso a este módulo** (ni en el menú, ni navegando directamente a `/commissions` — recibe un 403). AGENT ve en solo lectura las comisiones de pólizas a las que ya tiene acceso. Solo ADMIN crea/edita/cancela expectativas y registra movimientos. Ver [docs/SECURITY.md](docs/SECURITY.md).
 - Nunca aparece en Contactos, Hogares, Tareas, Cumpleaños ni el listado general de Pólizas — solo en `/commissions`, el detalle de una comisión, o la sección "Comisiones" (oculta para ASSISTANT) del detalle de una póliza.
+
+Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
+
+### Primas / Seguimiento de pago
+
+No existe ninguna entidad de pagos: este módulo gestiona directamente 6 campos ya existentes de `Policy` (`premiumAmount`, `billingFrequency`, `nextPaymentDueDate`, `autopay`, `needsPaymentAssistance`, `paymentStatus`). Representa **únicamente el estado actual / próximo pago** — nunca un historial de pagos, recibos, pagos parciales ni conciliación.
+
+- **`PaymentStatus` real solo tiene tres valores**: Al día (`CURRENT`), Por vencer (`DUE`), Vencido (`PAST_DUE`) — no existe un valor "Pagado" separado; "Marcar al día" es la acción equivalente.
+- **"Vencida" se calcula, nunca se guarda**: una póliza con `nextPaymentDueDate` en el pasado se marca vencida, salvo que su estado ya sea "Al día" — un hecho de negocio confirmado pesa más que una fecha potencialmente desactualizada.
+- **Marcar un estado nunca avanza automáticamente `nextPaymentDueDate`.** El sistema no asume ningún calendario de facturación del carrier — el usuario ajusta la próxima fecha manualmente desde "Editar seguimiento de pago" cuando corresponda.
+- **`needsPaymentAssistance` se destaca visualmente** ("Requiere asistencia") y tiene su propio filtro en `/premiums` — corresponde al mismo indicador que ya se usaba en el Excel anterior del negocio.
+- **ASSISTANT tiene acceso completo a este módulo** (ver y editar), a diferencia de Comisiones — es seguimiento operativo del cobro al cliente, no comisión del agente. AGENT ve/edita solo pólizas dentro de su acceso; ADMIN acceso total. Ver [docs/SECURITY.md](docs/SECURITY.md).
+- Nunca aparece con datos de Comisiones ni de Salud — solo los 6 campos propios de seguimiento de pago.
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
 

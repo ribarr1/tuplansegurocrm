@@ -5,6 +5,7 @@ import {
   FileText,
   CheckSquare,
   DollarSign,
+  CreditCard,
   Cake,
   Settings,
 } from "lucide-react";
@@ -17,10 +18,10 @@ export type NavItem = {
 };
 
 // "Dashboard", "Contactos", "Pólizas", "Tareas", "Comisiones",
-// "Cumpleaños" y "Configuración" tienen módulo real en esta fase. El
-// resto queda visible (para transmitir el mapa completo del CRM) pero
-// deshabilitado — nunca navegan a una página que finja funcionalidad
-// que no existe todavía.
+// "Primas / Pagos", "Cumpleaños" y "Configuración" tienen módulo real
+// en esta fase. El resto queda visible (para transmitir el mapa
+// completo del CRM) pero deshabilitado — nunca navegan a una página
+// que finja funcionalidad que no existe todavía.
 //
 // "Comisiones" es FINANCIERO/RESTRINGIDO: ASSISTANT no debe verlo en el
 // menú (ver filtrado por rol en el componente de shell) y además recibe
@@ -32,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Pólizas", href: "/policies", icon: FileText, enabled: true },
   { label: "Tareas", href: "/tasks", icon: CheckSquare, enabled: true },
   { label: "Comisiones", href: "/commissions", icon: DollarSign, enabled: true },
+  { label: "Primas / Pagos", href: "/premiums", icon: CreditCard, enabled: true },
   { label: "Cumpleaños", href: "/birthdays", icon: Cake, enabled: true },
 ];
 

@@ -69,6 +69,16 @@ Clasificación: **FINANCIERO / RESTRINGIDO**. `CommissionExpectation` (monto esp
 - **`expectedAmount`, montos de pagos, chargebacks y cualquier agregado financiero nunca deben registrarse en logs normales de aplicación.** Si un log necesita referenciar un movimiento o una expectativa, debe usar su `id`, nunca los montos.
 - **Sin borrado de `CommissionPayment` en ningún rol, incluido ADMIN.** No existe una función de servicio para borrar o reescribir el monto/tipo de un pago ya creado — cualquier corrección exige un `ADJUSTMENT` nuevo, preservando el historial completo de movimientos como registro de auditoría implícito.
 
+## Primas / Seguimiento de pago — Fase 017
+
+Clasificación: **FINANCIERO OPERATIVO** — distinto de Comisiones (**FINANCIERO RESTRINGIDO**, ver sección anterior). La distinción importa: Comisiones es dinero que gana la agencia (ingreso propio, ASSISTANT sin acceso); Primas/Seguimiento de pago es el estado del cobro al cliente (trabajo operativo diario, ASSISTANT sí participa).
+
+- **ADMIN**: acceso total. **AGENT**: ve y edita seguimiento de pago solo de pólizas dentro de su acceso operativo (misma regla que `Policy`/`Task`/Comisiones). **ASSISTANT**: acceso completo, igual que ADMIN/AGENT sin restricción de asignación — decisión explícita distinta de Comisiones.
+- **No otorga acceso a información de salud ni de comisiones.** Que ASSISTANT tenga acceso a Primas no cambia su acceso a `HealthPolicyDetail` (sigue redactado según Fase 013) ni a Comisiones (sigue `FORBIDDEN` según Fase 016) — son autorizaciones completamente independientes, verificadas en el servicio de cada módulo.
+- **No se almacena ni se muestra ningún dato de método de pago real**: sin número de tarjeta, cuenta bancaria, routing number, CVV, ni credenciales de portales de aseguradoras o Marketplace. Los 6 campos de este módulo (`premiumAmount`, `billingFrequency`, `nextPaymentDueDate`, `autopay`, `needsPaymentAssistance`, `paymentStatus`) son seguimiento operativo, no datos de pago — ver `docs/DECISIONS.md` para el detalle de cada campo.
+- **`premiumAmount` no debe registrarse en logs normales de aplicación** — mismo principio que el resto de montos financieros del proyecto (Comisiones, `HealthPolicyDetail`). Un log de error debe referenciar el `id` de la póliza, nunca el monto.
+- **Minimización de datos**: `listPremiumTracking`/`getPremiumTrackingForPolicy` nunca incluyen `CommissionExpectation`/`CommissionPayment`, `HealthPolicyDetail`, `PersonProvider` ni `PersonMedication` en su `select` — verificado explícitamente en tests (`premiums.service.test.ts`, casos Y/Z).
+
 ## Cumpleaños (Fase 015) — acceso más estricto que la vista general de Person
 
 `/birthdays` surfacea nombre, teléfono, email, fecha de nacimiento y estado de contacto de forma escaneable en una sola pantalla — más expuesto que navegar `/contacts` uno por uno. Por eso, a diferencia de la política general de `Person` (Fase 008, donde cualquier usuario activo puede ver la lista completa de contactos), `listBirthdays` restringe explícitamente a AGENT a solo los contactos a los que ya tiene acceso operativo (sin asignar o asignados a sí mismo), filtrado server-side en el `where` de Prisma — nunca se trae la lista completa y se oculta después en el cliente. ADMIN y ASSISTANT ven todos.

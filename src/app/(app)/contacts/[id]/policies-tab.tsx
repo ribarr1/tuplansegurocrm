@@ -55,10 +55,16 @@ export async function PoliciesTab({ actor, personId }: { actor: AuthorizedUser; 
                     </Badge>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                   <span>{POLICY_TYPE_LABELS[policy.product.policyType]}</span>
                   <span>{policy.product.carrier.name}</span>
                   <span>Efectiva: {formatDate(policy.effectiveDate)}</span>
+                  {policy.nextPaymentDueDate && (
+                    <span>Próximo pago: {formatDate(policy.nextPaymentDueDate)}</span>
+                  )}
+                  {policy.needsPaymentAssistance && (
+                    <Badge variant="secondary">Requiere asistencia</Badge>
+                  )}
                 </div>
               </Link>
             );

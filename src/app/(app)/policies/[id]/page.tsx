@@ -12,21 +12,15 @@ import {
   POLICY_TYPE_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
   POLICY_MEMBER_ROLE_LABELS,
-  BILLING_FREQUENCY_LABELS,
-  PAYMENT_STATUS_LABELS,
 } from "@/lib/labels";
 import { HealthPolicySection } from "./health-section";
 import { PolicyTasksSection } from "./tasks-section";
 import { PolicyCommissionsSection } from "./commissions-section";
+import { PremiumSection } from "./premium-section";
 
 function formatDate(date: Date | null): string {
   if (!date) return "—";
   return new Intl.DateTimeFormat("es-US", { dateStyle: "long", timeZone: "UTC" }).format(date);
-}
-
-function formatMoney(amount: unknown): string {
-  if (amount === null || amount === undefined) return "—";
-  return `$${Number(amount).toFixed(2)}`;
 }
 
 export default async function PolicyDetailPage({
@@ -119,7 +113,7 @@ export default async function PolicyDetailPage({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Fechas y pago</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Fechas</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 text-sm">
             <div className="flex justify-between gap-4">
@@ -130,33 +124,11 @@ export default async function PolicyDetailPage({
               <span className="text-muted-foreground">Fecha de terminación</span>
               <span>{formatDate(policy.terminationDate)}</span>
             </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Prima</span>
-              <span>{formatMoney(policy.premiumAmount)}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Frecuencia de pago</span>
-              <span>{policy.billingFrequency ? BILLING_FREQUENCY_LABELS[policy.billingFrequency] : "—"}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Próximo pago</span>
-              <span>{formatDate(policy.nextPaymentDueDate)}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Estado de pago</span>
-              <span>{policy.paymentStatus ? PAYMENT_STATUS_LABELS[policy.paymentStatus] : "—"}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Autopay</span>
-              <span>{policy.autopay ? "Sí" : "No"}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Necesita asistencia de pago</span>
-              <span>{policy.needsPaymentAssistance ? "Sí" : "No"}</span>
-            </div>
           </CardContent>
         </Card>
       </div>
+
+      <PremiumSection actor={actor} policyId={policy.id} />
 
       <Card>
         <CardHeader>
