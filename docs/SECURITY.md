@@ -57,6 +57,10 @@ Reglas específicas para `PersonProvider`/`PersonMedication` (información médi
 - El CRM nunca almacena contraseñas de portales de aseguradoras, credenciales de Marketplace, número completo de tarjeta, CVV, ni cuentas bancarias completas. Ver [DECISIONS.md](./DECISIONS.md) para el detalle por entidad.
 - `User` (usuario interno) ya tiene autenticación (Better Auth); ver sección "Autenticación" arriba para el detalle.
 
+## Cumpleaños (Fase 015) — acceso más estricto que la vista general de Person
+
+`/birthdays` surfacea nombre, teléfono, email, fecha de nacimiento y estado de contacto de forma escaneable en una sola pantalla — más expuesto que navegar `/contacts` uno por uno. Por eso, a diferencia de la política general de `Person` (Fase 008, donde cualquier usuario activo puede ver la lista completa de contactos), `listBirthdays` restringe explícitamente a AGENT a solo los contactos a los que ya tiene acceso operativo (sin asignar o asignados a sí mismo), filtrado server-side en el `where` de Prisma — nunca se trae la lista completa y se oculta después en el cliente. ADMIN y ASSISTANT ven todos.
+
 ## Variables de entorno y secretos
 
 - `.env` está excluido de Git (`.gitignore`); solo `.env.example` con valores ficticios se versiona.

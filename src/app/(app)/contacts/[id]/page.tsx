@@ -6,10 +6,18 @@ import { AppError } from "@/services/errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CONTACT_STATUS_BADGE_VARIANT, CONTACT_STATUS_LABELS } from "@/lib/labels";
+import {
+  CONTACT_STATUS_BADGE_VARIANT,
+  CONTACT_STATUS_LABELS,
+  BIRTHDAY_GREETING_STATUS_LABELS,
+  BIRTHDAY_GREETING_STATUS_BADGE_VARIANT,
+} from "@/lib/labels";
+import { getBirthdayForPerson } from "@/services/birthdays.service";
 import { FamilyTab } from "./family-tab";
 import { PoliciesTab } from "./policies-tab";
 import { TasksTab } from "./tasks-tab";
+import { MarkSentDialog } from "../../birthdays/mark-sent-dialog";
+import { SkipGreetingButton } from "../../birthdays/greeting-quick-buttons";
 
 const PROFILE_TABS = [
   { key: "resumen", label: "Resumen", enabled: true },
@@ -48,6 +56,8 @@ export default async function ContactDetailPage({
     }
     throw error;
   }
+
+  const birthday = person.dateOfBirth ? await getBirthdayForPerson(actor, person.id) : null;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -128,6 +138,21 @@ export default async function ContactDetailPage({
                 <span className="text-muted-foreground">Fecha de nacimiento</span>
                 <span>{formatDate(person.dateOfBirth)}</span>
               </div>
+              {birthday && (
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted-foreground">Felicitación {birthday.year}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={BIRTHDAY_GREETING_STATUS_BADGE_VARIANT[birthday.greeting.status]}>
+                      {BIRTHDAY_GREETING_STATUS_LABELS[birthday.greeting.status]}
+                    </Badge>
+                    <MarkSentDialog
+                      personId={person.id}
+                      personName={`${person.firstName} ${person.lastName}`}
+                    />
+                    <SkipGreetingButton personId={person.id} />
+                  </div>
+                </div>
+              )}
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground">Agente asignado</span>
                 <span>{person.assignedAgent?.name ?? "Sin asignar"}</span>

@@ -9,10 +9,11 @@ import {
   TASK_PRIORITY_LABELS,
   TASK_PRIORITY_BADGE_VARIANT,
 } from "@/lib/labels";
+import { formatInBusinessTimeZone } from "@/lib/business-time";
 
 function formatDueAt(date: Date | null): string {
   if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
+  return formatInBusinessTimeZone(date, { dateStyle: "medium", timeStyle: "short" });
 }
 
 export async function TasksTab({ actor, personId }: { actor: AuthorizedUser; personId: string }) {

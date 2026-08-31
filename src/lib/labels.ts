@@ -10,6 +10,8 @@ import type {
   PaymentStatus,
   TaskStatus,
   TaskPriority,
+  BirthdayGreetingStatus,
+  BirthdayGreetingChannel,
 } from "@/generated/prisma/client";
 
 // Solo presentación — los valores de enum en la base de datos no cambian.
@@ -128,4 +130,26 @@ export const TASK_PRIORITY_BADGE_VARIANT: Record<
   NORMAL: "secondary",
   HIGH: "default",
   URGENT: "destructive",
+};
+
+export const BIRTHDAY_GREETING_STATUS_LABELS: Record<BirthdayGreetingStatus, string> = {
+  PENDING: "Pendiente",
+  SENT: "Enviada",
+  SKIPPED: "Omitida",
+};
+
+export const BIRTHDAY_GREETING_STATUS_BADGE_VARIANT: Record<
+  BirthdayGreetingStatus,
+  "default" | "secondary" | "outline"
+> = {
+  PENDING: "secondary",
+  SENT: "default",
+  SKIPPED: "outline",
+};
+
+export const BIRTHDAY_GREETING_CHANNEL_LABELS: Record<BirthdayGreetingChannel, string> = {
+  WHATSAPP: "WhatsApp",
+  SMS: "SMS",
+  EMAIL: "Email",
+  OTHER: "Otro",
 };

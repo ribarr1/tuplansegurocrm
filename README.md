@@ -88,6 +88,10 @@ Con el servidor corriendo (`npm run dev`), entra a [http://localhost:3000/login]
 
 Ver `.env.example`: `BETTER_AUTH_SECRET` (genera el tuyo con `npx @better-auth/cli secret`) y `BETTER_AUTH_URL`.
 
+### Zona horaria de negocio
+
+`APP_TIME_ZONE` (ver `.env.example`) — identificador IANA (ej. `America/Chicago`) usado para calcular "hoy"/"este mes" en Tareas y Cumpleaños de forma consistente, sin importar en qué zona horaria corre el servidor. **Obligatoria**: si falta o es inválida, la aplicación falla con un mensaje claro en cuanto se usa, en vez de continuar con una zona adivinada. Sin soporte multi-timezone por usuario en V1 — TuPlanSeguro USA opera en una sola zona horaria.
+
 ## Capa de servicios
 
 La lógica de negocio vive en `src/services/*.service.ts`, no directamente en páginas/Route Handlers. Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el flujo completo (UI → autorización → servicio → Prisma).
@@ -117,8 +121,9 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/tasks/new?personId=<id>` / `?policyId=<id>` | Nueva tarea (contexto de contacto/póliza preseleccionado) |
 | `/tasks/[id]` | Detalle de tarea: completar, cancelar, editar |
 | `/tasks/[id]/edit` | Editar tarea (reabrir una tarea completada/cancelada requiere ADMIN) |
+| `/birthdays` | Cumpleaños: vistas rápidas (Hoy, Este mes, Próximos, Todos), marcar enviada/omitida |
 
-Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no tienen módulo todavía. No existe eliminación de contactos, pólizas, compañías, productos ni tareas (no hay borrado físico en el CRM — las tareas se cierran con estado `COMPLETED`/`CANCELLED`, el resto se retira con `isActive`/`inactivo`).
+Comisiones aparece en la navegación pero deshabilitada — no tiene módulo todavía. No existe eliminación de contactos, pólizas, compañías, productos ni tareas (no hay borrado físico en el CRM — las tareas se cierran con estado `COMPLETED`/`CANCELLED`, el resto se retira con `isActive`/`inactivo`). La única excepción es "Restablecer felicitación" (solo ADMIN), que sí borra el registro anual de `BirthdayGreeting` — es un tracking, no una entidad de negocio con historial (ver docs/DECISIONS.md).
 
 ### Tareas / Seguimiento
 
@@ -127,7 +132,19 @@ Comisiones y Cumpleaños aparecen en la navegación pero deshabilitados — no t
 - **"Vencida" no es un estado guardado** — se deriva de `dueAt` en el pasado + estado todavía activo (`OPEN`/`IN_PROGRESS`). Una tarea completada o cancelada nunca aparece como vencida, aunque su fecha ya haya pasado.
 - **Responsable (`assignedToId`)**: un AGENT siempre queda asignado a sí mismo al crear una tarea y nunca puede reasignarla — ADMIN y ASSISTANT pueden asignar a cualquier agente activo o dejarla sin asignar.
 - **Reabrir una tarea completada o cancelada requiere ADMIN.**
-- La fecha/hora de vencimiento se interpreta en hora local (sin selector de zona horaria — el CRM asume una sola zona horaria para toda la operación).
+- La fecha/hora de vencimiento se interpreta según `APP_TIME_ZONE` (ver arriba), no la zona horaria del proceso — corregido en Fase 015.
+
+Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y [docs/DECISIONS.md](docs/DECISIONS.md).
+
+### Cumpleaños
+
+`Person.dateOfBirth` es la única fuente de verdad del cumpleaños — nunca se duplica en otra tabla. `BirthdayGreeting` registra únicamente la gestión anual (enviada/omitida), y permanece sparse a propósito: la ausencia de registro para (persona, año) se interpreta como "Pendiente", nunca se crean filas para todas las personas al empezar el año.
+
+- Vistas rápidas en `/birthdays`: Hoy, Este mes, Próximos (30 días, cruza diciembre → enero), Todos.
+- **Nacidos el 29 de febrero**: en un año no bisiesto, su cumpleaños operativo se celebra el 28 de febrero (convención V1) — `dateOfBirth` nunca se modifica.
+- **"Marcar como enviada" no envía ningún mensaje.** Solo registra que el agente ya lo hizo por fuera del CRM (WhatsApp/SMS/email reales quedan para una integración futura).
+- **AGENT solo ve cumpleaños de contactos a los que tiene acceso** (sin asignar o asignados a sí mismo) — más restrictivo que la vista general de Contactos, porque `/birthdays` expone datos personales de forma escaneable.
+- **"Restablecer felicitación" (solo ADMIN)** corrige un clic accidental, borrando el registro de ese año específico — vuelve al estado "Pendiente" derivado.
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y [docs/DECISIONS.md](docs/DECISIONS.md).
 

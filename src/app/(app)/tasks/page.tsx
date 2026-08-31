@@ -21,6 +21,7 @@ import {
   TASK_PRIORITY_BADGE_VARIANT,
 } from "@/lib/labels";
 import { TASK_STATUS_VALUES, TASK_PRIORITY_VALUES } from "@/schemas/task.schema";
+import { formatInBusinessTimeZone } from "@/lib/business-time";
 
 type SearchParams = {
   q?: string;
@@ -48,7 +49,7 @@ function buildHref(current: SearchParams, overrides: Partial<SearchParams>): str
 
 function formatDueAt(date: Date | null): string {
   if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
+  return formatInBusinessTimeZone(date, { dateStyle: "medium", timeStyle: "short" });
 }
 
 export default async function TasksPage({

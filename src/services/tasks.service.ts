@@ -4,6 +4,7 @@ import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
 import { canEditPerson } from "@/services/people.service";
 import { canAccessPolicy } from "@/services/policies.service";
+import { getTodayBusinessRange } from "@/lib/business-time";
 import { personIdSchema } from "@/schemas/person.schema";
 import {
   taskIdSchema,
@@ -80,7 +81,10 @@ function isClosedStatus(status: string): status is (typeof TASK_CLOSED_STATUSES)
   return (TASK_CLOSED_STATUSES as readonly string[]).includes(status);
 }
 
-// Derivado, nunca almacenado — ver docs/DECISIONS.md.
+// Derivado, nunca almacenado — ver docs/DECISIONS.md. Comparar dos
+// instantes (dueAt vs. ahora) no depende de ninguna zona horaria de
+// negocio — a diferencia de "hoy", que si depende (ver
+// getTodayBusinessRange más abajo).
 export function isTaskOverdue(task: { status: TaskStatus; dueAt: Date | null }): boolean {
   return Boolean(task.dueAt) && task.dueAt! < new Date() && !isClosedStatus(task.status);
 }
@@ -119,16 +123,6 @@ function agentAccessWhere(actor: AuthorizedUser): Prisma.TaskWhereInput | null {
   };
 }
 
-// Hoy/vencidas se calculan contra la zona horaria local del proceso —
-// V1 asume una sola zona horaria para toda la operación (ver
-// docs/DECISIONS.md), sin soporte multi-timezone todavía.
-function todayLocalRange(): { start: Date; end: Date } {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  return { start, end };
-}
 
 async function assertActiveUser(userId: string): Promise<string> {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, isActive: true } });
@@ -174,7 +168,7 @@ export async function listTasks(actor: AuthorizedUser, rawQuery: unknown) {
     where.status = { in: ["OPEN", "IN_PROGRESS"] };
     where.dueAt = { lt: new Date() };
   } else if (dueToday) {
-    const { start, end } = todayLocalRange();
+    const { start, end } = getTodayBusinessRange();
     where.status = { in: ["OPEN", "IN_PROGRESS"] };
     where.dueAt = { gte: start, lt: end };
   } else if (status) {
