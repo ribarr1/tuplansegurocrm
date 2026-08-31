@@ -101,7 +101,7 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | Ruta | Descripción |
 |---|---|
 | `/login` | Login (email + contraseña) |
-| `/dashboard` | Placeholder — bienvenida y acceso a Contactos |
+| `/dashboard` | Centro de trabajo de hoy: tareas, pagos, cumpleaños, cartera y comisiones (según rol) |
 | `/contacts` | Lista de contactos: búsqueda, filtro por estado, paginación |
 | `/contacts/new` | Crear contacto |
 | `/contacts/[id]` | Detalle de contacto (datos personales + resumen de pólizas/tareas/notas) |
@@ -216,6 +216,20 @@ No existe ninguna entidad de pagos: este módulo gestiona directamente 6 campos 
 - **`needsPaymentAssistance` se destaca visualmente** ("Requiere asistencia") y tiene su propio filtro en `/premiums` — corresponde al mismo indicador que ya se usaba en el Excel anterior del negocio.
 - **ASSISTANT tiene acceso completo a este módulo** (ver y editar), a diferencia de Comisiones — es seguimiento operativo del cobro al cliente, no comisión del agente. AGENT ve/edita solo pólizas dentro de su acceso; ADMIN acceso total. Ver [docs/SECURITY.md](docs/SECURITY.md).
 - Nunca aparece con datos de Comisiones ni de Salud — solo los 6 campos propios de seguimiento de pago.
+
+Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
+
+### Dashboard
+
+`/dashboard` reemplaza el placeholder de bienvenida — responde "¿qué necesita mi atención hoy?", no es un reporte ejecutivo. No implementa ninguna regla propia: compone datos de los módulos existentes (Tareas, Primas/Pagos, Cumpleaños, Pólizas, Comisiones).
+
+- **Hoy**: tareas de hoy, tareas vencidas, pagos vencidos, pólizas que requieren asistencia — cada número es clickeable hacia su listado ya filtrado (`/tasks?dueToday=true`, `/premiums?overdueOnly=true`, etc.).
+- **Tareas prioritarias**: hasta 5, ordenadas vencidas primero, luego por prioridad (Urgente > Alta > Normal > Baja), luego por fecha más cercana.
+- **Primas y pagos**: vencidas, vencen hoy, próximos 7 días, y una lista corta de los casos más urgentes (sin datos bancarios).
+- **Cumpleaños**: hoy y próximos (máx. 5), con estado de felicitación — no envía ningún mensaje desde el Dashboard.
+- **Cartera**: pólizas activas y pendientes. Sin KPI de "Renovaciones" — no existe `renewalDate` en el schema y `previousPolicyId` no es suficiente para calcularlas de forma confiable.
+- **Comisiones ("Dinero")**: solo ADMIN/AGENT (según su alcance). **ASSISTANT no recibe esta sección en absoluto** — ni siquiera se consulta el servicio de Comisiones para ese rol. Distingue "sin comisiones registradas este mes" de "el monto esperado realmente es $0".
+- Sin gráficos, sin Activity Feed, sin auto-refresh/polling — recargar la página trae datos frescos.
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
 

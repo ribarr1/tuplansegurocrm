@@ -28,6 +28,7 @@ export async function createTaskAction(
   }
 
   revalidatePath("/tasks");
+  revalidatePath("/dashboard");
   if (values.personId) revalidatePath(`/contacts/${values.personId}`);
   if (values.policyId) revalidatePath(`/policies/${values.policyId}`);
   redirect(`/tasks/${created.id}`);
@@ -49,6 +50,7 @@ export async function updateTaskAction(
   }
 
   revalidatePath("/tasks");
+  revalidatePath("/dashboard");
   revalidatePath(`/tasks/${id}`);
   if (updated.person) revalidatePath(`/contacts/${updated.person.id}`);
   if (updated.policy) revalidatePath(`/policies/${updated.policy.id}`);
@@ -59,6 +61,7 @@ export async function completeTaskAction(id: string) {
   const actor = await requireSessionUser();
   const updated = await completeTask(actor, id);
   revalidatePath("/tasks");
+  revalidatePath("/dashboard");
   revalidatePath(`/tasks/${id}`);
   if (updated.person) revalidatePath(`/contacts/${updated.person.id}`);
   if (updated.policy) revalidatePath(`/policies/${updated.policy.id}`);
@@ -68,6 +71,7 @@ export async function cancelTaskAction(id: string) {
   const actor = await requireSessionUser();
   const updated = await cancelTask(actor, id);
   revalidatePath("/tasks");
+  revalidatePath("/dashboard");
   revalidatePath(`/tasks/${id}`);
   if (updated.person) revalidatePath(`/contacts/${updated.person.id}`);
   if (updated.policy) revalidatePath(`/policies/${updated.policy.id}`);

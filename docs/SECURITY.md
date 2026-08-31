@@ -79,6 +79,14 @@ Clasificación: **FINANCIERO OPERATIVO** — distinto de Comisiones (**FINANCIER
 - **`premiumAmount` no debe registrarse en logs normales de aplicación** — mismo principio que el resto de montos financieros del proyecto (Comisiones, `HealthPolicyDetail`). Un log de error debe referenciar el `id` de la póliza, nunca el monto.
 - **Minimización de datos**: `listPremiumTracking`/`getPremiumTrackingForPolicy` nunca incluyen `CommissionExpectation`/`CommissionPayment`, `HealthPolicyDetail`, `PersonProvider` ni `PersonMedication` en su `select` — verificado explícitamente en tests (`premiums.service.test.ts`, casos Y/Z).
 
+## Dashboard — Fase 018
+
+El Dashboard es una vista compuesta, no un módulo con reglas propias — su superficie de seguridad es la suma de las reglas ya documentadas para Tareas, Primas/Pagos, Cumpleaños, Pólizas y Comisiones, nunca una regla nueva.
+
+- **ASSISTANT nunca recibe datos de Comisiones en el Dashboard, ni siquiera indirectamente.** `dashboard.service.ts` no agrega la clave `commissions` al objeto devuelto para ese rol — `getDashboard` ni siquiera llama a `listCommissionExpectations` cuando `actor.role === "ASSISTANT"`. Verificado en tests (`dashboard.service.test.ts`, casos C/V/Z: se confirma que la clave está ausente y que el JSON serializado del resultado no contiene la palabra "commissions").
+- **Los conteos y listas del Dashboard heredan el scoping de AGENT de cada servicio de origen** — un AGENT nunca ve en el Dashboard una tarea, póliza, pago o comisión fuera de su cartera, porque `dashboard.service.ts` pasa el `actor` real a cada llamada (`listTasks(actor, ...)`, `listPremiumTracking(actor, ...)`, etc.) sin construir ningún acceso propio. No existe combinación "conteo global + lista filtrada" en ningún bloque — ambos se calculan con el mismo `actor` scoped.
+- **Minimización de datos**: el DTO del Dashboard nunca incluye `HealthPolicyDetail`, `incomeUsed`, `taxCreditAmount`, `PersonProvider`, `PersonMedication`, notas completas de Task, ni ningún dato de método de pago — verificado explícitamente en tests (caso Y).
+
 ## Cumpleaños (Fase 015) — acceso más estricto que la vista general de Person
 
 `/birthdays` surfacea nombre, teléfono, email, fecha de nacimiento y estado de contacto de forma escaneable en una sola pantalla — más expuesto que navegar `/contacts` uno por uno. Por eso, a diferencia de la política general de `Person` (Fase 008, donde cualquier usuario activo puede ver la lista completa de contactos), `listBirthdays` restringe explícitamente a AGENT a solo los contactos a los que ya tiene acceso operativo (sin asignar o asignados a sí mismo), filtrado server-side en el `where` de Prisma — nunca se trae la lista completa y se oculta después en el cliente. ADMIN y ASSISTANT ven todos.

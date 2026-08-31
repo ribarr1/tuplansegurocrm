@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
 import { createPolicy, updatePolicy } from "@/services/policies.service";
 import {
@@ -31,6 +32,9 @@ export async function createPolicyAction(
     return toPolicyFormState(error, scalarValues);
   }
 
+  // Una póliza nueva puede afectar los conteos de Cartera del
+  // Dashboard (Fase 018) — status inicial PENDING casi siempre.
+  revalidatePath("/dashboard");
   redirect(`/policies/${created.id}`);
 }
 
@@ -48,5 +52,8 @@ export async function updatePolicyAction(
     return toPolicyFormState(error, values);
   }
 
+  // status/effectiveDate pueden cambiar aquí — afecta directamente los
+  // conteos Activas/Pendientes del Dashboard.
+  revalidatePath("/dashboard");
   redirect(`/policies/${id}`);
 }

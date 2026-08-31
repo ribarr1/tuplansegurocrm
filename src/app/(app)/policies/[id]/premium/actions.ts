@@ -32,6 +32,7 @@ export async function updatePremiumTrackingAction(
   }
 
   revalidatePath("/premiums");
+  revalidatePath("/dashboard");
   revalidatePath(`/policies/${policyId}`);
   redirect(`/policies/${policyId}`);
 }
@@ -40,6 +41,7 @@ export async function markPaymentCurrentAction(policyId: string) {
   const actor = await requireSessionUser();
   await markPaymentCurrent(actor, policyId);
   revalidatePath("/premiums");
+  revalidatePath("/dashboard");
   revalidatePath(`/policies/${policyId}`);
 }
 
@@ -47,6 +49,7 @@ export async function markPaymentDueAction(policyId: string) {
   const actor = await requireSessionUser();
   await markPaymentDue(actor, policyId);
   revalidatePath("/premiums");
+  revalidatePath("/dashboard");
   revalidatePath(`/policies/${policyId}`);
 }
 
@@ -54,5 +57,6 @@ export async function markPaymentPastDueAction(policyId: string) {
   const actor = await requireSessionUser();
   await markPaymentPastDue(actor, policyId);
   revalidatePath("/premiums");
+  revalidatePath("/dashboard");
   revalidatePath(`/policies/${policyId}`);
 }

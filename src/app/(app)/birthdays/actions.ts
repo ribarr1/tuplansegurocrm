@@ -23,6 +23,7 @@ export async function markBirthdaySentAction(
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
   }
   revalidatePath("/birthdays");
+  revalidatePath("/dashboard");
   revalidatePath(`/contacts/${personId}`);
 }
 
@@ -35,6 +36,7 @@ export async function markBirthdaySkippedAction(personId: string): Promise<Birth
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
   }
   revalidatePath("/birthdays");
+  revalidatePath("/dashboard");
   revalidatePath(`/contacts/${personId}`);
 }
 
@@ -47,5 +49,6 @@ export async function resetBirthdayGreetingAction(personId: string): Promise<Bir
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
   }
   revalidatePath("/birthdays");
+  revalidatePath("/dashboard");
   revalidatePath(`/contacts/${personId}`);
 }

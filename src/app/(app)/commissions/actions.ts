@@ -34,6 +34,7 @@ export async function createCommissionExpectationAction(
   }
 
   revalidatePath("/commissions");
+  revalidatePath("/dashboard");
   revalidatePath(`/policies/${created.policyId}`);
   redirect(`/commissions/${created.id}`);
 }
@@ -54,6 +55,7 @@ export async function updateCommissionExpectationAction(
   }
 
   revalidatePath("/commissions");
+  revalidatePath("/dashboard");
   revalidatePath(`/commissions/${id}`);
   revalidatePath(`/policies/${updated.policyId}`);
   redirect(`/commissions/${id}`);
@@ -63,6 +65,7 @@ export async function cancelCommissionExpectationAction(id: string) {
   const actor = await requireSessionUser();
   const cancelled = await cancelCommissionExpectation(actor, id);
   revalidatePath("/commissions");
+  revalidatePath("/dashboard");
   revalidatePath(`/commissions/${id}`);
   revalidatePath(`/policies/${cancelled.policyId}`);
 }
@@ -83,6 +86,7 @@ export async function addCommissionPaymentAction(
   }
 
   revalidatePath("/commissions");
+  revalidatePath("/dashboard");
   revalidatePath(`/commissions/${expectationId}`);
   revalidatePath(`/policies/${updated.policyId}`);
   redirect(`/commissions/${expectationId}`);
