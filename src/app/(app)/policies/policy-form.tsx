@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,7 @@ import {
   PAYMENT_STATUS_VALUES,
   POLICY_OPERATION_TYPE_VALUES,
   COVERED_MEMBER_ROLE_VALUES,
+  HEALTH_COVERAGE_SOURCE_VALUES,
 } from "@/schemas/policy.schema";
 import {
   POLICY_STATUS_LABELS,
@@ -17,6 +18,7 @@ import {
   PAYMENT_STATUS_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
   POLICY_MEMBER_ROLE_LABELS,
+  HEALTH_COVERAGE_SOURCE_LABELS,
 } from "@/lib/labels";
 import type { PolicyFormState } from "./form-helpers";
 
@@ -24,6 +26,7 @@ export type ProductOption = {
   id: string;
   name: string;
   planYear: number | null;
+  policyType: string;
   carrier: { name: string };
 };
 
@@ -49,6 +52,9 @@ export function PolicyForm({
   const [state, formAction, isPending] = useActionState(action, undefined);
   const values = state?.values ?? {};
   const formKey = state ? "retry" : "initial";
+  const [selectedProductId, setSelectedProductId] = useState(values.productId ?? "");
+  const selectedProduct = products.find((p) => p.id === selectedProductId);
+  const isHealthSelected = selectedProduct?.policyType === "HEALTH";
 
   return (
     <form key={formKey} action={formAction} className="flex max-w-2xl flex-col gap-6">
@@ -74,6 +80,7 @@ export function PolicyForm({
             id="productId"
             name="productId"
             defaultValue={values.productId ?? ""}
+            onChange={(e) => setSelectedProductId(e.target.value)}
             required
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
           >
@@ -96,6 +103,25 @@ export function PolicyForm({
             <p className="text-sm text-destructive">{state.fieldErrors.productId}</p>
           )}
         </div>
+
+        {isHealthSelected && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="healthCoverageSource">Tipo de cobertura</Label>
+            <select
+              id="healthCoverageSource"
+              name="healthCoverageSource"
+              defaultValue={values.healthCoverageSource ?? ""}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Sin definir</option>
+              {HEALTH_COVERAGE_SOURCE_VALUES.map((source) => (
+                <option key={source} value={source}>
+                  {HEALTH_COVERAGE_SOURCE_LABELS[source]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </section>
 
       <section className="flex flex-col gap-3 rounded-md border p-4">

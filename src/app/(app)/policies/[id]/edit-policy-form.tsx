@@ -9,12 +9,14 @@ import {
   BILLING_FREQUENCY_VALUES,
   PAYMENT_STATUS_VALUES,
   POLICY_OPERATION_TYPE_VALUES,
+  HEALTH_COVERAGE_SOURCE_VALUES,
 } from "@/schemas/policy.schema";
 import {
   POLICY_STATUS_LABELS,
   BILLING_FREQUENCY_LABELS,
   PAYMENT_STATUS_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
+  HEALTH_COVERAGE_SOURCE_LABELS,
 } from "@/lib/labels";
 import type { PolicyFormState } from "../form-helpers";
 import type { ProductOption } from "../policy-form";
@@ -33,6 +35,7 @@ export type EditPolicyDefaultValues = {
   paymentStatus?: string;
   operationType?: string;
   processedById?: string;
+  healthCoverageSource?: string;
 };
 
 export function EditPolicyForm({
@@ -42,6 +45,7 @@ export function EditPolicyForm({
   products,
   showProcessedBySelect,
   activeAgents = [],
+  isHealthPolicy,
 }: {
   action: (state: PolicyFormState, formData: FormData) => Promise<PolicyFormState>;
   defaultValues: EditPolicyDefaultValues;
@@ -49,6 +53,7 @@ export function EditPolicyForm({
   products: ProductOption[];
   showProcessedBySelect: boolean;
   activeAgents?: { id: string; name: string }[];
+  isHealthPolicy: boolean;
 }) {
   const [state, formAction, isPending] = useActionState(action, undefined);
   // Los checkboxes viajan en state.values como string "true"/"false"
@@ -221,6 +226,25 @@ export function EditPolicyForm({
           Necesita asistencia para pagar
         </label>
       </div>
+
+      {isHealthPolicy && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="healthCoverageSource">Tipo de cobertura</Label>
+          <select
+            id="healthCoverageSource"
+            name="healthCoverageSource"
+            defaultValue={values.healthCoverageSource ?? ""}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Sin definir</option>
+            {HEALTH_COVERAGE_SOURCE_VALUES.map((source) => (
+              <option key={source} value={source}>
+                {HEALTH_COVERAGE_SOURCE_LABELS[source]}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="flex flex-col gap-1">
         <Label htmlFor="operationType">Tipo de operación</Label>

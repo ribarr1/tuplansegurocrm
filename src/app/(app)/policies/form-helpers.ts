@@ -28,6 +28,7 @@ const POLICY_SCALAR_FIELDS = [
   "paymentStatus",
   "operationType",
   "processedById",
+  "healthCoverageSource",
 ] as const;
 
 const CHECKBOX_FIELDS = ["autopay", "needsPaymentAssistance"] as const;
@@ -75,6 +76,7 @@ const POLICY_UPDATE_FIELDS = [
   "paymentStatus",
   "operationType",
   "processedById",
+  "healthCoverageSource",
 ] as const;
 
 export function formDataToUpdatePolicyInput(formData: FormData): Record<string, unknown> {

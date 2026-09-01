@@ -7,12 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   POLICY_STATUS_BADGE_VARIANT,
   POLICY_STATUS_LABELS,
+  HEALTH_COVERAGE_SOURCE_LABELS,
 } from "@/lib/labels";
-
-const HEALTH_SOURCE_LABELS: Record<string, string> = {
-  MARKETPLACE: "Marketplace",
-  PRIVATE: "Privado",
-};
 
 function formatDate(date: Date | null): string {
   if (!date) return "—";
@@ -60,7 +56,7 @@ export async function HealthTab({ actor, personId }: { actor: AuthorizedUser; pe
                   {POLICY_STATUS_LABELS[policy.status]}
                 </Badge>
                 {policy.healthCoverageSource && (
-                  <Badge variant="outline">{HEALTH_SOURCE_LABELS[policy.healthCoverageSource]}</Badge>
+                  <Badge variant="outline">{HEALTH_COVERAGE_SOURCE_LABELS[policy.healthCoverageSource]}</Badge>
                 )}
               </div>
               <Link href={`/policies/${policy.id}`} className="text-sm underline">

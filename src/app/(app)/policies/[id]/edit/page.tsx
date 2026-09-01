@@ -70,11 +70,13 @@ export default async function EditPolicyPage({
           needsPaymentAssistance: policy.needsPaymentAssistance,
           paymentStatus: policy.paymentStatus ?? undefined,
           operationType: policy.operationType ?? undefined,
+          healthCoverageSource: policy.healthCoverageSource ?? undefined,
         }}
         canChangeProduct={canChangeProduct}
         products={products}
         showProcessedBySelect={showProcessedBySelect}
         activeAgents={activeAgents}
+        isHealthPolicy={policy.product.policyType === "HEALTH"}
       />
     </div>
   );

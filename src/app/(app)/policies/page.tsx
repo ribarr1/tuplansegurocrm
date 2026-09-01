@@ -13,10 +13,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { POLICY_STATUS_BADGE_VARIANT, POLICY_STATUS_LABELS, POLICY_TYPE_LABELS } from "@/lib/labels";
-import { POLICY_STATUS_VALUES, POLICY_TYPE_VALUES } from "@/schemas/policy.schema";
+import {
+  POLICY_STATUS_BADGE_VARIANT,
+  POLICY_STATUS_LABELS,
+  POLICY_TYPE_LABELS,
+  HEALTH_COVERAGE_SOURCE_LABELS,
+} from "@/lib/labels";
+import { POLICY_STATUS_VALUES, POLICY_TYPE_VALUES, HEALTH_COVERAGE_SOURCE_VALUES } from "@/schemas/policy.schema";
 
-type SearchParams = { q?: string; status?: string; policyType?: string; carrierId?: string; page?: string };
+type SearchParams = {
+  q?: string;
+  status?: string;
+  policyType?: string;
+  carrierId?: string;
+  healthSource?: string;
+  page?: string;
+};
 
 function buildHref(current: SearchParams, overrides: Partial<SearchParams>): string {
   const merged = { ...current, ...overrides };
@@ -25,6 +37,7 @@ function buildHref(current: SearchParams, overrides: Partial<SearchParams>): str
   if (merged.status) params.set("status", merged.status);
   if (merged.policyType) params.set("policyType", merged.policyType);
   if (merged.carrierId) params.set("carrierId", merged.carrierId);
+  if (merged.healthSource) params.set("healthSource", merged.healthSource);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
   const qs = params.toString();
   return qs ? `/policies?${qs}` : "/policies";
@@ -54,6 +67,11 @@ export default async function PoliciesPage({
   const policyType = (POLICY_TYPE_VALUES as readonly string[]).includes(sp.policyType ?? "")
     ? sp.policyType
     : undefined;
+  const healthSource = (HEALTH_COVERAGE_SOURCE_VALUES as readonly string[]).includes(
+    sp.healthSource ?? ""
+  )
+    ? sp.healthSource
+    : undefined;
 
   const [{ items, total, pageSize }, carriers] = await Promise.all([
     listPolicies(actor, {
@@ -61,12 +79,13 @@ export default async function PoliciesPage({
       status,
       policyType,
       carrierId: sp.carrierId || undefined,
+      healthSource,
       page,
     }),
     listActiveCarriers(actor),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const hasFilters = Boolean(sp.q || sp.status || sp.policyType || sp.carrierId);
+  const hasFilters = Boolean(sp.q || sp.status || sp.policyType || sp.carrierId || sp.healthSource);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -132,6 +151,22 @@ export default async function PoliciesPage({
             {carriers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="healthSource">Cobertura de Salud</Label>
+          <select
+            id="healthSource"
+            name="healthSource"
+            defaultValue={sp.healthSource ?? ""}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Todas</option>
+            {HEALTH_COVERAGE_SOURCE_VALUES.map((source) => (
+              <option key={source} value={source}>
+                {HEALTH_COVERAGE_SOURCE_LABELS[source]}
               </option>
             ))}
           </select>

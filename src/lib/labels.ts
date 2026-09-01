@@ -14,6 +14,7 @@ import type {
   BirthdayGreetingChannel,
   CommissionExpectationStatus,
   CommissionPaymentType,
+  HealthCoverageSource,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -85,6 +86,11 @@ export const POLICY_STATUS_BADGE_VARIANT: Record<
   ACTIVE: "default",
   CANCELLED: "outline",
   EXPIRED: "outline",
+};
+
+export const HEALTH_COVERAGE_SOURCE_LABELS: Record<HealthCoverageSource, string> = {
+  MARKETPLACE: "Marketplace",
+  PRIVATE: "Privado",
 };
 
 export const POLICY_OPERATION_TYPE_LABELS: Record<PolicyOperationType, string> = {
