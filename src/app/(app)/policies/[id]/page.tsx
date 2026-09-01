@@ -17,6 +17,7 @@ import { HealthPolicySection } from "./health-section";
 import { PolicyTasksSection } from "./tasks-section";
 import { PolicyCommissionsSection } from "./commissions-section";
 import { PremiumSection } from "./premium-section";
+import { PolicyDocumentsSection } from "./documents-section";
 
 function formatDate(date: Date | null): string {
   if (!date) return "—";
@@ -166,6 +167,8 @@ export default async function PolicyDetailPage({
       {actor.role !== "ASSISTANT" && (
         <PolicyCommissionsSection actor={actor} policyId={policy.id} />
       )}
+
+      <PolicyDocumentsSection actor={actor} policyId={policy.id} />
 
       <PolicyTasksSection actor={actor} policyId={policy.id} />
     </div>

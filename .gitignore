@@ -55,4 +55,8 @@ coverage/
 *.xlsx
 *.xls
 /private-imports/
+
+# Documentos de Policy (Fase 019.5) — almacenamiento local de dev,
+# nunca servido desde /public ni versionado. Ver src/lib/storage.ts.
+/private-storage/
 import-report*.json

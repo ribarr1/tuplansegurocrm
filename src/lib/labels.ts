@@ -15,6 +15,7 @@ import type {
   CommissionExpectationStatus,
   CommissionPaymentType,
   HealthCoverageSource,
+  PolicyDocumentType,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -91,6 +92,16 @@ export const POLICY_STATUS_BADGE_VARIANT: Record<
 export const HEALTH_COVERAGE_SOURCE_LABELS: Record<HealthCoverageSource, string> = {
   MARKETPLACE: "Marketplace",
   PRIVATE: "Privado",
+};
+
+export const POLICY_DOCUMENT_TYPE_LABELS: Record<PolicyDocumentType, string> = {
+  PLAN_SUMMARY: "Resumen del plan",
+  BROCHURE: "Brochure",
+  FORMULARY: "Listado de medicamentos",
+  PROVIDER_DIRECTORY: "Directorio de proveedores",
+  MEMBER_CARD: "Tarjeta / ID",
+  APPLICATION: "Solicitud",
+  OTHER: "Otro",
 };
 
 export const POLICY_OPERATION_TYPE_LABELS: Record<PolicyOperationType, string> = {
