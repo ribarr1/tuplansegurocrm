@@ -15,7 +15,10 @@ export function DeactivateRuleButton({ productId, ruleId }: { productId: string;
       disabled={isPending}
       onClick={() => {
         if (!confirm("¿Desactivar esta regla de comisión? Las expectativas ya generadas no cambian.")) return;
-        startTransition(() => deactivateCommissionRuleAction(productId, ruleId));
+        startTransition(async () => {
+          const result = await deactivateCommissionRuleAction(productId, ruleId);
+          if (result.error) alert(result.error);
+        });
       }}
     >
       {isPending ? "Desactivando…" : "Desactivar"}

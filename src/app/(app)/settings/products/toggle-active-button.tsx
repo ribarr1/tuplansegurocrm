@@ -19,7 +19,12 @@ export function ToggleProductActiveButton({
       variant="ghost"
       size="sm"
       disabled={isPending}
-      onClick={() => startTransition(() => toggleProductActiveAction(productId, !isActive))}
+      onClick={() =>
+        startTransition(async () => {
+          const result = await toggleProductActiveAction(productId, !isActive);
+          if (result.error) alert(result.error);
+        })
+      }
     >
       {isPending ? "Guardando…" : isActive ? "Desactivar" : "Activar"}
     </Button>

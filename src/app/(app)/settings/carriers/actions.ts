@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/authorization";
+import { AppError } from "@/services/errors";
 import { createCarrier, updateCarrier, setCarrierActive } from "@/services/carriers.service";
 import { formDataToCarrierInput, toCarrierFormState, type CarrierFormState } from "./form-helpers";
 
@@ -44,8 +45,19 @@ export async function updateCarrierAction(
   redirect("/settings/carriers");
 }
 
-export async function toggleCarrierActiveAction(id: string, isActive: boolean) {
+// Retorna el error en vez de lanzarlo — invocado "fire and forget" vía
+// useTransition, sin useActionState.
+export async function toggleCarrierActiveAction(
+  id: string,
+  isActive: boolean
+): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  await setCarrierActive(actor, id, isActive);
-  revalidatePath("/settings/carriers");
+  try {
+    await setCarrierActive(actor, id, isActive);
+    revalidatePath("/settings/carriers");
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }

@@ -17,7 +17,10 @@ export function CancelExpectationButton({ id }: { id: string }) {
         if (!confirm("¿Cancelar esta comisión esperada? No se podrán registrar nuevos movimientos.")) {
           return;
         }
-        startTransition(() => cancelCommissionExpectationAction(id));
+        startTransition(async () => {
+          const result = await cancelCommissionExpectationAction(id);
+          if (result.error) alert(result.error);
+        });
       }}
     >
       {isPending ? "Guardando…" : "Cancelar comisión"}

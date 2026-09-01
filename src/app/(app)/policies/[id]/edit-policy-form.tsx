@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormError, FieldError } from "@/components/ui/form-feedback";
 import {
   POLICY_STATUS_VALUES,
   BILLING_FREQUENCY_VALUES,
@@ -72,11 +73,11 @@ export function EditPolicyForm({
 
   return (
     <form key={formKey} action={formAction} className="flex max-w-2xl flex-col gap-4">
-      {state?.error && (
-        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {state.error}
-        </p>
-      )}
+      {/* updatePolicyAction redirige a /policies/[id] al guardar (nunca
+          retorna success:true) — la navegación a la póliza actualizada
+          ES la confirmación, mismo patrón que el resto de formularios
+          "crear/editar" que redirigen en la app. */}
+      <FormError message={state?.error} />
 
       <div className="flex flex-col gap-1">
         <Label htmlFor="productId">Producto</Label>
@@ -149,7 +150,10 @@ export function EditPolicyForm({
             name="terminationDate"
             type="date"
             defaultValue={values.terminationDate ?? ""}
+            aria-invalid={!!state?.fieldErrors?.terminationDate}
+            aria-describedby={state?.fieldErrors?.terminationDate ? "terminationDate-error" : undefined}
           />
+          <FieldError id="terminationDate-error" message={state?.fieldErrors?.terminationDate} />
         </div>
       </div>
 

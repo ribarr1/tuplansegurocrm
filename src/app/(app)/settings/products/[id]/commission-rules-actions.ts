@@ -45,8 +45,19 @@ export async function createCommissionRuleAction(
   return { success: true };
 }
 
-export async function deactivateCommissionRuleAction(productId: string, ruleId: string): Promise<void> {
+// Retorna el error en vez de lanzarlo — invocado "fire and forget" vía
+// useTransition (DeactivateRuleButton), sin useActionState.
+export async function deactivateCommissionRuleAction(
+  productId: string,
+  ruleId: string
+): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  await deactivateCommissionRule(actor, ruleId);
-  revalidatePath(`/settings/products/${productId}/edit`);
+  try {
+    await deactivateCommissionRule(actor, ruleId);
+    revalidatePath(`/settings/products/${productId}/edit`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }

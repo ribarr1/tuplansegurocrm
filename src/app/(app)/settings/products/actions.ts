@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/authorization";
+import { AppError } from "@/services/errors";
 import { createProduct, updateProduct, setProductActive } from "@/services/products.service";
 import { formDataToProductInput, toProductFormState, type ProductFormState } from "./form-helpers";
 
@@ -44,8 +45,19 @@ export async function updateProductAction(
   redirect("/settings/products");
 }
 
-export async function toggleProductActiveAction(id: string, isActive: boolean) {
+// Retorna el error en vez de lanzarlo — invocado "fire and forget" vía
+// useTransition, sin useActionState.
+export async function toggleProductActiveAction(
+  id: string,
+  isActive: boolean
+): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  await setProductActive(actor, id, isActive);
-  revalidatePath("/settings/products");
+  try {
+    await setProductActive(actor, id, isActive);
+    revalidatePath("/settings/products");
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }

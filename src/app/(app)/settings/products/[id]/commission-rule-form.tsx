@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { FormError, FormSuccess } from "@/components/ui/form-feedback";
 import {
   COMMISSION_METHOD_LABELS,
   COMMISSION_BASE_LABELS,
@@ -42,9 +43,8 @@ export function CommissionRuleForm({ productId }: { productId: string }) {
       action={formAction}
       className="flex flex-col gap-3 rounded-md border p-3 text-sm"
     >
-      {state?.error && (
-        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{state.error}</p>
-      )}
+      <FormError message={state?.error} />
+      {state?.success && <FormSuccess message="Regla de comisión guardada." />}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1">

@@ -35,7 +35,16 @@ export function MemberRoleForm({
       <Button type="submit" size="sm" variant="outline" disabled={isPending}>
         {isPending ? "Guardando…" : "Guardar"}
       </Button>
-      {state?.error && <span className="text-xs text-destructive">{state.error}</span>}
+      {state?.error && (
+        <span role="alert" className="text-xs text-destructive">
+          {state.error}
+        </span>
+      )}
+      {state?.success && (
+        <span role="status" className="text-xs" style={{ color: "var(--brand-secondary)" }}>
+          Rol actualizado.
+        </span>
+      )}
     </form>
   );
 }

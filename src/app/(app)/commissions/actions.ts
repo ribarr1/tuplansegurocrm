@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/authorization";
+import { AppError } from "@/services/errors";
 import {
   createCommissionExpectation,
   updateCommissionExpectation,
@@ -61,13 +62,24 @@ export async function updateCommissionExpectationAction(
   redirect(`/commissions/${id}`);
 }
 
-export async function cancelCommissionExpectationAction(id: string) {
+// Retorna el error en vez de lanzarlo: invocado "fire and forget" desde
+// un Client Component vía useTransition (sin useActionState) — una
+// excepción no capturada de un Server Action se sanitiza en producción
+// (Next.js reemplaza el mensaje real por uno genérico), así que el
+// AppError real nunca llegaría al usuario.
+export async function cancelCommissionExpectationAction(id: string): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  const cancelled = await cancelCommissionExpectation(actor, id);
-  revalidatePath("/commissions");
-  revalidatePath("/dashboard");
-  revalidatePath(`/commissions/${id}`);
-  revalidatePath(`/policies/${cancelled.policyId}`);
+  try {
+    const cancelled = await cancelCommissionExpectation(actor, id);
+    revalidatePath("/commissions");
+    revalidatePath("/dashboard");
+    revalidatePath(`/commissions/${id}`);
+    revalidatePath(`/policies/${cancelled.policyId}`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }
 
 export async function addCommissionPaymentAction(

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/authorization";
+import { AppError } from "@/services/errors";
 import {
   updatePremiumTracking,
   markPaymentCurrent,
@@ -37,26 +38,47 @@ export async function updatePremiumTrackingAction(
   redirect(`/policies/${policyId}`);
 }
 
-export async function markPaymentCurrentAction(policyId: string) {
+// Las tres retornan el error en vez de lanzarlo — invocadas "fire and
+// forget" vía useTransition (QuickPaymentStatusButtons), sin
+// useActionState; una excepción no capturada se sanitiza en producción.
+export async function markPaymentCurrentAction(policyId: string): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  await markPaymentCurrent(actor, policyId);
-  revalidatePath("/premiums");
-  revalidatePath("/dashboard");
-  revalidatePath(`/policies/${policyId}`);
+  try {
+    await markPaymentCurrent(actor, policyId);
+    revalidatePath("/premiums");
+    revalidatePath("/dashboard");
+    revalidatePath(`/policies/${policyId}`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }
 
-export async function markPaymentDueAction(policyId: string) {
+export async function markPaymentDueAction(policyId: string): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  await markPaymentDue(actor, policyId);
-  revalidatePath("/premiums");
-  revalidatePath("/dashboard");
-  revalidatePath(`/policies/${policyId}`);
+  try {
+    await markPaymentDue(actor, policyId);
+    revalidatePath("/premiums");
+    revalidatePath("/dashboard");
+    revalidatePath(`/policies/${policyId}`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }
 
-export async function markPaymentPastDueAction(policyId: string) {
+export async function markPaymentPastDueAction(policyId: string): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  await markPaymentPastDue(actor, policyId);
-  revalidatePath("/premiums");
-  revalidatePath("/dashboard");
-  revalidatePath(`/policies/${policyId}`);
+  try {
+    await markPaymentPastDue(actor, policyId);
+    revalidatePath("/premiums");
+    revalidatePath("/dashboard");
+    revalidatePath(`/policies/${policyId}`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }

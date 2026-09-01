@@ -15,7 +15,10 @@ export function DeleteDocumentButton({ documentId, fileName }: { documentId: str
       disabled={isPending}
       onClick={() => {
         if (!confirm(`¿Eliminar "${fileName}"? Esta acción no se puede deshacer.`)) return;
-        startTransition(() => deletePolicyDocumentAction(documentId));
+        startTransition(async () => {
+          const result = await deletePolicyDocumentAction(documentId);
+          if (result.error) alert(result.error);
+        });
       }}
     >
       {isPending ? "Eliminando…" : "Eliminar"}

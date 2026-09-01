@@ -1,8 +1,15 @@
-# Checklist de prueba funcional manual (UAT) — Fase 019.5
+# Checklist de prueba funcional manual (UAT) — Fase 019.5 / 019.6
 
 Lista de pruebas para que el dueño de TuPlanSeguro USA verifique el CRM de punta a punta, con datos de prueba (nunca el Excel real todavía). Marcar cada punto al probarlo; anotar cualquier problema encontrado para reportarlo antes de continuar con el import real.
 
-No requiere conocimientos técnicos — cada punto describe qué hacer y qué se espera ver.
+No requiere conocimientos técnicos — cada punto describe qué hacer y qué se espera ver. **Esta lista NO se marca como completada automáticamente — el propietario debe volver a correrla él mismo antes de avanzar al siguiente paso del proyecto.**
+
+## 0. Consola y advertencias técnicas (Fase 019.6)
+
+Si tienes forma de ver la consola del navegador (F12 → pestaña "Console") o la terminal donde corre el servidor, revisa esto durante el resto de la prueba:
+
+- [ ] Al entrar al Dashboard y navegar entre pantallas (Contactos, Tareas, Primas/Pagos, Comisiones, Pólizas), **no debe aparecer** el mensaje `Calling client.query() when the client is already executing a query` en la terminal del servidor.
+- [ ] La consola del navegador no debe mostrar errores en rojo al usar el CRM normalmente (algunos avisos amarillos informativos de Next.js en desarrollo son normales).
 
 ## 1. Acceso
 
@@ -29,18 +36,22 @@ No requiere conocimientos técnicos — cada punto describe qué hacer y qué se
 
 - [ ] Desde el tab "Familia" del contacto, agregar un cónyuge y al menos un dependiente.
 - [ ] Confirmar que el hogar muestra correctamente dirección, ciudad/estado/ZIP, condado e ingreso familiar en el resumen del contacto.
+- [ ] **(Fase 019.6)** En el formulario de dirección/ingreso del hogar, cambiar el ingreso familiar (ej. de 200000 a 210000) y presionar Guardar. Debe aparecer el mensaje verde **"Datos del hogar guardados correctamente."** — antes de esta fase, el formulario no mostraba ningún cambio visible al guardar.
+- [ ] Recargar la página completa del navegador (F5) y confirmar que el ingreso actualizado (210000) sigue ahí — la persistencia real, no solo lo que se ve en pantalla justo después de guardar.
+- [ ] Mientras se guarda, el botón debe decir "Guardando…" brevemente y no debe poder presionarse dos veces seguidas.
 
 ## 5. Pólizas de Salud
 
 - [ ] Crear una póliza de Salud para el contacto, marcando el tipo de cobertura como **Marketplace** — confirmar que aparece el campo de estado de Marketplace.
 - [ ] Crear una segunda póliza de Salud marcada como **Privada** — confirmar que los campos específicos de Marketplace no aparecen o quedan vacíos.
-- [ ] Intentar guardar una póliza con fecha de finalización **anterior** a la fecha de inicio — debe rechazarse con el mensaje "La fecha de finalización no puede ser anterior a la fecha de inicio."
-- [ ] Guardar la misma póliza con la fecha de finalización correcta (igual o posterior a la fecha de inicio) — debe guardar sin problema.
+- [ ] Intentar guardar una póliza con fecha de finalización **anterior** a la fecha de inicio — debe rechazarse con el mensaje "La fecha de finalización no puede ser anterior a la fecha de inicio." mostrado **justo debajo del campo "Fecha de terminación"** (en rojo, con el campo resaltado) — antes de esta fase, ese mensaje no aparecía en pantalla aunque el servidor sí lo generaba.
+- [ ] Confirmar que, al ver ese error, el resto de los datos que ya habías llenado (compañía, producto, prima, etc.) siguen ahí — no se borran.
+- [ ] Corregir la fecha de finalización (poniendo una posterior a la de inicio) y guardar de nuevo — debe guardar sin problema y llevarte al detalle de la póliza ya creada/actualizada.
 
 ## 6. Documentos de póliza
 
-- [ ] Desde el detalle de una póliza, subir un PDF (ej. un resumen de plan) — debe aparecer en la lista de documentos.
-- [ ] Subir una imagen (PNG o JPG) — debe aparecer también.
+- [ ] Desde el detalle de una póliza, subir un PDF (ej. un resumen de plan) — debe aparecer en la lista de documentos y debe mostrarse el mensaje "Documento subido correctamente."
+- [ ] Subir una imagen (PNG o JPG) — debe aparecer también, con el mismo mensaje de confirmación.
 - [ ] Abrir/descargar un documento subido — debe abrir correctamente.
 - [ ] Eliminar un documento — debe desaparecer de la lista.
 
@@ -52,7 +63,7 @@ No requiere conocimientos técnicos — cada punto describe qué hacer y qué se
 
 ## 8. Notas
 
-- [ ] Desde el tab "Notas" del contacto, agregar una nota operativa (ej. "Prefiere contacto por WhatsApp").
+- [ ] Desde el tab "Notas" del contacto, agregar una nota operativa (ej. "Prefiere contacto por WhatsApp") — debe mostrar "Nota guardada correctamente." y vaciar el cuadro de texto.
 - [ ] Confirmar que aparece en la lista, con fecha y autor, la más reciente primero.
 
 ## 9. Cumpleaños
@@ -68,7 +79,7 @@ No requiere conocimientos técnicos — cada punto describe qué hacer y qué se
 
 ## 11. Comisiones (solo ADMIN/Agente)
 
-- [ ] En Configuración → Productos, abrir un producto y crear una regla de comisión (ej. monto fijo mensual, o porcentaje de la prima anualizada con residual desde el año 2).
+- [ ] En Configuración → Productos, abrir un producto y crear una regla de comisión (ej. monto fijo mensual, o porcentaje de la prima anualizada con residual desde el año 2) — debe mostrar "Regla de comisión guardada." y limpiar el formulario.
 - [ ] Desde el detalle de una póliza de ese producto, usar "Generar expectativa" para un mes concreto — debe aparecer en la sección de Comisiones de la póliza.
 - [ ] Repetir "Generar expectativa" para el mismo mes — debe indicar que ya existía, sin duplicar.
 - [ ] Registrar un pago contra esa expectativa.

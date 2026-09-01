@@ -28,7 +28,12 @@ export function QuickPaymentStatusButtons({
         size="sm"
         variant={currentStatus === "CURRENT" ? "default" : "outline"}
         disabled={isPending}
-        onClick={() => startTransition(() => markPaymentCurrentAction(policyId))}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await markPaymentCurrentAction(policyId);
+            if (result.error) alert(result.error);
+          })
+        }
       >
         Marcar al día
       </Button>
@@ -37,7 +42,12 @@ export function QuickPaymentStatusButtons({
         size="sm"
         variant={currentStatus === "DUE" ? "default" : "outline"}
         disabled={isPending}
-        onClick={() => startTransition(() => markPaymentDueAction(policyId))}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await markPaymentDueAction(policyId);
+            if (result.error) alert(result.error);
+          })
+        }
       >
         Marcar por vencer
       </Button>
@@ -46,7 +56,12 @@ export function QuickPaymentStatusButtons({
         size="sm"
         variant={currentStatus === "PAST_DUE" ? "default" : "outline"}
         disabled={isPending}
-        onClick={() => startTransition(() => markPaymentPastDueAction(policyId))}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await markPaymentPastDueAction(policyId);
+            if (result.error) alert(result.error);
+          })
+        }
       >
         Marcar vencido
       </Button>

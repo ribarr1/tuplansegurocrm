@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/authorization";
+import { AppError } from "@/services/errors";
 import { createTask, updateTask, completeTask, cancelTask } from "@/services/tasks.service";
 import {
   formDataToCreateTaskInput,
@@ -57,22 +58,36 @@ export async function updateTaskAction(
   redirect(`/tasks/${id}`);
 }
 
-export async function completeTaskAction(id: string) {
+// Retorna el error en vez de lanzarlo — invocado "fire and forget" vía
+// useTransition (TaskActionButtons), sin useActionState.
+export async function completeTaskAction(id: string): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  const updated = await completeTask(actor, id);
-  revalidatePath("/tasks");
-  revalidatePath("/dashboard");
-  revalidatePath(`/tasks/${id}`);
-  if (updated.person) revalidatePath(`/contacts/${updated.person.id}`);
-  if (updated.policy) revalidatePath(`/policies/${updated.policy.id}`);
+  try {
+    const updated = await completeTask(actor, id);
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+    revalidatePath(`/tasks/${id}`);
+    if (updated.person) revalidatePath(`/contacts/${updated.person.id}`);
+    if (updated.policy) revalidatePath(`/policies/${updated.policy.id}`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }
 
-export async function cancelTaskAction(id: string) {
+export async function cancelTaskAction(id: string): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  const updated = await cancelTask(actor, id);
-  revalidatePath("/tasks");
-  revalidatePath("/dashboard");
-  revalidatePath(`/tasks/${id}`);
-  if (updated.person) revalidatePath(`/contacts/${updated.person.id}`);
-  if (updated.policy) revalidatePath(`/policies/${updated.policy.id}`);
+  try {
+    const updated = await cancelTask(actor, id);
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+    revalidatePath(`/tasks/${id}`);
+    if (updated.person) revalidatePath(`/contacts/${updated.person.id}`);
+    if (updated.policy) revalidatePath(`/policies/${updated.policy.id}`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }

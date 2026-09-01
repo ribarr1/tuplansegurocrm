@@ -223,7 +223,14 @@ export function PolicyForm({
               name="terminationDate"
               type="date"
               defaultValue={values.terminationDate ?? ""}
+              aria-invalid={!!state?.fieldErrors?.terminationDate}
+              aria-describedby={state?.fieldErrors?.terminationDate ? "terminationDate-error" : undefined}
             />
+            {state?.fieldErrors?.terminationDate && (
+              <p id="terminationDate-error" className="text-sm text-destructive">
+                {state.fieldErrors.terminationDate}
+              </p>
+            )}
           </div>
         </div>
 

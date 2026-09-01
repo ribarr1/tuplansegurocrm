@@ -19,7 +19,12 @@ export function ToggleCarrierActiveButton({
       variant="ghost"
       size="sm"
       disabled={isPending}
-      onClick={() => startTransition(() => toggleCarrierActiveAction(carrierId, !isActive))}
+      onClick={() =>
+        startTransition(async () => {
+          const result = await toggleCarrierActiveAction(carrierId, !isActive);
+          if (result.error) alert(result.error);
+        })
+      }
     >
       {isPending ? "Guardando…" : isActive ? "Desactivar" : "Activar"}
     </Button>

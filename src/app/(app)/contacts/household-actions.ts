@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
+import { AppError } from "@/services/errors";
 import {
   createHouseholdWithInitialMember,
   addHouseholdMember,
@@ -57,13 +58,29 @@ export async function addHouseholdMemberAction(
   return { success: true };
 }
 
+// Retorna el error en vez de lanzarlo — se usa con useActionState desde
+// RemoveMemberButton para poder mostrarlo en el diálogo en vez de dejar
+// que una excepción no capturada llegue al error boundary genérico.
+// prevState/formData no se usan (esta acción no tiene campos propios,
+// solo confirma) pero deben declararse: useActionState siempre llama al
+// action con esa forma (prevState, formData).
+/* eslint-disable @typescript-eslint/no-unused-vars */
 export async function removeHouseholdMemberAction(
   householdMemberId: string,
-  personId: string
-) {
+  personId: string,
+  _prevState: { error?: string } | undefined,
+  _formData: FormData
+): Promise<{ error?: string } | undefined> {
+  /* eslint-enable @typescript-eslint/no-unused-vars */
   const actor = await requireSessionUser();
-  await removeHouseholdMember(actor, householdMemberId);
+  try {
+    await removeHouseholdMember(actor, householdMemberId);
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
   revalidatePath(`/contacts/${personId}`);
+  return undefined;
 }
 
 export async function updateHouseholdMemberRoleAction(

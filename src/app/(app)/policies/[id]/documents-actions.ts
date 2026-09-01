@@ -5,7 +5,7 @@ import { requireSessionUser } from "@/lib/authorization";
 import { uploadPolicyDocument, deletePolicyDocument } from "@/services/policy-documents.service";
 import { AppError } from "@/services/errors";
 
-export type DocumentFormState = { error?: string } | undefined;
+export type DocumentFormState = { error?: string; success?: true } | undefined;
 
 export async function uploadPolicyDocumentAction(
   policyId: string,
@@ -34,10 +34,20 @@ export async function uploadPolicyDocumentAction(
   }
 
   revalidatePath(`/policies/${policyId}`);
+  return { success: true };
 }
 
-export async function deletePolicyDocumentAction(documentId: string) {
+// Retorna el error en vez de lanzarlo — mismo motivo que
+// cancelCommissionExpectationAction (commissions/actions.ts): invocado
+// "fire and forget" vía useTransition, sin useActionState.
+export async function deletePolicyDocumentAction(documentId: string): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
-  const { policyId } = await deletePolicyDocument(actor, documentId);
-  revalidatePath(`/policies/${policyId}`);
+  try {
+    const { policyId } = await deletePolicyDocument(actor, documentId);
+    revalidatePath(`/policies/${policyId}`);
+    return {};
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
 }

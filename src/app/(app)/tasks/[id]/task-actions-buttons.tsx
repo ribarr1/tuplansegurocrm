@@ -16,7 +16,12 @@ export function TaskActionButtons({ taskId, status }: { taskId: string; status: 
         type="button"
         size="sm"
         disabled={isPending}
-        onClick={() => startTransition(() => completeTaskAction(taskId))}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await completeTaskAction(taskId);
+            if (result.error) alert(result.error);
+          })
+        }
       >
         {isPending ? "Guardando…" : "Completar"}
       </Button>
@@ -25,7 +30,12 @@ export function TaskActionButtons({ taskId, status }: { taskId: string; status: 
         variant="outline"
         size="sm"
         disabled={isPending}
-        onClick={() => startTransition(() => cancelTaskAction(taskId))}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await cancelTaskAction(taskId);
+            if (result.error) alert(result.error);
+          })
+        }
       >
         {isPending ? "Guardando…" : "Cancelar"}
       </Button>
