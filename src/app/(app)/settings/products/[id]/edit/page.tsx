@@ -7,6 +7,7 @@ import { AppError } from "@/services/errors";
 import { Button } from "@/components/ui/button";
 import { ProductForm } from "../../product-form";
 import { updateProductAction } from "../../actions";
+import { CommissionRulesSection } from "../commission-rules-section";
 
 export default async function EditProductPage({
   params,
@@ -59,6 +60,7 @@ export default async function EditProductPage({
         isUsed={isUsed}
         submitLabel="Guardar cambios"
       />
+      <CommissionRulesSection actor={actor} productId={product.id} />
     </div>
   );
 }

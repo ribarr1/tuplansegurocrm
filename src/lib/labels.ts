@@ -16,6 +16,9 @@ import type {
   CommissionPaymentType,
   HealthCoverageSource,
   PolicyDocumentType,
+  CommissionMethod,
+  CommissionBase,
+  CommissionPeriodicity,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -223,4 +226,23 @@ export const COMMISSION_DERIVED_STATUS_BADGE_VARIANT: Record<
   PARTIAL: "secondary",
   PAID: "default",
   OVERPAID: "destructive",
+};
+
+export const COMMISSION_METHOD_LABELS: Record<CommissionMethod, string> = {
+  FIXED_AMOUNT: "Monto fijo",
+  PERCENTAGE: "Porcentaje",
+};
+
+export const COMMISSION_BASE_LABELS: Record<CommissionBase, string> = {
+  PREMIUM_MONTHLY: "Prima mensual",
+  PREMIUM_ANNUALIZED: "Prima anualizada",
+  PER_MEMBER: "Por miembro cubierto",
+  FIXED: "Monto fijo (sin base)",
+  OTHER: "Otro",
+};
+
+export const COMMISSION_PERIODICITY_LABELS: Record<CommissionPeriodicity, string> = {
+  ONE_TIME: "Única vez",
+  MONTHLY: "Mensual",
+  ANNUAL: "Anual",
 };
