@@ -539,4 +539,37 @@ describe("policies.service", () => {
     );
     expect(policy.terminationDate?.getTime()).toBe(policy.effectiveDate?.getTime());
   });
+
+  // Regresión Fase 019.6 (hallazgo #9 de UAT): listPolicies dejó de usar
+  // prisma.$transaction([findMany, count]) — que fijaba ambas queries a
+  // una sola conexión pg y disparaba un warning real de concurrencia en
+  // pg (ver docs/DECISIONS.md) — a favor de Promise.all con dos
+  // llamadas independientes. Este test confirma que el cambio no
+  // desincronizó items/total: paginar debe seguir devolviendo el total
+  // real y una página consistente con ese total.
+  it("total y paginación siguen siendo consistentes tras cambiar a Promise.all (sin $transaction)", async () => {
+    const suffix = `PAG${Date.now()}`;
+    const holder = await makePerson();
+    const created = await Promise.all(
+      Array.from({ length: 3 }, (_, i) =>
+        createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+          policyNumber: `${suffix}-${i}`,
+        }).then((p) => trackPolicy(p))
+      )
+    );
+
+    const page1 = await listPolicies(admin, { search: suffix, page: 1, pageSize: 2 });
+    expect(page1.total).toBe(3);
+    expect(page1.items.length).toBe(2);
+
+    const page2 = await listPolicies(admin, { search: suffix, page: 2, pageSize: 2 });
+    expect(page2.total).toBe(3);
+    expect(page2.items.length).toBe(1);
+
+    const allIds = [...page1.items, ...page2.items].map((p) => p.id).sort();
+    expect(allIds).toEqual(created.map((p) => p.id).sort());
+  });
 });

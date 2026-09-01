@@ -148,7 +148,13 @@ export async function listPeople(actor: AuthorizedUser, rawQuery: unknown) {
       : {}),
   };
 
-  const [items, total] = await prisma.$transaction([
+  // Promise.all de dos llamadas top-level independientes, no
+  // prisma.$transaction([...]) — ver docs/DECISIONS.md ("Advertencia de
+  // concurrencia pg", Fase 019.6): el array-form de $transaction fija
+  // ambas queries a una sola conexión, y un findMany con varias
+  // relaciones seleccionadas dispara sub-queries concurrentes de Prisma
+  // sobre esa misma conexión (warning real de pg, no cosmético).
+  const [items, total] = await Promise.all([
     prisma.person.findMany({
       where,
       select: listSelect,

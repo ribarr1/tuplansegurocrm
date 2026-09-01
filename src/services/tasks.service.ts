@@ -179,7 +179,9 @@ export async function listTasks(actor: AuthorizedUser, rawQuery: unknown) {
   const agentWhere = agentAccessWhere(actor);
   const finalWhere: Prisma.TaskWhereInput = agentWhere ? { AND: [where, agentWhere] } : where;
 
-  const [items, total] = await prisma.$transaction([
+  // Promise.all, no prisma.$transaction([...]) — ver docs/DECISIONS.md
+  // ("Advertencia de concurrencia pg", Fase 019.6).
+  const [items, total] = await Promise.all([
     prisma.task.findMany({
       where: finalWhere,
       select: taskSelect,

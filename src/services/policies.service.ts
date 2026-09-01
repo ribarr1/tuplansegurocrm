@@ -262,7 +262,9 @@ export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
     ? { AND: [where, agentWhere] }
     : where;
 
-  const [items, total] = await prisma.$transaction([
+  // Promise.all, no prisma.$transaction([...]) — ver docs/DECISIONS.md
+  // ("Advertencia de concurrencia pg", Fase 019.6).
+  const [items, total] = await Promise.all([
     prisma.policy.findMany({
       where: finalWhere,
       select: policySelect,
