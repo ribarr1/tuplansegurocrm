@@ -64,6 +64,7 @@ model User {
   createdTasks           Task[]                  @relation("TaskCreatedBy")
   createdNotes           Note[]                  @relation("NoteCreatedBy")
   commissionExpectations CommissionExpectation[]
+  uploadedDocuments      PolicyDocument[]
   sessions               Session[]
   accounts               Account[]
 
@@ -107,9 +108,28 @@ model Person {
 
 // Agrupación de personas en un hogar/familia. Una persona puede
 // pertenecer a más de un hogar (N:M vía HouseholdMember).
+// Dirección y datos financieros del hogar — Fase 019.5. La dirección
+// principal vive aquí (no en Person) porque normalmente corresponde al
+// hogar asegurado completo, no a un individuo — evita duplicarla por
+// cada miembro. Una Person con dirección propia distinta del hogar
+// queda deliberadamente fuera de alcance en V1 (no existe ese campo en
+// Person todavía); esta decisión no cierra esa posibilidad futura, ver
+// docs/DECISIONS.md.
 model Household {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String?
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String?
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  state          String?  @db.VarChar(2)
+  zipCode        String?
+  county         String?
+  // Ingreso familiar general y actual del hogar — DISTINTO de
+  // HealthPolicyDetail.incomeUsed (el ingreso declarado en una
+  // aplicación/póliza Marketplace específica). Nunca deben confundirse
+  // ni sincronizarse automáticamente entre sí, ver docs/DECISIONS.md.
+  annualHouseholdIncome Decimal? @db.Decimal(12, 2)
+  incomeYear            Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -163,8 +183,9 @@ model Product {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  carrier  Carrier  @relation(fields: [carrierId], references: [id], onDelete: Restrict)
-  policies Policy[]
+  carrier         Carrier          @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  policies        Policy[]
+  commissionRules CommissionRule[]
 
   @@index([carrierId, policyType, planYear])
   @@map("products")
@@ -205,6 +226,16 @@ enum BillingFrequency {
   OTHER
 }
 
+// Fase 019.5. Vive en Policy (no en Product) porque un mismo Carrier —
+// e incluso un mismo Product — puede en principio emitirse por
+// Marketplace o de forma privada; la clasificación real corresponde a
+// la póliza/enrollment concreto, no al catálogo. Nunca se infiere por
+// el nombre del carrier — ver docs/DECISIONS.md.
+enum HealthCoverageSource {
+  MARKETPLACE
+  PRIVATE
+}
+
 enum PaymentStatus {
   CURRENT
   DUE
@@ -238,6 +269,11 @@ model Policy {
   needsPaymentAssistance Boolean              @default(false)
   paymentStatus          PaymentStatus?
   operationType          PolicyOperationType?
+  // Solo tiene sentido para policyType HEALTH (vía product.policyType) —
+  // regla de aplicación, no constraint de DB, mismo patrón que el resto
+  // de reglas cruzadas de Policy. Null en pólizas no-HEALTH o cuando
+  // todavía no se ha clasificado.
+  healthCoverageSource   HealthCoverageSource?
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
 
@@ -252,6 +288,8 @@ model Policy {
   tasks                  Task[]
   notes                  Note[]
   commissionExpectations CommissionExpectation[]
+  documents              PolicyDocument[]
+  commissionRules        CommissionRule[]
 
   @@index([holderId])
   @@index([productId])
@@ -311,6 +349,113 @@ model HealthPolicyDetail {
 
   @@index([marketplaceApplicationId])
   @@map("health_policy_details")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 019.5 — Documentos de Policy
+// ---------------------------------------------------------------------------
+
+enum PolicyDocumentType {
+  PLAN_SUMMARY
+  BROCHURE
+  FORMULARY
+  PROVIDER_DIRECTORY
+  MEMBER_CARD
+  APPLICATION
+  OTHER
+}
+
+// Metadata únicamente — el archivo binario nunca vive en PostgreSQL.
+// storageKey es un identificador GENERADO (nunca el nombre original del
+// archivo ni una ruta derivada de input del usuario) — ver
+// src/lib/storage.ts. fileName se conserva solo como metadata para
+// mostrar en la UI, nunca se usa para resolver la ubicación real del
+// archivo (evita path traversal).
+model PolicyDocument {
+  id             String             @id @default(uuid()) @db.Uuid
+  policyId       String             @db.Uuid
+  type           PolicyDocumentType
+  fileName       String
+  storageKey     String             @unique
+  mimeType       String
+  fileSize       Int
+  description    String?
+  uploadedById   String?            @db.Uuid
+  createdAt      DateTime           @default(now())
+
+  policy     Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  uploadedBy User?  @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([policyId])
+  @@map("policy_documents")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 019.5 — Reglas de comisión
+// ---------------------------------------------------------------------------
+
+enum CommissionMethod {
+  FIXED_AMOUNT
+  PERCENTAGE
+}
+
+// Sobre qué se calcula el monto/porcentaje — ver docs/DECISIONS.md para
+// el análisis de los 4 casos reales que este enum debe cubrir (monto
+// fijo por póliza, monto fijo por miembro, % de prima anualizada, %
+// residual anual).
+enum CommissionBase {
+  PREMIUM_MONTHLY
+  PREMIUM_ANNUALIZED
+  PER_MEMBER
+  FIXED
+  OTHER
+}
+
+enum CommissionPeriodicity {
+  ONE_TIME
+  MONTHLY
+  ANNUAL
+}
+
+// Configuración de CÓMO se genera una CommissionExpectation — vive a
+// nivel Product (policyId = null, aplica a todas las pólizas de ese
+// producto) con posibilidad de override específico por Policy
+// (policyId no nulo). Nunca se copia esta configuración a cada póliza
+// manualmente cuando es idéntica — ver docs/DECISIONS.md.
+//
+// Cambiar una regla NUNCA reescribe CommissionExpectation ya generadas
+// — solo afecta generaciones futuras (commission-rules.service.ts).
+model CommissionRule {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @db.Uuid
+  policyId  String? @db.Uuid
+
+  method   CommissionMethod
+  base     CommissionBase
+  // Método FIXED_AMOUNT: initialAmount es el monto. Método PERCENTAGE:
+  // initialPercentage es el porcentaje (80.00 = 80%). Solo uno de los
+  // dos aplica según "method" — validado en la aplicación, no en DB.
+  initialAmount      Decimal?              @db.Decimal(12, 2)
+  initialPercentage  Decimal?              @db.Decimal(5, 2)
+  initialPeriodicity CommissionPeriodicity
+
+  residualEnabled     Boolean                @default(false)
+  residualAmount      Decimal?               @db.Decimal(12, 2)
+  residualPercentage  Decimal?               @db.Decimal(5, 2)
+  residualPeriodicity CommissionPeriodicity?
+  // Año de póliza (1 = primer año) desde el cual aplica el residual.
+  residualStartYear   Int?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  policy  Policy? @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([policyId])
+  @@map("commission_rules")
 }
 
 // ---------------------------------------------------------------------------

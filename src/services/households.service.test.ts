@@ -7,6 +7,7 @@ import {
   removeHouseholdMember,
   updateHouseholdMemberRole,
   createPersonAndAddToHousehold,
+  updateHousehold,
 } from "@/services/households.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -276,5 +277,33 @@ describe("households.service", () => {
     expect(personKeys.sort()).toEqual(
       ["id", "firstName", "lastName", "phone", "email", "contactStatus", "assignedAgentId"].sort()
     );
+  });
+
+  it("I) dirección y ZIP/condado se guardan preservando formato de string", async () => {
+    const head = await makePerson();
+    const household = await createHouseholdWithInitialMember(admin, { personId: head.id, role: "HEAD" });
+    const updated = await updateHousehold(admin, household.id, {
+      addressLine1: "123 Main St",
+      addressLine2: "Apt 4B",
+      city: "Chicago",
+      state: "il",
+      zipCode: "60601",
+      county: "Cook County",
+    });
+    expect(updated.addressLine1).toBe("123 Main St");
+    expect(updated.state).toBe("IL");
+    expect(updated.zipCode).toBe("60601");
+    expect(updated.county).toBe("Cook County");
+  });
+
+  it("J) ingreso familiar (Decimal) e incomeYear se guardan correctamente", async () => {
+    const head = await makePerson();
+    const household = await createHouseholdWithInitialMember(admin, { personId: head.id, role: "HEAD" });
+    const updated = await updateHousehold(admin, household.id, {
+      annualHouseholdIncome: "72000.00",
+      incomeYear: "2027",
+    });
+    expect(updated.annualHouseholdIncome?.toString()).toBe("72000");
+    expect(updated.incomeYear).toBe(2027);
   });
 });

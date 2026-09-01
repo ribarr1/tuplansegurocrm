@@ -72,6 +72,7 @@ const policySelect = {
   needsPaymentAssistance: true,
   paymentStatus: true,
   operationType: true,
+  healthCoverageSource: true,
   createdAt: true,
   updatedAt: true,
   holder: { select: personSummarySelect },
@@ -123,10 +124,29 @@ function assertActiveHasEffectiveDate(status: string, effectiveDate: Date | null
   }
 }
 
+// Fase 019.5: se detectó en prueba funcional que se podía guardar
+// terminationDate anterior a effectiveDate — nunca validado
+// server-side (solo el navegador, que es trivial de saltarse). Ambas
+// son @db.Date (fecha pura) — comparar los Date de JS directamente es
+// seguro aquí porque Prisma las entrega ancladas a medianoche UTC del
+// mismo día calendario para ambos campos, así que la comparación de
+// instantes coincide con la comparación de días.
+function assertTerminationNotBeforeEffective(
+  effectiveDate: Date | null,
+  terminationDate: Date | null
+): void {
+  if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "terminationDate: La fecha de finalización no puede ser anterior a la fecha de inicio."
+    );
+  }
+}
+
 async function assertActiveProduct(productId: string) {
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    select: { id: true, isActive: true, carrier: { select: { isActive: true } } },
+    select: { id: true, isActive: true, policyType: true, carrier: { select: { isActive: true } } },
   });
   if (!product) throw new AppError("NOT_FOUND", "Producto no encontrado.");
   if (!product.isActive) {
@@ -216,7 +236,7 @@ export async function listActiveProducts(actor: AuthorizedUser, rawQuery: unknow
 }
 
 export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
-  const { page, pageSize, search, status, policyType, carrierId } = parseOrThrow(
+  const { page, pageSize, search, status, policyType, carrierId, healthSource } = parseOrThrow(
     listPoliciesQuerySchema,
     rawQuery
   );
@@ -225,6 +245,7 @@ export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
     ...(status ? { status } : {}),
     ...(policyType ? { product: { policyType } } : {}),
     ...(carrierId ? { product: { carrierId } } : {}),
+    ...(healthSource ? { healthCoverageSource: healthSource } : {}),
     ...(search
       ? {
           OR: [
@@ -303,8 +324,9 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
     throw new AppError("FORBIDDEN", "No tienes acceso a esta persona.");
   }
 
-  await assertActiveProduct(input.productId);
+  const product = await assertActiveProduct(input.productId);
   assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);
+  assertTerminationNotBeforeEffective(input.effectiveDate ?? null, input.terminationDate ?? null);
 
   // Ningún covered member puede declarar role=PRIMARY: ese rol está
   // reservado exclusivamente para el titular cuando holderCovered=true
@@ -348,6 +370,10 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
           paymentStatus: input.paymentStatus,
           operationType: input.operationType,
           processedById,
+          // Solo tiene efecto real en pólizas HEALTH — para el resto se
+          // ignora silenciosamente aunque venga en el input (regla de
+          // aplicación, ver docs/DECISIONS.md).
+          healthCoverageSource: product.policyType === "HEALTH" ? input.healthCoverageSource : null,
         },
       });
       for (const member of membersToCreate) {
@@ -384,7 +410,9 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       id: true,
       status: true,
       effectiveDate: true,
+      terminationDate: true,
       productId: true,
+      product: { select: { policyType: true } },
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
     },
@@ -418,6 +446,15 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   }
   if (input.paymentStatus !== undefined) data.paymentStatus = input.paymentStatus;
   if (input.operationType !== undefined) data.operationType = input.operationType;
+  if (input.healthCoverageSource !== undefined) {
+    if (existing.product.policyType !== "HEALTH") {
+      throw new AppError(
+        "VALIDATION_ERROR",
+        "healthCoverageSource: Solo aplica a pólizas de tipo Salud."
+      );
+    }
+    data.healthCoverageSource = input.healthCoverageSource;
+  }
 
   const resolvedProcessedById = await resolveProcessedByIdForUpdate(actor, input.processedById);
   if (resolvedProcessedById !== undefined) data.processedById = resolvedProcessedById;
@@ -425,7 +462,10 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   const finalStatus = (data.status as string | undefined) ?? existing.status;
   const finalEffectiveDate =
     input.effectiveDate !== undefined ? input.effectiveDate : existing.effectiveDate;
+  const finalTerminationDate =
+    input.terminationDate !== undefined ? input.terminationDate : existing.terminationDate;
   assertActiveHasEffectiveDate(finalStatus, finalEffectiveDate);
+  assertTerminationNotBeforeEffective(finalEffectiveDate, finalTerminationDate);
 
   await prisma.policy.update({ where: { id }, data });
   return getPolicyById(actor, id);

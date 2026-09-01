@@ -10,6 +10,7 @@ import {
   createHouseholdSchema,
   addHouseholdMemberSchema,
   updateHouseholdMemberRoleSchema,
+  updateHouseholdSchema,
 } from "@/schemas/household.schema";
 import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
@@ -52,6 +53,14 @@ const memberSelect = {
 const householdSelect = {
   id: true,
   name: true,
+  addressLine1: true,
+  addressLine2: true,
+  city: true,
+  state: true,
+  zipCode: true,
+  county: true,
+  annualHouseholdIncome: true,
+  incomeYear: true,
   createdAt: true,
   members: { select: memberSelect, orderBy: { createdAt: "asc" } },
 } satisfies Prisma.HouseholdSelect;
@@ -110,6 +119,33 @@ export async function getHouseholdById(actor: AuthorizedUser, rawId: unknown) {
   const household = await prisma.household.findUnique({ where: { id }, select: householdSelect });
   if (!household) throw new AppError("NOT_FOUND", "Hogar no encontrado.");
   return household;
+}
+
+// Dirección + ingreso familiar — Fase 019.5. Misma política de acceso
+// que el resto de mutaciones de Household (assertCanAccessHousehold
+// sobre los miembros existentes). annualHouseholdIncome/incomeYear
+// nunca deben confundirse ni sincronizarse con
+// HealthPolicyDetail.incomeUsed (ingreso declarado en una aplicación
+// Marketplace específica) — son dos hechos distintos, ver
+// docs/DECISIONS.md.
+export async function updateHousehold(actor: AuthorizedUser, rawId: unknown, rawInput: unknown) {
+  const id = parseOrThrow(householdIdSchema, rawId);
+  const input = parseOrThrow(updateHouseholdSchema, rawInput);
+  const members = await fetchAccessMembers(id);
+  assertCanAccessHousehold(actor, members);
+
+  const data: Prisma.HouseholdUncheckedUpdateInput = {};
+  if (input.addressLine1 !== undefined) data.addressLine1 = input.addressLine1;
+  if (input.addressLine2 !== undefined) data.addressLine2 = input.addressLine2;
+  if (input.city !== undefined) data.city = input.city;
+  if (input.state !== undefined) data.state = input.state;
+  if (input.zipCode !== undefined) data.zipCode = input.zipCode;
+  if (input.county !== undefined) data.county = input.county;
+  if (input.annualHouseholdIncome !== undefined) data.annualHouseholdIncome = input.annualHouseholdIncome;
+  if (input.incomeYear !== undefined) data.incomeYear = input.incomeYear;
+
+  await prisma.household.update({ where: { id }, data });
+  return getHouseholdById(actor, id);
 }
 
 // Crea un Household y su primer HouseholdMember de forma atómica — no

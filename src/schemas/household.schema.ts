@@ -35,3 +35,70 @@ export type UpdateHouseholdMemberRoleInput = z.infer<typeof updateHouseholdMembe
 export const searchPeopleSchema = z.object({
   search: z.string().trim().min(1, "Escribe algo para buscar.").max(200),
 });
+
+// Dirección + ingreso familiar — Fase 019.5. Mismo patrón de 3 estados
+// que health-policy.schema.ts: clave ausente en el FormData -> no
+// tocar; clave presente vacía -> null explícito; clave con valor -> se
+// valida. La pantalla de edición envía todos los campos siempre, así
+// que en la práctica solo se usan los últimos dos estados.
+function nullableTrimmedString(max: number, label: string) {
+  return z
+    .string()
+    .transform((v) => {
+      const trimmed = v.trim();
+      return trimmed === "" ? null : trimmed;
+    })
+    .pipe(z.union([z.null(), z.string().max(max, `${label} es demasiado largo.`)]))
+    .optional();
+}
+
+const stateCodeSchema = z
+  .string()
+  .transform((v) => {
+    const trimmed = v.trim().toUpperCase();
+    return trimmed === "" ? null : trimmed;
+  })
+  .pipe(z.union([z.null(), z.string().regex(/^[A-Z]{2}$/, "El estado debe ser de 2 letras (ej. IL, TX, FL).")]))
+  .optional();
+
+const incomeAmountSchema = z
+  .string()
+  .transform((v) => {
+    const trimmed = v.trim();
+    return trimmed === "" ? null : trimmed;
+  })
+  .pipe(
+    z.union([
+      z.null(),
+      z
+        .string()
+        .regex(/^\d+(\.\d{1,2})?$/, "Ingresa un monto válido (ej. 72000.00)."),
+    ])
+  )
+  .optional();
+
+const incomeYearSchema = z
+  .string()
+  .transform((v, ctx) => {
+    const trimmed = v.trim();
+    if (trimmed === "") return null;
+    const year = Number(trimmed);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      ctx.addIssue({ code: "custom", message: "Año inválido." });
+      return z.NEVER;
+    }
+    return year;
+  })
+  .optional();
+
+export const updateHouseholdSchema = z.object({
+  addressLine1: nullableTrimmedString(200, "La dirección"),
+  addressLine2: nullableTrimmedString(200, "La dirección (línea 2)"),
+  city: nullableTrimmedString(100, "La ciudad"),
+  state: stateCodeSchema,
+  zipCode: nullableTrimmedString(10, "El ZIP"),
+  county: nullableTrimmedString(100, "El condado"),
+  annualHouseholdIncome: incomeAmountSchema,
+  incomeYear: incomeYearSchema,
+});
+export type UpdateHouseholdInput = z.infer<typeof updateHouseholdSchema>;

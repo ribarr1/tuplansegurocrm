@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalSearchFilter, optionalUuidFilter } from "@/schemas/common";
+import { optionalSearchFilter, optionalUuidFilter, optionalEnumFilter } from "@/schemas/common";
 
 // Valores reales de los enums de Policy (prisma/schema.prisma), duplicados
 // aquí como literales por la misma razón que en person.schema.ts /
@@ -37,6 +37,10 @@ export const BILLING_FREQUENCY_VALUES = [
 
 export const PAYMENT_STATUS_VALUES = ["CURRENT", "DUE", "PAST_DUE"] as const;
 
+// Fase 019.5 — solo aplica a pólizas HEALTH, regla de aplicación (ver
+// docs/DECISIONS.md).
+export const HEALTH_COVERAGE_SOURCE_VALUES = ["MARKETPLACE", "PRIVATE"] as const;
+
 export const policyIdSchema = z.uuid("Identificador de póliza inválido.");
 
 // Decimal como string validado, nunca number — evita aritmética de punto
@@ -57,9 +61,10 @@ export const listPoliciesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   search: optionalSearchFilter(),
-  status: z.enum(POLICY_STATUS_VALUES).optional(),
-  policyType: z.enum(POLICY_TYPE_VALUES).optional(),
+  status: optionalEnumFilter(POLICY_STATUS_VALUES),
+  policyType: optionalEnumFilter(POLICY_TYPE_VALUES),
   carrierId: optionalUuidFilter(),
+  healthSource: optionalEnumFilter(HEALTH_COVERAGE_SOURCE_VALUES),
 });
 export type ListPoliciesQuery = z.infer<typeof listPoliciesQuerySchema>;
 
@@ -87,6 +92,10 @@ export const createPolicySchema = z
     // política real se resuelve en el servicio, este schema solo valida
     // forma (uuid si viene).
     processedById: z.uuid("Selecciona un usuario válido.").optional(),
+    // Solo tiene efecto real si el producto es HEALTH — el servicio lo
+    // ignora silenciosamente para el resto (nunca lo rechaza, para no
+    // obligar a la UI a condicionar el envío del campo).
+    healthCoverageSource: z.enum(HEALTH_COVERAGE_SOURCE_VALUES).optional(),
   })
   .refine((data) => data.status !== "ACTIVE" || data.effectiveDate !== undefined, {
     message: "La fecha efectiva es requerida cuando el estado es Activa.",
@@ -115,12 +124,19 @@ export const updatePolicySchema = z
     paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
     operationType: z.enum(POLICY_OPERATION_TYPE_VALUES).optional(),
     processedById: z.uuid("Selecciona un usuario válido.").optional(),
+    // 3 estados (ausente/vacío/valor) porque a diferencia de crear, aquí
+    // sí debe poder "desclasificarse" explícitamente (volver a null).
+    healthCoverageSource: z
+      .string()
+      .transform((v) => (v.trim() === "" ? null : v.trim()))
+      .pipe(z.union([z.null(), z.enum(HEALTH_COVERAGE_SOURCE_VALUES)]))
+      .optional(),
   })
   .partial();
 export type UpdatePolicyInput = z.infer<typeof updatePolicySchema>;
 
 export const listActiveProductsQuerySchema = z.object({
-  policyType: z.enum(POLICY_TYPE_VALUES).optional(),
+  policyType: optionalEnumFilter(POLICY_TYPE_VALUES),
   carrierId: optionalUuidFilter(),
 });
 export type ListActiveProductsQuery = z.infer<typeof listActiveProductsQuerySchema>;

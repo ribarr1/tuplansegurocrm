@@ -435,4 +435,108 @@ describe("policies.service", () => {
     // de borrar las pólizas que lo referencian — borrarlo aquí fallaría
     // por el FK Restrict mientras "pending" todavía lo referencia.
   });
+
+  // Fase 019.5 — regresión: un <select> sin cambiar en /policies?status=
+  // enviaba "" antes de tener z.preprocess(emptyStringToUndefined, ...)
+  // en status/policyType, lo que producía VALIDATION_ERROR.
+  it("filtros vacíos de /policies no fallan (status/policyType/carrierId)", async () => {
+    await expect(
+      listPolicies(admin, { status: "", policyType: "", carrierId: "" })
+    ).resolves.toBeDefined();
+  });
+
+  it("E) terminationDate anterior a effectiveDate se rechaza al crear", async () => {
+    const holder = await makePerson();
+    await expect(
+      createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "false",
+        effectiveDate: new Date("2026-06-01"),
+        terminationDate: new Date("2026-05-01"),
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("F) terminationDate anterior a effectiveDate se rechaza al actualizar", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "false",
+        effectiveDate: new Date("2026-06-01"),
+      })
+    );
+    await expect(
+      updatePolicy(admin, policy.id, { terminationDate: new Date("2026-01-01") })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("M) Health Marketplace se guarda correctamente", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "false",
+        healthCoverageSource: "MARKETPLACE",
+      })
+    );
+    expect(policy.healthCoverageSource).toBe("MARKETPLACE");
+  });
+
+  it("N) Health Private se guarda correctamente", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "false",
+        healthCoverageSource: "PRIVATE",
+      })
+    );
+    expect(policy.healthCoverageSource).toBe("PRIVATE");
+  });
+
+  it("O) healthCoverageSource se rechaza al actualizar una póliza no-HEALTH", async () => {
+    const nonHealthProduct = await prisma.product.create({
+      data: { carrierId, name: "Plan Vida Test", policyType: "LIFE", isActive: true },
+    });
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: nonHealthProduct.id, holderCovered: "false" })
+    );
+    await expect(
+      updatePolicy(admin, policy.id, { healthCoverageSource: "MARKETPLACE" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("filtro /policies?healthSource= funciona", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "false",
+        healthCoverageSource: "MARKETPLACE",
+      })
+    );
+    const { items } = await listPolicies(admin, { healthSource: "MARKETPLACE", pageSize: 100 });
+    expect(items.some((i) => i.id === policy.id)).toBe(true);
+  });
+
+  it("G) effectiveDate === terminationDate es válido", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "false",
+        effectiveDate: new Date("2026-06-01"),
+        terminationDate: new Date("2026-06-01"),
+      })
+    );
+    expect(policy.terminationDate?.getTime()).toBe(policy.effectiveDate?.getTime());
+  });
 });
