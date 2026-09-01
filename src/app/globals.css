@@ -39,6 +39,9 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-secondary: var(--brand-secondary);
+  --color-brand-accent: var(--brand-accent);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -48,73 +51,104 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Identidad visual de TuPlanSeguro USA — Fase 019.5.
+ *
+ * Colores extraídos directamente de los assets reales del logo
+ * (LOGO-1.png / LOGO-3.png) con GetPixel(), no inventados:
+ *   - Azul  #0070AA (wordmark "TU PLAN", cabeza/cuerpo del ícono)
+ *   - Verde #00A660 (wordmark "SEGURO", cabeza/cuerpo del ícono)
+ *   - Naranja #FF7F13 (corazón del ícono) — deliberadamente de uso
+ *     escaso/decorativo, nunca como color de fondo dominante (ver
+ *     docs/DECISIONS.md: "no saturar cada componente de naranja/azul").
+ *
+ * --brand-* son los tokens de marca en sí; el resto de tokens shadcn
+ * (--color- de abajo) los REMAPEA sobre el sistema existente en vez
+ * de hardcodear el color en cada componente.
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --brand-primary: #0070aa;
+  --brand-secondary: #00a660;
+  --brand-accent: #ff7f13;
+  --brand-background: #f5f8fa;
+  --brand-surface: #ffffff;
+  --brand-text: #0b2136;
+  --brand-muted: #5b6b7a;
+
+  --background: var(--brand-background);
+  --foreground: var(--brand-text);
+  --card: var(--brand-surface);
+  --card-foreground: var(--brand-text);
+  --popover: var(--brand-surface);
+  --popover-foreground: var(--brand-text);
+  --primary: var(--brand-primary);
+  --primary-foreground: #ffffff;
+  --secondary: #e7eef2;
+  --secondary-foreground: var(--brand-text);
+  --muted: #eef2f5;
+  --muted-foreground: var(--brand-muted);
+  --accent: #e7eef2;
+  --accent-foreground: var(--brand-text);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --border: #dce4ea;
+  --input: #dce4ea;
+  --ring: var(--brand-primary);
+  --chart-1: var(--brand-primary);
+  --chart-2: var(--brand-secondary);
+  --chart-3: var(--brand-accent);
+  --chart-4: #5b8aa6;
+  --chart-5: #4c9c7b;
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #eaf2f7;
+  --sidebar-foreground: var(--brand-text);
+  --sidebar-primary: var(--brand-primary);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #d9e8f0;
+  --sidebar-accent-foreground: var(--brand-text);
+  --sidebar-border: #d3e0e8;
+  --sidebar-ring: var(--brand-primary);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --brand-primary: #3fa0d6;
+  --brand-secondary: #35c088;
+  --brand-accent: #ff9640;
+  --brand-background: #0b1620;
+  --brand-surface: #101e2b;
+  --brand-text: #e6eef2;
+  --brand-muted: #93a7b5;
+
+  --background: var(--brand-background);
+  --foreground: var(--brand-text);
+  --card: var(--brand-surface);
+  --card-foreground: var(--brand-text);
+  --popover: var(--brand-surface);
+  --popover-foreground: var(--brand-text);
+  --primary: var(--brand-primary);
+  --primary-foreground: #0b1620;
+  --secondary: #16283a;
+  --secondary-foreground: var(--brand-text);
+  --muted: #16283a;
+  --muted-foreground: var(--brand-muted);
+  --accent: #16283a;
+  --accent-foreground: var(--brand-text);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --ring: var(--brand-primary);
+  --chart-1: var(--brand-primary);
+  --chart-2: var(--brand-secondary);
+  --chart-3: var(--brand-accent);
+  --chart-4: #6fa8c9;
+  --chart-5: #6fbf9d;
+  --sidebar: #0e1c28;
+  --sidebar-foreground: var(--brand-text);
+  --sidebar-primary: var(--brand-primary);
+  --sidebar-primary-foreground: #0b1620;
+  --sidebar-accent: #16283a;
+  --sidebar-accent-foreground: var(--brand-text);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: var(--brand-primary);
 }
 
 @layer base {

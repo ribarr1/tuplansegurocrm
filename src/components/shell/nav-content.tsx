@@ -41,8 +41,8 @@ export function NavContent({ role, onNavigate }: { role: UserRole; onNavigate?: 
               className={cn(
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-secondary text-secondary-foreground"
-                  : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground"
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               )}
             >
               <Icon className="size-4" aria-hidden="true" />
@@ -60,8 +60,8 @@ export function NavContent({ role, onNavigate }: { role: UserRole; onNavigate?: 
             className={cn(
               "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
               pathname.startsWith(SETTINGS_NAV_ITEM.href)
-                ? "bg-secondary text-secondary-foreground"
-                : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground"
+                ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
             )}
           >
             <SETTINGS_NAV_ITEM.icon className="size-4" aria-hidden="true" />
