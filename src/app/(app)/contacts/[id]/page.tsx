@@ -13,9 +13,13 @@ import {
   BIRTHDAY_GREETING_STATUS_BADGE_VARIANT,
 } from "@/lib/labels";
 import { getBirthdayForPerson } from "@/services/birthdays.service";
+import { getHouseholdsForPerson } from "@/services/households.service";
 import { FamilyTab } from "./family-tab";
 import { PoliciesTab } from "./policies-tab";
 import { TasksTab } from "./tasks-tab";
+import { HealthTab } from "./health-tab";
+import { CommissionsTab } from "./commissions-tab";
+import { NotesTab } from "./notes-tab";
 import { MarkSentDialog } from "../../birthdays/mark-sent-dialog";
 import { SkipGreetingButton } from "../../birthdays/greeting-quick-buttons";
 
@@ -23,11 +27,16 @@ const PROFILE_TABS = [
   { key: "resumen", label: "Resumen", enabled: true },
   { key: "familia", label: "Familia", enabled: true },
   { key: "polizas", label: "Pólizas", enabled: true },
-  { key: "salud", label: "Salud", enabled: false },
+  { key: "salud", label: "Salud", enabled: true },
   { key: "tareas", label: "Tareas", enabled: true },
-  { key: "comisiones", label: "Comisiones", enabled: false },
-  { key: "notas", label: "Notas", enabled: false },
+  { key: "comisiones", label: "Comisiones", enabled: true },
+  { key: "notas", label: "Notas", enabled: true },
 ] as const;
+
+function formatMoney(amount: { toFixed: (n: number) => string } | null | undefined): string {
+  if (!amount) return "—";
+  return `$${amount.toFixed(2)}`;
+}
 
 function formatDate(date: Date | null): string {
   if (!date) return "—";
@@ -45,7 +54,13 @@ export default async function ContactDetailPage({
   const { tab: rawTab } = await searchParams;
   const actor = await requireUser();
 
-  const activeTab = PROFILE_TABS.some((t) => t.key === rawTab && t.enabled) ? rawTab! : "resumen";
+  // Comisiones es FINANCIERO/RESTRINGIDO (Fase 016) — se oculta por
+  // completo para ASSISTANT, no solo se deshabilita, para evitar
+  // confusión y para no dejar una pestaña "viva" apuntando a datos que
+  // de todas formas el servicio rechazaría.
+  const visibleTabs =
+    actor.role === "ASSISTANT" ? PROFILE_TABS.filter((t) => t.key !== "comisiones") : PROFILE_TABS;
+  const activeTab = visibleTabs.some((t) => t.key === rawTab && t.enabled) ? rawTab! : "resumen";
 
   let person;
   try {
@@ -58,6 +73,8 @@ export default async function ContactDetailPage({
   }
 
   const birthday = person.dateOfBirth ? await getBirthdayForPerson(actor, person.id) : null;
+  const households = activeTab === "resumen" ? await getHouseholdsForPerson(actor, person.id) : [];
+  const primaryHousehold = households[0];
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -82,7 +99,7 @@ export default async function ContactDetailPage({
       {/* Tabs por query param (?tab=): compartibles/navegables sin JS.
           Solo "Resumen" y "Familia" tienen contenido en esta fase. */}
       <div className="flex flex-wrap gap-1 border-b">
-        {PROFILE_TABS.map((tab) => {
+        {visibleTabs.map((tab) => {
           const isActive = tab.key === activeTab;
           if (!tab.enabled) {
             return (
@@ -117,6 +134,12 @@ export default async function ContactDetailPage({
         <PoliciesTab actor={actor} personId={person.id} />
       ) : activeTab === "tareas" ? (
         <TasksTab actor={actor} personId={person.id} />
+      ) : activeTab === "salud" ? (
+        <HealthTab actor={actor} personId={person.id} />
+      ) : activeTab === "comisiones" ? (
+        actor.role === "ASSISTANT" ? null : <CommissionsTab actor={actor} personId={person.id} />
+      ) : activeTab === "notas" ? (
+        <NotesTab actor={actor} personId={person.id} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           <Card>
@@ -185,6 +208,44 @@ export default async function ContactDetailPage({
               </div>
             </CardContent>
           </Card>
+
+          {primaryHousehold && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Hogar</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2 text-sm">
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Dirección</span>
+                  <span className="text-right">
+                    {primaryHousehold.addressLine1
+                      ? `${primaryHousehold.addressLine1}${primaryHousehold.addressLine2 ? `, ${primaryHousehold.addressLine2}` : ""}`
+                      : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Ciudad/Estado/ZIP</span>
+                  <span>
+                    {[primaryHousehold.city, primaryHousehold.state, primaryHousehold.zipCode]
+                      .filter(Boolean)
+                      .join(", ") || "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Condado</span>
+                  <span>{primaryHousehold.county ?? "—"}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Ingreso familiar estimado</span>
+                  <span>{formatMoney(primaryHousehold.annualHouseholdIncome)}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Año del ingreso</span>
+                  <span>{primaryHousehold.incomeYear ?? "—"}</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
     </div>

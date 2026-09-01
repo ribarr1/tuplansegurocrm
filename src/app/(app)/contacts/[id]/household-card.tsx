@@ -6,6 +6,7 @@ import type { getHouseholdById } from "@/services/households.service";
 import { AddMemberDialog } from "./add-member-dialog";
 import { MemberRoleForm } from "./member-role-form";
 import { RemoveMemberButton } from "./remove-member-button";
+import { HouseholdDetailsForm } from "./household-details-form";
 
 type Household = Awaited<ReturnType<typeof getHouseholdById>>;
 
@@ -68,6 +69,21 @@ export function HouseholdCard({
             </div>
           </div>
         ))}
+
+        <HouseholdDetailsForm
+          householdId={household.id}
+          personId={viewedPersonId}
+          defaults={{
+            addressLine1: household.addressLine1 ?? "",
+            addressLine2: household.addressLine2 ?? "",
+            city: household.city ?? "",
+            state: household.state ?? "",
+            zipCode: household.zipCode ?? "",
+            county: household.county ?? "",
+            annualHouseholdIncome: household.annualHouseholdIncome?.toString() ?? "",
+            incomeYear: household.incomeYear?.toString() ?? "",
+          }}
+        />
       </CardContent>
     </Card>
   );

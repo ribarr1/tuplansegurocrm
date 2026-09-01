@@ -8,6 +8,7 @@ import {
   removeHouseholdMember,
   updateHouseholdMemberRole,
   createPersonAndAddToHousehold,
+  updateHousehold,
 } from "@/services/households.service";
 import { listPeople } from "@/services/people.service";
 import {
@@ -103,6 +104,43 @@ export async function createPersonAndAddAction(
 
   try {
     await createPersonAndAddToHousehold(actor, householdId, values);
+  } catch (error) {
+    return toHouseholdFormState(error, values);
+  }
+
+  revalidatePath(`/contacts/${personId}`);
+  return { success: true };
+}
+
+// Formulario de dirección/ingreso siempre envía las 7 claves (nunca las
+// omite) — a diferencia de formDataToRecord, formData.get() aquí SÍ
+// distingue vacío ("" -> borrar explícitamente) de un valor real,
+// consistente con el patrón de 3 estados de updateHouseholdSchema.
+const HOUSEHOLD_DETAILS_FIELDS = [
+  "addressLine1",
+  "addressLine2",
+  "city",
+  "state",
+  "zipCode",
+  "county",
+  "annualHouseholdIncome",
+  "incomeYear",
+] as const;
+
+export async function updateHouseholdAction(
+  householdId: string,
+  personId: string,
+  _prevState: HouseholdFormState,
+  formData: FormData
+): Promise<HouseholdFormState> {
+  const actor = await requireSessionUser();
+  const values: Record<string, string> = {};
+  for (const field of HOUSEHOLD_DETAILS_FIELDS) {
+    values[field] = String(formData.get(field) ?? "");
+  }
+
+  try {
+    await updateHousehold(actor, householdId, values);
   } catch (error) {
     return toHouseholdFormState(error, values);
   }
