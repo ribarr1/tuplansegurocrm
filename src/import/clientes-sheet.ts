@@ -155,8 +155,36 @@ export async function parseClientesSheet(
       }
     }
 
+    // TITULAR DIRECCION es texto libre e inconsistente en el source real
+    // ("1470 ASHTON CT, AURORA, IL, 60504" vs "314 S OHIO ST AURORA
+    // ILLINOIS" vs "98 Etowah terrace sw. Rome GA 30161") — partirlo en
+    // addressLine1/city/state/zipCode con heurísticas sería adivinar.
+    // Se guarda tal cual en Household.addressLine1; TITULAR CONDADO sí
+    // es un valor limpio de una sola columna y se guarda en county.
+    const addressLine1 = stringCell(sheet, row, "TITULAR DIRECCION");
+    const county = stringCell(sheet, row, "TITULAR CONDADO");
+
     if (householdMembers.length > 1) {
-      households.push({ sheet: sheetName, row: rowNumber, headPersonKey: titularResolved.key, memberKeys: householdMembers });
+      households.push({
+        sheet: sheetName,
+        row: rowNumber,
+        headPersonKey: titularResolved.key,
+        memberKeys: householdMembers,
+        addressLine1,
+        county,
+      });
+    } else if (addressLine1 || county) {
+      // Un titular solo no genera Household en el modelo actual (ver
+      // apply.ts), así que su dirección no tiene dónde guardarse todavía
+      // — se reporta en vez de perderse silenciosamente.
+      issues.push({
+        severity: "INFO",
+        code: "ADDRESS_WITHOUT_HOUSEHOLD",
+        sheet: sheetName,
+        row: rowNumber,
+        message:
+          "El titular tiene dirección/condado en el source pero no tiene hogar (household) en esta importación — no se puede guardar hasta que exista una decisión de modelo para titulares sin hogar.",
+      });
     }
 
     // --- Policy ---
@@ -262,6 +290,42 @@ export async function parseClientesSheet(
       });
     }
 
+    // El source actual no tiene columna de fecha de terminación —
+    // dateCell() devuelve null de forma segura para un header
+    // inexistente, así que esta validación queda lista para cuando
+    // exista sin afectar el comportamiento de hoy.
+    const terminationDate = dateCell(sheet, row, "FECHA DE TERMINACION");
+    if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
+      issues.push({
+        severity: "BLOCKING",
+        code: "POLICY_TERMINATION_BEFORE_EFFECTIVE",
+        sheet: sheetName,
+        row: rowNumber,
+        message: "La fecha de finalización no puede ser anterior a la fecha de inicio.",
+      });
+      blocked = true;
+      blockReason = "POLICY_TERMINATION_BEFORE_EFFECTIVE";
+    }
+
+    // Marketplace vs Privado: nunca por nombre de carrier. marketplaceState
+    // solo tiene sentido para cobertura ACA, así que su presencia es
+    // evidencia estructurada suficiente de MARKETPLACE. Su ausencia NO
+    // prueba PRIVATE (podría ser un dato simplemente no capturado) —
+    // queda ambigua y se reporta para revisión manual.
+    let healthCoverageSource: "MARKETPLACE" | "PRIVATE" | null = null;
+    if (marketplaceState) {
+      healthCoverageSource = "MARKETPLACE";
+    } else {
+      issues.push({
+        severity: "WARNING",
+        code: "UNKNOWN_HEALTH_SOURCE",
+        sheet: sheetName,
+        row: rowNumber,
+        message:
+          "No hay evidencia estructurada suficiente para clasificar esta póliza de salud como Marketplace o Privada — requiere revisión manual antes de importar.",
+      });
+    }
+
     policies.push({
       sheet: sheetName,
       row: rowNumber,
@@ -274,6 +338,8 @@ export async function parseClientesSheet(
       operationType,
       status: resolvedStatus,
       effectiveDate,
+      terminationDate,
+      healthCoverageSource,
       marketplaceState,
       premiumAmount: decimalCell(sheet, row, "PRIMA"),
       deductibleIndividual: decimalCell(sheet, row, "DEDUCIBLE"),

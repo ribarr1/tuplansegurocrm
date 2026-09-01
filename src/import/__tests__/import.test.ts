@@ -549,4 +549,126 @@ describe("import pipeline", () => {
     const stillThere = await prisma.person.findUnique({ where: { id: untouched.id } });
     expect(stillThere?.firstName).toBe("Untouched");
   });
+
+  it("AP) dirección/condado del titular se propagan al Household cuando hay hogar", async () => {
+    const suffix = uniqueSuffix();
+    const plan = await planFromRows([
+      {
+        ESTATUS: "PROCESADA",
+        "TITULAR NOMBRE Y APELLIDO": `AP Test${suffix}`,
+        "TITULAR FECHA DE NACIMIENTO": "01/01/1980",
+        "FECHA DE INICIO": "01/15/2026",
+        "COMPAÑIA DE SEGUROS": "AMBETTER",
+        PLAN: "Plan AP",
+        "TITULAR DIRECCION": "123 Fixture St, Testville, FL, 12345",
+        "TITULAR CONDADO": "FIXTURE COUNTY",
+        "CONYUGUE NOMBRE": "Spouse",
+        "CONYUGUE APELLIDO": `AP${suffix}`,
+        "CONYUGUE FECHA DE NACIMIENTO": "02/02/1982",
+      },
+    ]);
+    expect(plan.households.length).toBe(1);
+    expect(plan.households[0].addressLine1).toBe("123 Fixture St, Testville, FL, 12345");
+    expect(plan.households[0].county).toBe("FIXTURE COUNTY");
+  });
+
+  it("AQ) titular sin hogar con dirección se reporta INFO (no se pierde silenciosamente)", async () => {
+    const suffix = uniqueSuffix();
+    const plan = await planFromRows([
+      {
+        ESTATUS: "PROCESADA",
+        "TITULAR NOMBRE Y APELLIDO": `AQ Test${suffix}`,
+        "FECHA DE INICIO": "01/15/2026",
+        "COMPAÑIA DE SEGUROS": "AMBETTER",
+        PLAN: "Plan AQ",
+        "TITULAR DIRECCION": "456 Fixture Ave",
+      },
+    ]);
+    expect(plan.households.length).toBe(0);
+    expect(plan.issues.some((i) => i.code === "ADDRESS_WITHOUT_HOUSEHOLD" && i.severity === "INFO")).toBe(true);
+  });
+
+  it("AR) FECHA DE TERMINACION anterior a FECHA DE INICIO bloquea la fila", async () => {
+    const plan = await planFromRows([
+      {
+        ESTATUS: "PROCESADA",
+        "TITULAR NOMBRE Y APELLIDO": `AR Test${uniqueSuffix()}`,
+        "FECHA DE INICIO": "06/01/2026",
+        "FECHA DE TERMINACION": "01/01/2026",
+        "COMPAÑIA DE SEGUROS": "AMBETTER",
+        PLAN: "Plan AR",
+      },
+    ]);
+    expect(plan.policies[0].blocked).toBe(true);
+    expect(plan.policies[0].blockReason).toBe("POLICY_TERMINATION_BEFORE_EFFECTIVE");
+    expect(
+      plan.issues.some((i) => i.code === "POLICY_TERMINATION_BEFORE_EFFECTIVE" && i.severity === "BLOCKING")
+    ).toBe(true);
+    expect(plan.readyToImport).toBe(false);
+  });
+
+  it("AS) ESTADO presente clasifica MARKETPLACE; ausente reporta UNKNOWN_HEALTH_SOURCE sin bloquear", async () => {
+    const suffix = uniqueSuffix();
+    const withState = await planFromRows([
+      {
+        ESTATUS: "PROCESADA",
+        "TITULAR NOMBRE Y APELLIDO": `AS1 Test${suffix}`,
+        "FECHA DE INICIO": "01/15/2026",
+        ESTADO: "FLORIDA",
+        "COMPAÑIA DE SEGUROS": "AMBETTER",
+        PLAN: "Plan AS1",
+      },
+    ]);
+    expect(withState.policies[0].healthCoverageSource).toBe("MARKETPLACE");
+
+    const withoutState = await planFromRows([
+      {
+        ESTATUS: "PROCESADA",
+        "TITULAR NOMBRE Y APELLIDO": `AS2 Test${suffix}`,
+        "FECHA DE INICIO": "01/15/2026",
+        "COMPAÑIA DE SEGUROS": "AMBETTER",
+        PLAN: "Plan AS2",
+      },
+    ]);
+    expect(withoutState.policies[0].healthCoverageSource).toBeNull();
+    expect(withoutState.issues.some((i) => i.code === "UNKNOWN_HEALTH_SOURCE" && i.severity === "WARNING")).toBe(
+      true
+    );
+    expect(withoutState.readyToImport).toBe(true);
+  });
+
+  it("AT) apply.ts escribe address/county en Household y healthCoverageSource en Policy", async () => {
+    const suffix = uniqueSuffix();
+    createdCarrierNames.push("Ambetter");
+    const plan = await planFromRows([
+      {
+        ESTATUS: "PROCESADA",
+        "TITULAR NOMBRE Y APELLIDO": `AT Test${suffix}`,
+        "TITULAR FECHA DE NACIMIENTO": "01/01/1980",
+        "TITULAR EMAIL": `at.${suffix}@test.local`,
+        "FECHA DE INICIO": "01/15/2026",
+        ESTADO: "FLORIDA",
+        "COMPAÑIA DE SEGUROS": "AMBETTER",
+        PLAN: "Plan AT",
+        "TITULAR DIRECCION": "789 Fixture Blvd",
+        "TITULAR CONDADO": "AT COUNTY",
+        "CONYUGUE NOMBRE": "Spouse",
+        "CONYUGUE APELLIDO": `AT${suffix}`,
+        "CONYUGUE FECHA DE NACIMIENTO": "02/02/1982",
+      },
+    ]);
+    const result = await applyImportPlan(plan);
+    expect(result.householdsCreated).toBe(1);
+
+    const person = await prisma.person.findFirst({ where: { email: `at.${suffix}@test.local` } });
+    createdPersonIds.push(person!.id);
+
+    const membership = await prisma.householdMember.findFirst({ where: { personId: person!.id, role: "HEAD" } });
+    const household = await prisma.household.findUnique({ where: { id: membership!.householdId } });
+    expect(household?.addressLine1).toBe("789 Fixture Blvd");
+    expect(household?.county).toBe("AT COUNTY");
+
+    const policy = await prisma.policy.findFirst({ where: { holderId: person!.id } });
+    expect(policy?.healthCoverageSource).toBe("MARKETPLACE");
+  });
 });

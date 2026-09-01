@@ -42,6 +42,12 @@ export type HouseholdPlanEntry = {
   row: number;
   headPersonKey: string; // referencia lógica dentro del plan, no un id de DB todavía
   memberKeys: { personKey: string; role: "HEAD" | "SPOUSE" | "CHILD" | "DEPENDENT" | "OTHER" }[];
+  // Dirección tal como aparece en el source (texto libre, sin partir en
+  // líneas/ciudad/estado/ZIP — el formato real es inconsistente, ver
+  // docs/IMPORTING_LEGACY_DATA.md). county sí es un valor limpio de una
+  // sola columna.
+  addressLine1?: string | null;
+  county?: string | null;
 };
 
 export type PolicyPlanEntry = {
@@ -56,6 +62,15 @@ export type PolicyPlanEntry = {
   operationType: "NEW_ENROLLMENT" | "RENEWAL" | "PLAN_CHANGE" | null;
   status: "PENDING" | "ACTIVE" | "CANCELLED";
   effectiveDate: Date | null;
+  // El source actual no tiene columna de fecha de terminación — este
+  // campo queda preparado (siempre null hoy) para cuando exista, con la
+  // misma validación que policies.service.ts::assertTerminationNotBeforeEffective.
+  terminationDate: Date | null;
+  // MARKETPLACE cuando hay evidencia estructurada (ESTADO/marketplaceState
+  // resuelto — un campo que solo tiene sentido para cobertura ACA); nunca
+  // inferido del nombre del carrier. null cuando es ambiguo — se reporta
+  // UNKNOWN_HEALTH_SOURCE para revisión manual, nunca se asume PRIVATE.
+  healthCoverageSource: "MARKETPLACE" | "PRIVATE" | null;
   marketplaceState: string | null;
   premiumAmount: string | null;
   deductibleIndividual: string | null;

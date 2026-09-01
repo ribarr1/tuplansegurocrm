@@ -92,7 +92,13 @@ export async function applyImportPlan(plan: ImportPlan): Promise<ApplyResult> {
         householdId = existingMembership.householdId;
         result.householdsReused++;
       } else {
-        const created = await tx.household.create({ data: {}, select: { id: true } });
+        // addressLine1/county solo se escriben al CREAR el household —
+        // nunca sobrescriben uno ya existente reutilizado (misma regla
+        // de "no reescribir historial" que el resto del importador).
+        const created = await tx.household.create({
+          data: { addressLine1: h.addressLine1 ?? null, county: h.county ?? null },
+          select: { id: true },
+        });
         householdId = created.id;
         result.householdsCreated++;
       }
@@ -173,6 +179,8 @@ export async function applyImportPlan(plan: ImportPlan): Promise<ApplyResult> {
             householdId: householdId ?? null,
             status: pol.status,
             effectiveDate: pol.effectiveDate,
+            terminationDate: pol.terminationDate,
+            healthCoverageSource: pol.healthCoverageSource,
             operationType: pol.operationType,
             premiumAmount: pol.premiumAmount,
             needsPaymentAssistance: pol.needsPaymentAssistance,
