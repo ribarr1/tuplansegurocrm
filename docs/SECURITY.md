@@ -9,8 +9,8 @@ Notas de seguridad específicas del proyecto. No es una política general — so
 - **Longitud mínima de contraseña:** 10 caracteres (`emailAndPassword.minPasswordLength` en `src/lib/auth.ts`), reforzada también en el script de bootstrap.
 - **Sesiones:** cookie `HttpOnly`, `Secure` en producción, `SameSite` por defecto de Better Auth. Nunca tokens de sesión en `localStorage`. Sesiones respaldadas por la tabla `session` (base de datos), no JWT-only.
 - **Sin login social todavía** (Google/Facebook/Microsoft) — solo email + password. El modelo `Account` ya soporta múltiples proveedores si se agrega después, sin nueva migración estructural para eso.
-- **Sin registro público.** No existe endpoint `/signup` ni flujo de alta abierto. El único mecanismo de creación de usuarios es `npm run create-admin` (ver README.md) para el primer ADMIN; altas posteriores serán una función administrativa dentro del CRM (no implementada todavía).
-- **Bootstrap del primer ADMIN:** `scripts/create-admin.ts`. Usa `auth.api.signUpEmail` (la misma lógica de hash/creación que el resto de la app) en vez de reinventar criptografía. Valida email y longitud de password, rechaza duplicados, nunca imprime la contraseña, y no persiste credenciales en ningún archivo — se reciben por variable de entorno de proceso o prompt interactivo con eco oculto.
+- **Sin registro público — reforzado a nivel de Better Auth desde Fase 019.5.** No existe endpoint `/signup` ni flujo de alta abierto en la UI, y desde Fase 019.5 la ruta pública de Better Auth (`/api/auth/sign-up/email`) queda además **bloqueada incondicionalmente** vía `emailAndPassword.disableSignUp: true` (`src/lib/auth.ts`) — antes solo no se enlazaba desde ningún lado, pero seguía siendo alcanzable por cualquiera que conociera la ruta. El único mecanismo de creación de usuarios es `npm run create-admin` (bootstrap del primer ADMIN) y, desde Fase 019.5, Configuración → Usuarios (ADMIN, ver sección "Administración de usuarios" abajo).
+- **Bootstrap del primer ADMIN:** `scripts/create-admin.ts`. Como `disableSignUp` bloquea la ruta de Better Auth incluso para una llamada interna, este script ya no usa `auth.api.signUpEmail` — construye `User`+`Account` directamente, hasheando con `better-auth/crypto::hashPassword` (la misma función que usa el runtime de Better Auth internamente, así que el hash resultante es indistinguible de uno generado por su propio flujo). Valida email y longitud de password, rechaza duplicados, nunca imprime la contraseña, y no persiste credenciales en ningún archivo — se reciben por variable de entorno de proceso o prompt interactivo con eco oculto.
 - **Contraseñas de usuarios locales de prueba deben rotarse después de las pruebas** (o el usuario debe eliminarse si solo era para verificación puntual). Ninguna credencial de prueba se versiona ni se documenta en texto plano en el repositorio — cuando aparece en esta documentación o en el chat de una fase, es exclusivamente para el entorno local del desarrollador, nunca para producción.
 - **MFA:** no implementado en esta fase. Better Auth tiene un plugin oficial de TOTP (`better-auth/plugins/two-factor`) — camino claro para agregarlo después sin cambiar de librería.
 - **Recuperación de contraseña por email:** no implementada — no hay proveedor de email configurado todavía. La tabla `verification` ya existe (creada por Better Auth) para cuando se agregue ese flujo, sin necesitar otra migración solo para la tabla.
@@ -99,6 +99,33 @@ Ver `docs/IMPORTING_LEGACY_DATA.md` para el detalle completo del pipeline. Resum
 - **El reporte JSON (`import-report.json`) solo contiene conteos agregados y códigos de error con `sheet`/`row`** — nunca serializa nombre, email, teléfono, fecha de nacimiento ni ningún valor de columna. Verificado en tests (`import.test.ts`, casos V/W/X/AH).
 - **DRY RUN es el comportamiento por defecto.** Escribir en PostgreSQL requiere `--apply` y `--confirm` simultáneos — ninguno solo es suficiente. `apply.ts` además rechaza escribir si el plan tiene algún error `BLOCKING` (`READY_TO_IMPORT = false`).
 - **El CLI de importación no crea `User`/cuentas de acceso** bajo ninguna circunstancia — nombres de agente sin mapping explícito quedan como `agentId`/`processedById` nulos, nunca inventan un usuario.
+
+## Documentos de póliza (`PolicyDocument`) — Fase 019.5
+
+Clasificación: **operativo**, no financiero-restringido (a diferencia de Comisiones) — ASSISTANT sí participa.
+
+- **Nunca se guarda el binario en PostgreSQL.** `PolicyDocument` es solo metadata; el archivo vive en el `FileStorage` abstraído (`src/lib/storage.ts`) — en desarrollo, fuera de `/public` (`private-storage/`, gitignored); en producción requiere un adapter S3-compatible todavía no implementado (deliberadamente, ver `docs/DECISIONS.md`).
+- **Nunca URLs públicas permanentes.** Toda descarga/visualización pasa por `GET /api/policies/[id]/documents/[documentId]` (Route Handler), que llama `requireSessionUser()` y vuelve a verificar autorización de la póliza (`assertCanAccessPolicy`) en cada request — conocer la URL/el `documentId` nunca es suficiente por sí solo.
+- **El tipo real del archivo se verifica por firma binaria, nunca por extensión ni por el `Content-Type` declarado por el navegador.** `src/lib/file-sniff.ts` implementa detección real de magic bytes (PDF `%PDF`, PNG, JPEG, WEBP) — un archivo `.exe` renombrado a `.pdf` se rechaza aunque el navegador diga `application/pdf`.
+- **Allow-list, no deny-list.** `ALLOWED_DOCUMENT_MIME_TYPES` lista únicamente PDF/PNG/JPEG/WEBP — cualquier otro tipo (incluidos `.exe`/`.js`/`.html`/`.svg`) se rechaza automáticamente sin necesidad de enumerarlo.
+- **`storageKey` siempre generado (`crypto.randomUUID()` + extensión derivada del MIME ya verificado), nunca el nombre de archivo original** — es el mecanismo real que impide path traversal, reforzado con validación de patrón estricto en `LocalFileStorage.resolveSafePath()` como defensa en profundidad.
+- **Tamaño máximo 15MB**, validado antes de escribir a disco.
+- **Autorización igual que `Policy`** (`assertCanAccessPolicy`), no una regla más estricta como Comisiones — ASSISTANT puede subir/ver/eliminar documentos operativos en cualquier póliza a la que ya tenga acceso.
+
+## Reglas de comisión (`CommissionRule`) — Fase 019.5
+
+Clasificación: **FINANCIERO / RESTRINGIDO**, más estricto incluso que Comisiones (donde AGENT tiene lectura) — configurar cómo se le paga a la agencia es una decisión puramente administrativa.
+
+- **Solo ADMIN puede ver, crear, desactivar reglas o generar expectativas desde una regla.** `commission-rules.service.ts` restringe el módulo completo a ADMIN (`assertAdminOnly` al inicio de cada función exportada) — ni siquiera AGENT tiene acceso de lectura, a diferencia del resto de Comisiones.
+- **Generar una expectativa desde una regla sigue pasando por la misma autorización de póliza** (`assertCanAccessPolicy`) antes de la restricción ADMIN-only — defensa en profundidad, aunque en la práctica ADMIN ya tiene acceso a todo.
+- **Nunca genera expectativas de forma abierta/automática.** `generateExpectationForPeriod` opera sobre exactamente una póliza y un período por invocación, explícitamente solicitados por el ADMIN — nunca un job en segundo plano ni un rango implícito, evitando generación descontrolada de registros financieros.
+
+## Administración de usuarios (Configuración → Usuarios) — Fase 019.5
+
+- **ADMIN únicamente** — `users.service.ts::assertAdminOnly` protege `listAllUsers`/`createUser`/`setUserActive`/`getUserById`.
+- **Contraseña temporal generada por el servidor (18 bytes aleatorios), mostrada al ADMIN exactamente una vez en la UI tras crear el usuario — nunca se persiste en texto plano ni se registra en logs.** El ADMIN debe compartirla manualmente por un canal seguro fuera de banda; envío automático por email queda pendiente (requiere proveedor de email, no configurado todavía).
+- **No se puede desactivar al único ADMIN activo** (`setUserActive` cuenta `role=ADMIN AND isActive=true` antes de permitir la desactivación) — evita un lockout administrativo accidental del CRM.
+- **AGENT sigue siendo un `User` con `role=AGENT`, nunca una entidad separada** — no hay superficie de administración distinta para "agentes" vs. "usuarios".
 
 ## Cumpleaños (Fase 015) — acceso más estricto que la vista general de Person
 

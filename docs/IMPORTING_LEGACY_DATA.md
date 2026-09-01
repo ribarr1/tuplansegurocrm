@@ -49,6 +49,8 @@ Confirmado por inspección estructural (nunca se imprimieron valores de columnas
 
 **Advertencia de calidad de datos encontrada en el dry run real**: la columna `COMPAÑIA DE SEGUROS` de la hoja `Comisiones` contiene, en varias filas, valores que no son nombres de aseguradora (números sueltos, "ReportesEasy") — indicio de una hoja con estructura irregular en ese tramo. El pipeline nunca adivina: esas filas se reportan como `UNKNOWN_CARRIER`/`COMMISSION_POLICY_NOT_FOUND` y quedan bloqueadas hasta que alguien limpie esa sección del Excel o confirme el mapeo correcto.
 
+**Segundo dry run (Fase 019.5)**, tras agregar dirección/condado/`healthCoverageSource`/validación de fecha de terminación: sin regresión. `BLOCKING` se mantiene en 28 con los mismos códigos que antes (`AMBIGUOUS_PERSON_MATCH`: 4, `MISSING_HOLDER_NAME`: 2, `COMMISSION_POLICY_NOT_FOUND`: 16, `COMMISSION_POLICY_AMBIGUOUS`: 6); `WARNING` se mantiene en 21 (`UNKNOWN_CARRIER`). Señales nuevas, todas `INFO` (no bloquean): `ADDRESS_WITHOUT_HOUSEHOLD` en 16 filas (titulares sin household en el modelo actual que sí tienen dirección en el source). `READY_TO_IMPORT` sigue en `false` — no se corrió `--apply`.
+
 ## Datos que nunca se importan
 
 **Prohibidos de forma absoluta** (`EXCLUDED_SENSITIVE`, ver `src/import/sensitive.ts`):
@@ -83,7 +85,7 @@ La misma lógica (`matchAgainstPool`, función pura) se usa tanto contra Postgre
 
 - `POLICY_STATUS_MAP`: `PROCESADA`→ACTIVE, `CANCELADA`→CANCELLED, `BRADON`→PENDING ("borrador"). `FALTA` queda deliberadamente **fuera** del mapa — es ambiguo (puede significar "falta pago"/"falta documento"), nunca se asume.
 - `OPERATION_TYPE_MAP`: `CLIENTE NUEVO`→NEW_ENROLLMENT, `RENOVACION`→RENEWAL, `CAMBIO DE PLAN`→PLAN_CHANGE.
-- `MARKETPLACE_STATE_MAP`: nombres de estado en español → código de 2 letras (`HealthPolicyDetail.marketplaceState`). La columna `ESTADO` de `clientes` es el estado de la póliza en el Marketplace, no una dirección de `Person` (que el schema todavía no tiene, ver `docs/DECISIONS.md`).
+- `MARKETPLACE_STATE_MAP`: nombres de estado en español → código de 2 letras (`HealthPolicyDetail.marketplaceState`). La columna `ESTADO` de `clientes` es el estado de la póliza en el Marketplace, no una dirección de `Person` (dirección real vive en `Household`, ver `docs/DECISIONS.md`). **Desde Fase 019.5** esta misma columna también decide `Policy.healthCoverageSource`: presente → `MARKETPLACE` (evidencia estructurada, nunca inferida del carrier); ausente → `UNKNOWN_HEALTH_SOURCE` (WARNING, revisión manual — nunca se asume `PRIVATE` por default).
 - `CARRIER_NAME_MAP`: los 4 valores reales de `clientes` (`AMBETTER`, `BLUE CROSS BLUE SHIELD (BCBS)`, `KAISER PERMANENTE`, `OSCAR`) → nombre real de `Carrier`. Nunca se mapea contra un Carrier `(Dev Seed)`.
 - `AGENT_NAME_TO_EMAIL_MAP`: vacío a propósito. El único agente real en el source (`RUBEN IBARRA`) queda sin mapear hasta que se confirme explícitamente a qué `User.email` corresponde — nunca se crea un `User` automáticamente. Sin mapping, `agentId`/`processedById` quedan `null` y se reporta `UNMAPPED_AGENT` (INFO, no bloquea).
 
@@ -98,6 +100,8 @@ Solo entidades ya existentes: `Person`, `Household`, `HouseholdMember`, `Carrier
 - `HouseholdMemberRole` real: `HEAD`/`SPOUSE`/`CHILD`/`DEPENDENT`/`OTHER`. Un dependiente se clasifica `CHILD` solo si `DEPENDIENTE N RELACION` contiene un patrón reconocible de hijo/hija (`/hij|son|daughter|child/i`); cualquier otro valor (sobrino, padre, etc.) usa `DEPENDENT` — nunca se asume `CHILD` solo porque la columna se llama "dependiente".
 - Household solo se crea si la fila tiene más de un miembro (titular + al menos cónyuge/dependiente) — un titular solo no genera un Household de una persona.
 - Idempotencia: antes de crear un Household, `apply.ts` busca si el titular ya es `HEAD` de un Household existente y lo reutiliza.
+- **Dirección (Fase 019.5)**: `TITULAR DIRECCION` es texto libre e inconsistente en el source real ("1470 ASHTON CT, AURORA, IL, 60504" vs "314 S OHIO ST AURORA ILLINOIS" vs "98 Etowah terrace sw. Rome GA 30161") — se guarda tal cual en `Household.addressLine1`, nunca se intenta partir en `city`/`state`/`zipCode` con heurísticas (sería adivinar). `TITULAR CONDADO` sí es una columna limpia y mapea directamente a `Household.county`. Ambos se escriben **solo al crear** el Household (nunca sobrescriben uno reutilizado) y **solo si el Household existe** — un titular solo (sin household en este modelo) con dirección en el source se reporta como `ADDRESS_WITHOUT_HOUSEHOLD` (INFO) en vez de perderse silenciosamente.
+- **Ingreso familiar**: no existe una columna de ingreso a nivel hogar en el source (solo `INGRESOS`, que ya mapea a `HealthPolicyDetail.incomeUsed` — un hecho distinto, ver `docs/DECISIONS.md`) — `Household.annualHouseholdIncome`/`incomeYear` quedan sin mapear intencionalmente en esta fase.
 
 ## Policy
 
@@ -106,6 +110,8 @@ Solo entidades ya existentes: `Person`, `Household`, `HouseholdMember`, `Carrier
 - `RENEWED` no existe como estado — `TIPO DE APLICACION = RENOVACION` se importa como una `Policy` normal con `operationType = RENEWAL`; **no** se intenta inferir `previousPolicyId` automáticamente en V1 (la relación exacta entre una póliza vieja y su renovación no es inequívoca en el source actual) — queda como trabajo pendiente si se necesita ese encadenamiento.
 - `PolicyMember` con `role = PRIMARY` solo si `¿EL TITULAR ESTARA CUBIERTO...?` = SI. Cónyuge/dependientes cubiertos usan `SPOUSE`/`DEPENDENT` según corresponda, solo si su columna `¿... ESTARA CUBIERTO...?` = SI.
 - Idempotencia: antes de crear una `Policy`, se busca una existente con el mismo `(holderId, productId, effectiveDate)` — el source no tiene número de póliza, así que esta es la clave natural disponible. Si existe, se reutiliza (`policiesSkippedExisting`), nunca se duplica.
+- **Fecha de terminación (Fase 019.5)**: el source real **no tiene** columna de fecha de terminación — el pipeline busca `FECHA DE TERMINACION` (por si se agrega en el futuro) y no encontrarla es seguro (`dateCell()` devuelve `null` para un header inexistente). Si algún día existe y es anterior a `FECHA DE INICIO`, bloquea la fila (`POLICY_TERMINATION_BEFORE_EFFECTIVE`) — mismo mensaje y regla que `policies.service.ts::assertTerminationNotBeforeEffective`. Contra el workbook real de hoy, esta regla nunca se dispara.
+- **Marketplace vs. Privado (Fase 019.5)**: ver `MARKETPLACE_STATE_MAP` arriba — la clasificación depende únicamente de si `ESTADO` resolvió un `marketplaceState`, nunca del nombre del carrier. En el dry run real contra el workbook completo, las 38 pólizas planeadas resolvieron `MARKETPLACE` sin ninguna ambigüedad (0 `UNKNOWN_HEALTH_SOURCE`).
 
 ## Comisiones (`Comisiones` / `estimacion Comisiones `)
 

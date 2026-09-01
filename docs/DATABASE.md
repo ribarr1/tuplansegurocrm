@@ -216,3 +216,41 @@ Sin entidades nuevas. Corrige invariantes detectados en la auditoría integral d
 ### Fuera de alcance de esta migración
 
 `Address` (en cualquiera de sus formas), `sex`, `preferredLanguage`, `countryOfOrigin`, `Opportunity`, `Application`/`Quote`, `PaymentMethodReference`, `AuditLog`, autenticación, UI. Ver [DECISIONS.md](./DECISIONS.md).
+
+## Migración 009 — Household, Health Source, Documents, Commission Rules
+
+Primera migración desde la 006 (la 007/007b agregaron las tablas técnicas de Better Auth; no hubo migración 008). Fase 019.5: correcciones y extensiones surgidas de la primera prueba funcional real del CRM.
+
+### Cambios de esquema
+
+- **`households`** gana 7 columnas: `addressLine1`, `addressLine2` (nullable), `city`, `state` (`@db.VarChar(2)`), `zipCode`, `county` (todos `String?`), `annualHouseholdIncome` (`Decimal(12,2)?`), `incomeYear` (`Int?`). Dirección del hogar asegurado, distinta de `HealthPolicyDetail.incomeUsed` (ver [DECISIONS.md](./DECISIONS.md)).
+- **`policies`** gana `healthCoverageSource` (`HealthCoverageSource?`) — solo tiene sentido cuando el producto es `HEALTH`, reforzado en el servicio, no con un CHECK cross-tabla.
+
+### Tablas nuevas
+
+- **`policy_documents`** — Metadata de un archivo asociado a una póliza (`type`, `fileName`, `storageKey` único, `mimeType`, `fileSize`, `description?`, `uploadedById?`). El binario nunca vive aquí — ver `FileStorage` en [DECISIONS.md](./DECISIONS.md) y [SECURITY.md](./SECURITY.md).
+- **`commission_rules`** — Cómo se calcula una comisión (`method`, `base`, montos/porcentajes iniciales y residuales, periodicidades, `residualStartYear`), a nivel `Product` (`policyId = null`) o como override de una `Policy` específica.
+
+### Enums nuevos
+
+- `HealthCoverageSource`: MARKETPLACE, PRIVATE
+- `PolicyDocumentType`: PLAN_SUMMARY, BROCHURE, FORMULARY, PROVIDER_DIRECTORY, MEMBER_CARD, APPLICATION, OTHER
+- `CommissionMethod`: FIXED_AMOUNT, PERCENTAGE
+- `CommissionBase`: PREMIUM_MONTHLY, PREMIUM_ANNUALIZED, PER_MEMBER, FIXED, OTHER
+- `CommissionPeriodicity`: ONE_TIME, MONTHLY, ANNUAL
+
+### Constraints e índices
+
+- `policy_documents.storageKey` — UNIQUE (el key generado nunca se reutiliza)
+- `policy_documents.policyId` — índice
+- `policy_documents → policies` — `onDelete: Cascade` (documentos sin sentido sin su póliza); `policy_documents → users` (`uploadedById`) — `onDelete: SetNull`, mismo patrón que el resto de referencias hacia `User`
+- `commission_rules.productId`, `commission_rules.policyId` — índices
+- `commission_rules → products` — `onDelete: Restrict` (no se puede borrar un producto con reglas configuradas sin limpiarlas antes); `commission_rules → policies` — `onDelete: Cascade`
+
+### Dinero
+
+`annualHouseholdIncome`, `initialAmount`, `initialPercentage`, `residualAmount`, `residualPercentage` usan `Decimal(12,2)`/`Decimal(5,2)` según corresponda — nunca `Float`, mismo principio que el resto del schema.
+
+### Fuera de alcance de esta migración
+
+`Address` como entidad separada, dirección propia de `Person` (sigue viviendo en `Household`), adapter de almacenamiento S3 real (solo la interfaz `FileStorage`), `AuditLog`. Ver [DECISIONS.md](./DECISIONS.md).

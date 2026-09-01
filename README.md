@@ -58,7 +58,7 @@ docker compose down
 
 ## Autenticación
 
-El login usa email + contraseña (Better Auth), con sesiones respaldadas por base de datos. No hay registro público — el primer usuario ADMIN se crea con un script de bootstrap.
+El login usa email + contraseña (Better Auth), con sesiones respaldadas por base de datos. No hay registro público — está deshabilitado incluso a nivel de Better Auth (`emailAndPassword.disableSignUp`), no solo sin enlace en la UI. El primer usuario ADMIN se crea con un script de bootstrap; usuarios posteriores se crean desde **Configuración → Usuarios** (solo ADMIN, ver más abajo).
 
 ### Crear el primer administrador local
 
@@ -72,7 +72,7 @@ Pide nombre, correo y contraseña por terminal (contraseña oculta, mínimo 10 c
 ADMIN_NAME="Tu Nombre" ADMIN_EMAIL="tu@correo.com" ADMIN_PASSWORD="una-contraseña-segura" npm run create-admin
 ```
 
-El script rechaza correos duplicados o inválidos y contraseñas demasiado cortas, y usa la misma lógica de hash que el resto de la aplicación (no reinventa criptografía).
+El script rechaza correos duplicados o inválidos y contraseñas demasiado cortas, y usa la misma función de hash que el resto de la aplicación (`better-auth/crypto::hashPassword` — no reinventa criptografía).
 
 ### Iniciar sesión
 
@@ -113,9 +113,10 @@ La lógica de negocio vive en `src/services/*.service.ts`, no directamente en p�
 | `/policies/[id]` | Detalle de póliza: resumen, fechas/pago, personas cubiertas |
 | `/policies/[id]/edit` | Editar póliza (campos administrativos; producto solo si está Pendiente) |
 | `/policies/[id]/health` | Agregar/editar información de salud (solo pólizas tipo Salud) |
-| `/settings` | Configuración: acceso a Compañías y Productos |
+| `/settings` | Configuración: acceso a Usuarios, Compañías y Productos |
+| `/settings/users` | Lista de usuarios; crear (rol + contraseña temporal), activar/desactivar (solo ADMIN) |
 | `/settings/carriers` | Lista de compañías; crear/editar/activar-desactivar (solo ADMIN) |
-| `/settings/products` | Lista de productos: filtro por compañía/tipo/estado; crear/editar/activar-desactivar (solo ADMIN) |
+| `/settings/products` | Lista de productos: filtro por compañía/tipo/estado; crear/editar/activar-desactivar (solo ADMIN); incluye configuración de reglas de comisión del producto |
 | `/contacts/[id]?tab=tareas` | Tab "Tareas": tareas de la persona |
 | `/tasks` | Lista de tareas: vistas rápidas (Hoy, Vencidas, Pendientes, Completadas) + filtros |
 | `/tasks/new?personId=<id>` / `?policyId=<id>` | Nueva tarea (contexto de contacto/póliza preseleccionado) |
@@ -191,6 +192,18 @@ Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáti
 - Marketplace (Application ID, estado de 2 letras), nombre del plan (snapshot histórico, editable pero no se resincroniza si el producto cambia de nombre después), financiero de Marketplace (crédito fiscal, ingreso utilizado) y cost sharing (deducibles y out-of-pocket individual/familiar).
 - **`incomeUsed` y `taxCreditAmount` son información financiera personal sensible.** ASSISTANT nunca los ve ni puede modificarlos — el servidor los omite de la respuesta y rechaza cualquier intento de escritura, no es solo un campo oculto en el formulario. Ver [docs/SECURITY.md](docs/SECURITY.md).
 - Nunca aparece en listados generales de pólizas — solo se consulta explícitamente desde el detalle de una póliza de Salud.
+- **Tipo de cobertura**: cada póliza de Salud se clasifica explícitamente como Marketplace o Privada (`Policy.healthCoverageSource`) al crearla — nunca se infiere del nombre de la compañía, porque un mismo carrier puede vender ambos tipos.
+
+### Documentos de póliza
+
+Desde el detalle de una póliza, sección "Documentos": subir/ver/descargar/eliminar archivos (resumen del plan, brochure, listado de medicamentos, directorio de proveedores, tarjeta/ID, solicitud, otro).
+
+- **El binario nunca se guarda en PostgreSQL** — solo metadata. En desarrollo se almacena localmente fuera de `/public`; producción requiere un adapter de almacenamiento compatible con S3 (S3, Cloudflare R2, Backblaze B2, etc.), todavía no contratado ni implementado — solo la interfaz está lista.
+- **Nunca hay una URL pública permanente.** La descarga siempre pasa por una ruta protegida que vuelve a verificar que el usuario tiene acceso a esa póliza.
+- **Tipos permitidos: PDF, PNG, JPG/JPEG, WEBP** (máx. 15MB), verificados por el contenido real del archivo (firma binaria), no por la extensión ni por lo que declare el navegador — un ejecutable renombrado a `.pdf` se rechaza.
+- **No es información financiero-restringida como Comisiones** — ASSISTANT puede administrar documentos en cualquier póliza a la que ya tenga acceso.
+
+Detalle de seguridad: [docs/SECURITY.md](docs/SECURITY.md).
 
 ### Comisiones
 
@@ -203,6 +216,8 @@ Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáti
 - **Cancelar una comisión esperada no la borra** — solo bloquea nuevos movimientos; los ya registrados siguen visibles.
 - **ASSISTANT no tiene ningún acceso a este módulo** (ni en el menú, ni navegando directamente a `/commissions` — recibe un 403). AGENT ve en solo lectura las comisiones de pólizas a las que ya tiene acceso. Solo ADMIN crea/edita/cancela expectativas y registra movimientos. Ver [docs/SECURITY.md](docs/SECURITY.md).
 - Nunca aparece en Contactos, Hogares, Tareas, Cumpleaños ni el listado general de Pólizas — solo en `/commissions`, el detalle de una comisión, o la sección "Comisiones" (oculta para ASSISTANT) del detalle de una póliza.
+
+**Reglas de comisión (`CommissionRule`)**: capa opcional que describe *cómo* se calcula una comisión (monto fijo o porcentaje, sobre qué base — prima mensual, prima anualizada, por miembro cubierto o fijo —, periodicidad, y un residual opcional desde un año de póliza determinado), configurada desde **Configuración → Productos** o como excepción sobre una póliza específica. Desde el detalle de una póliza, "Generar expectativa" crea la `CommissionExpectation` de un mes concreto a partir de la regla aplicable — nunca genera un rango abierto, y generar dos veces el mismo período no duplica. Cambiar una regla nunca reescribe expectativas ya generadas. Administrar reglas es exclusivo de ADMIN (más estricto que el resto de Comisiones, donde AGENT sí tiene lectura).
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
 
@@ -218,6 +233,19 @@ No existe ninguna entidad de pagos: este módulo gestiona directamente 6 campos 
 - Nunca aparece con datos de Comisiones ni de Salud — solo los 6 campos propios de seguimiento de pago.
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
+
+### Administración de usuarios
+
+**Configuración → Usuarios** (`/settings/users`, solo ADMIN): listar, crear (nombre, correo, rol) y activar/desactivar usuarios. Un AGENT/ASSISTANT sigue siendo simplemente un `User` con ese rol — nunca una entidad separada.
+
+- **Al crear un usuario, se genera una contraseña temporal que se muestra en pantalla exactamente una vez** — el ADMIN debe copiarla y compartirla por un canal seguro fuera del CRM (envío automático por correo queda pendiente, requiere configurar un proveedor de email). Nunca se vuelve a mostrar ni se guarda en texto plano.
+- **No se puede desactivar al único administrador activo** — evita dejar el CRM sin nadie con acceso administrativo.
+
+Detalle de seguridad: [docs/SECURITY.md](docs/SECURITY.md).
+
+### Identidad visual
+
+Colores de marca extraídos directamente del logo real de TuPlanSeguro USA (azul `#0070AA`, verde `#00A660`, naranja `#FF7F13` — este último usado con moderación, nunca como fondo dominante de un componente). Centralizados como variables CSS de marca en `src/app/globals.css`, sobre las que se remapean los tokens de shadcn/ui existentes — ningún componente hardcodea un color de marca directamente.
 
 ### Dashboard
 
