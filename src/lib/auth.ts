@@ -12,6 +12,13 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 10,
+    // Nadie puede autorregistrarse — este es un CRM interno con acceso
+    // a datos reales de clientes. Los usuarios los crea un ADMIN desde
+    // Configuración → Usuarios (users.service.ts::createUser), que
+    // construye el User + Account directamente (mismo hash de
+    // contraseña que usa Better Auth) sin pasar por esta ruta pública,
+    // que queda bloqueada incluso para llamadas internas.
+    disableSignUp: true,
   },
   // role/isActive son campos de negocio ya existentes en User; se
   // declaran aquí solo para que Better Auth los conozca al leer la

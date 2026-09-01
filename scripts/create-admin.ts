@@ -1,12 +1,15 @@
 import "dotenv/config";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { auth } from "../src/lib/auth";
+import { hashPassword } from "better-auth/crypto";
 import { prisma } from "../src/lib/prisma";
 
 // Bootstrap seguro del primer usuario ADMIN. Sin signup público, sin
-// usuario/password hardcodeado. Usa auth.api.signUpEmail (misma lógica
-// de hash que el resto de la aplicación) en vez de criptografía propia.
+// usuario/password hardcodeado. El signup público de Better Auth está
+// deshabilitado (disableSignUp en auth.ts), así que este script crea
+// el User + Account directamente, con la MISMA convención de hash
+// (better-auth/crypto::hashPassword) que usa el resto de la
+// aplicación — igual que users.service.ts::createUser.
 // name/email/password nunca quedan escritos en ningún archivo: se
 // reciben por variables de entorno de proceso (no persistidas) o por
 // prompt interactivo con la contraseña oculta en terminal.
@@ -93,19 +96,20 @@ async function main() {
     return;
   }
 
-  const result = await auth.api.signUpEmail({
-    body: { name, email, password },
-  });
-
-  if (!result?.user?.id) {
-    console.error("No se pudo crear el usuario.");
-    process.exitCode = 1;
-    return;
-  }
-
-  await prisma.user.update({
-    where: { id: result.user.id },
-    data: { role: "ADMIN", isActive: true },
+  const hashedPassword = await hashPassword(password);
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: { name, email, role: "ADMIN", isActive: true },
+    });
+    await tx.account.create({
+      data: {
+        issuer: "local:credential",
+        providerId: "credential",
+        accountId: user.id,
+        userId: user.id,
+        password: hashedPassword,
+      },
+    });
   });
 
   console.log(`Usuario ADMIN creado correctamente: ${email}`);

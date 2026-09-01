@@ -1,4 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
+import { hashPassword } from "better-auth/crypto";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser, requireSessionUser } from "@/lib/authorization";
@@ -24,11 +25,23 @@ describe("authorization — usuario inactivo", () => {
     const email = `inactive.${Date.now()}@test.local`;
     const password = "PasswordDePruebaSegura123";
 
-    const signUpResult = await auth.api.signUpEmail({
-      body: { name: "Inactive Test", email, password },
+    // El signup público está deshabilitado (disableSignUp en auth.ts),
+    // así que el usuario de prueba se crea directamente igual que
+    // users.service.ts::createUser — User + Account con la misma
+    // convención de hash que usa Better Auth.
+    const created = await prisma.user.create({
+      data: { name: "Inactive Test", email, role: "AGENT", isActive: true },
     });
-    if (!signUpResult?.user?.id) throw new Error("No se pudo crear el usuario de prueba");
-    userId = signUpResult.user.id;
+    userId = created.id;
+    await prisma.account.create({
+      data: {
+        issuer: "local:credential",
+        providerId: "credential",
+        accountId: created.id,
+        userId: created.id,
+        password: await hashPassword(password),
+      },
+    });
 
     const signInResponse = await auth.api.signInEmail({
       body: { email, password },
