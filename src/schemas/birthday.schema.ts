@@ -1,13 +1,16 @@
 import { z } from "zod";
-import { optionalSearchFilter } from "@/schemas/common";
+import { optionalSearchFilter, optionalEnumFilter, emptyStringToUndefined } from "@/schemas/common";
 
 export const BIRTHDAY_GREETING_STATUS_VALUES = ["PENDING", "SENT", "SKIPPED"] as const;
 export const BIRTHDAY_GREETING_CHANNEL_VALUES = ["WHATSAPP", "SMS", "EMAIL", "OTHER"] as const;
 
 export const listBirthdaysQuerySchema = z.object({
-  view: z.enum(["today", "month", "upcoming", "all"]).default("all"),
+  view: z.preprocess(
+    emptyStringToUndefined,
+    z.enum(["today", "month", "upcoming", "all"]).default("all")
+  ),
   search: optionalSearchFilter(),
-  status: z.enum(BIRTHDAY_GREETING_STATUS_VALUES).optional(),
+  status: optionalEnumFilter(BIRTHDAY_GREETING_STATUS_VALUES),
 });
 export type ListBirthdaysQuery = z.infer<typeof listBirthdaysQuerySchema>;
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { POLICY_TYPE_VALUES } from "@/schemas/policy.schema";
-import { optionalUuidFilter } from "@/schemas/common";
+import { optionalUuidFilter, optionalEnumFilter, optionalBooleanFilter } from "@/schemas/common";
 
 export const productIdSchema = z.uuid("Identificador de producto inválido.");
 
@@ -8,11 +8,8 @@ export const listProductsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   carrierId: optionalUuidFilter(),
-  policyType: z.enum(POLICY_TYPE_VALUES).optional(),
-  active: z
-    .enum(["true", "false"])
-    .transform((v) => v === "true")
-    .optional(),
+  policyType: optionalEnumFilter(POLICY_TYPE_VALUES),
+  active: optionalBooleanFilter(),
 });
 export type ListProductsQuery = z.infer<typeof listProductsQuerySchema>;
 

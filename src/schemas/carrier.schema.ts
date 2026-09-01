@@ -1,12 +1,10 @@
 import { z } from "zod";
+import { optionalBooleanFilter } from "@/schemas/common";
 
 export const carrierIdSchema = z.uuid("Identificador de compañía inválido.");
 
 export const listCarriersQuerySchema = z.object({
-  active: z
-    .enum(["true", "false"])
-    .transform((v) => v === "true")
-    .optional(),
+  active: optionalBooleanFilter(),
 });
 export type ListCarriersQuery = z.infer<typeof listCarriersQuerySchema>;
 

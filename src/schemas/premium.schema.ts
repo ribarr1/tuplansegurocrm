@@ -1,15 +1,6 @@
 import { z } from "zod";
-import { optionalSearchFilter, optionalUuidFilter } from "@/schemas/common";
+import { optionalSearchFilter, optionalUuidFilter, optionalEnumFilter, optionalBooleanFilter } from "@/schemas/common";
 import { BILLING_FREQUENCY_VALUES, PAYMENT_STATUS_VALUES } from "@/schemas/policy.schema";
-
-// Valores true/false que llegan como string desde <form method="GET">
-// (checkboxes/vistas rápidas) — mismo patrón que Task.dueToday/overdueOnly.
-function optionalBooleanFilter() {
-  return z
-    .enum(["true", "false"])
-    .transform((v) => v === "true")
-    .optional();
-}
 
 export const listPremiumTrackingQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -23,7 +14,7 @@ export const listPremiumTrackingQuerySchema = z.object({
   overdueOnly: optionalBooleanFilter(),
   needsAssistance: optionalBooleanFilter(),
   autopay: optionalBooleanFilter(),
-  paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
+  paymentStatus: optionalEnumFilter(PAYMENT_STATUS_VALUES),
   carrierId: optionalUuidFilter(),
   agentId: optionalUuidFilter(),
 });

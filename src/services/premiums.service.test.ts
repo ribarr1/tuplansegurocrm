@@ -381,4 +381,40 @@ describe("premiums.service", () => {
       ])
     );
   });
+
+  // Fase 019.5 — regresión: un <select> sin cambiar en un <form
+  // method="GET"> envía "" (string vacío), no ausencia de la clave.
+  // Antes de esta fase, autopay/needsAssistance/paymentStatus usaban
+  // z.enum(["true","false"]) sin z.preprocess(emptyStringToUndefined,
+  // ...), así que "" producía VALIDATION_ERROR en vez de "sin filtro".
+  it("AB) filtros vacíos de /premiums no fallan (autopay/needsAssistance/paymentStatus/carrierId/agentId)", async () => {
+    await expect(
+      listPremiumTracking(admin, {
+        autopay: "",
+        needsAssistance: "",
+        paymentStatus: "",
+        carrierId: "",
+        agentId: "",
+        dueToday: "",
+        overdueOnly: "",
+      })
+    ).resolves.toBeDefined();
+  });
+
+  it("AC) autopay=true filtra correctamente", async () => {
+    const holder = await makePerson();
+    const { policy } = await makePolicyFor(admin, holder);
+    await updatePremiumTracking(admin, policy.id, { autopay: "true", needsPaymentAssistance: "false" });
+    const { items } = await listPremiumTracking(admin, { autopay: "true", pageSize: 100 });
+    expect(items.some((i) => i.id === policy.id)).toBe(true);
+  });
+
+  it("AD) autopay=false filtra correctamente", async () => {
+    const holder = await makePerson();
+    const { policy } = await makePolicyFor(admin, holder);
+    await updatePremiumTracking(admin, policy.id, { autopay: "false", needsPaymentAssistance: "false" });
+    const { items } = await listPremiumTracking(admin, { autopay: "false", pageSize: 100 });
+    expect(items.some((i) => i.id === policy.id)).toBe(true);
+    expect(items.every((i) => !i.autopay)).toBe(true);
+  });
 });

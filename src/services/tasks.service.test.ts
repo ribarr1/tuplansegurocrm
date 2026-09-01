@@ -340,6 +340,16 @@ describe("tasks.service", () => {
     });
     expect(items.map((t) => t.id)).toContain(task.id);
   });
+
+  // Fase 019.5 — regresión: status/priority/dueToday/overdueOnly no
+  // usaban z.preprocess(emptyStringToUndefined, ...) antes de esta
+  // fase; un <select> sin cambiar (status="") hubiera producido
+  // VALIDATION_ERROR igual que el bug real encontrado en /premiums.
+  it("filtros enum/booleanos vacíos de /tasks no fallan", async () => {
+    await expect(
+      listTasks(admin, { status: "", priority: "", dueToday: "", overdueOnly: "" })
+    ).resolves.toBeDefined();
+  });
 });
 
 function toLocalInput(date: Date): string {

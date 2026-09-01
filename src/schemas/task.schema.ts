@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalSearchFilter, optionalUuidFilter } from "@/schemas/common";
+import { optionalSearchFilter, optionalUuidFilter, optionalEnumFilter, optionalBooleanFilter } from "@/schemas/common";
 
 // Valores reales de los enums de Task (prisma/schema.prisma), duplicados
 // aquí como literales por la misma razón que en el resto de schemas.
@@ -16,8 +16,8 @@ export const listTasksQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   search: optionalSearchFilter(),
-  status: z.enum(TASK_STATUS_VALUES).optional(),
-  priority: z.enum(TASK_PRIORITY_VALUES).optional(),
+  status: optionalEnumFilter(TASK_STATUS_VALUES),
+  priority: optionalEnumFilter(TASK_PRIORITY_VALUES),
   assignedToId: optionalUuidFilter(),
   personId: optionalUuidFilter(),
   policyId: optionalUuidFilter(),
@@ -25,14 +25,8 @@ export const listTasksQuerySchema = z.object({
   // status sigue activo; "vencidas" = dueAt ya pasó y el status sigue
   // activo. Ninguna se guarda como status — ambas son filtros
   // derivados (ver docs/DECISIONS.md).
-  dueToday: z
-    .enum(["true", "false"])
-    .transform((v) => v === "true")
-    .optional(),
-  overdueOnly: z
-    .enum(["true", "false"])
-    .transform((v) => v === "true")
-    .optional(),
+  dueToday: optionalBooleanFilter(),
+  overdueOnly: optionalBooleanFilter(),
 });
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 

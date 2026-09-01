@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalSearchFilter, optionalUuidFilter } from "@/schemas/common";
+import { optionalSearchFilter, optionalUuidFilter, optionalEnumFilter } from "@/schemas/common";
 
 // Valores reales de los enums de comisiones (prisma/schema.prisma),
 // duplicados aquí como literales por la misma razón que en el resto de
@@ -70,7 +70,7 @@ export const listCommissionExpectationsQuerySchema = z.object({
   ),
   agentId: optionalUuidFilter(),
   carrierId: optionalUuidFilter(),
-  status: z.enum(COMMISSION_EXPECTATION_STATUS_VALUES).optional(),
+  status: optionalEnumFilter(COMMISSION_EXPECTATION_STATUS_VALUES),
 });
 export type ListCommissionExpectationsQuery = z.infer<typeof listCommissionExpectationsQuerySchema>;
 

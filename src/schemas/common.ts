@@ -25,3 +25,29 @@ export function optionalSearchFilter(max = 200) {
     z.string().trim().min(1).max(max).optional()
   );
 }
+
+// Mismo problema que optionalUuidFilter/optionalSearchFilter, para
+// filtros de tipo enum (ej. status="" cuando un <select> queda en
+// "Todos") y booleanos (ej. autopay="" cuando un <select> queda en
+// "Todas"). Bug real encontrado en Fase 019.5: /premiums?autopay=
+// (select sin cambiar) producía VALIDATION_ERROR "Invalid option:
+// expected one of true|false" en vez de tratarse como "sin filtro" —
+// mismo patrón que el bug de Fase 014, pero en un helper local nuevo
+// que no reusó z.preprocess(emptyStringToUndefined, ...). Centralizado
+// aquí para que ningún filtro nuevo pueda repetir el error.
+export function optionalEnumFilter<T extends readonly [string, ...string[]]>(
+  values: T,
+  message?: string
+) {
+  return z.preprocess(emptyStringToUndefined, z.enum(values, message).optional());
+}
+
+export function optionalBooleanFilter() {
+  return z.preprocess(
+    emptyStringToUndefined,
+    z
+      .enum(["true", "false"])
+      .transform((v) => v === "true")
+      .optional()
+  );
+}
