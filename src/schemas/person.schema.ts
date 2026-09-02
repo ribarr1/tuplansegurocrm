@@ -59,5 +59,20 @@ const personFieldsSchema = {
 export const createPersonSchema = z.object(personFieldsSchema);
 export type CreatePersonInput = z.infer<typeof createPersonSchema>;
 
-export const updatePersonSchema = z.object(personFieldsSchema).partial();
+// Bug real encontrado en Fase 019.9 (auditoría/diff before-after de
+// updatePerson): `.partial()` sobre `personFieldsSchema` NO anula el
+// `.default("PROSPECT")` de contactStatus — Zod sigue aplicando el
+// default cuando la clave está ausente del input, así que CUALQUIER
+// llamada a updatePerson que no incluyera contactStatus explícitamente
+// reescribía silenciosamente el estado real (ej. CLIENT) de vuelta a
+// PROSPECT. El formulario de edición actual siempre envía este campo
+// (un <select> nativo siempre tiene un valor), por lo que el bug nunca
+// se manifestó en la UI existente — pero cualquier otro caller de
+// updatePerson que omitiera el campo lo habría disparado en silencio.
+// Se sobreescribe aquí SIN default para que "ausente" signifique
+// realmente "no tocar", como el resto de campos parciales.
+export const updatePersonSchema = z
+  .object(personFieldsSchema)
+  .partial()
+  .extend({ contactStatus: z.enum(CONTACT_STATUS_VALUES).optional() });
 export type UpdatePersonInput = z.infer<typeof updatePersonSchema>;

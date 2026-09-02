@@ -14,6 +14,18 @@ import {
 } from "@/schemas/household.schema";
 import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
+import { recordAuditEvent, buildDiff } from "@/services/audit.service";
+
+const HOUSEHOLD_AUDIT_FIELDS = [
+  "addressLine1",
+  "addressLine2",
+  "city",
+  "state",
+  "zipCode",
+  "county",
+  "annualHouseholdIncome",
+  "incomeYear",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Política de acceso — Household (V1)
@@ -134,6 +146,20 @@ export async function updateHousehold(actor: AuthorizedUser, rawId: unknown, raw
   const members = await fetchAccessMembers(id);
   assertCanAccessHousehold(actor, members);
 
+  const existing = await prisma.household.findUniqueOrThrow({
+    where: { id },
+    select: {
+      addressLine1: true,
+      addressLine2: true,
+      city: true,
+      state: true,
+      zipCode: true,
+      county: true,
+      annualHouseholdIncome: true,
+      incomeYear: true,
+    },
+  });
+
   const data: Prisma.HouseholdUncheckedUpdateInput = {};
   if (input.addressLine1 !== undefined) data.addressLine1 = input.addressLine1;
   if (input.addressLine2 !== undefined) data.addressLine2 = input.addressLine2;
@@ -144,7 +170,22 @@ export async function updateHousehold(actor: AuthorizedUser, rawId: unknown, raw
   if (input.annualHouseholdIncome !== undefined) data.annualHouseholdIncome = input.annualHouseholdIncome;
   if (input.incomeYear !== undefined) data.incomeYear = input.incomeYear;
 
-  await prisma.household.update({ where: { id }, data });
+  const changes = buildDiff(existing, input, HOUSEHOLD_AUDIT_FIELDS);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.household.update({ where: { id }, data });
+    if (changes) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "Household",
+        entityId: id,
+        action: "HOUSEHOLD_UPDATE",
+        householdId: id,
+        summary: "Datos del hogar actualizados",
+        changes,
+      });
+    }
+  });
   return getHouseholdById(actor, id);
 }
 
@@ -167,6 +208,15 @@ export async function createHouseholdWithInitialMember(actor: AuthorizedUser, ra
     await tx.householdMember.create({
       data: { householdId: created.id, personId: input.personId, role: input.role },
     });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Household",
+      entityId: created.id,
+      action: "HOUSEHOLD_CREATE",
+      householdId: created.id,
+      contactPersonId: input.personId,
+      summary: "Hogar creado",
+    });
     return created;
   });
 
@@ -186,13 +236,24 @@ export async function addHouseholdMember(
 
   const person = await prisma.person.findUnique({
     where: { id: input.personId },
-    select: { id: true },
+    select: { id: true, firstName: true, lastName: true },
   });
   if (!person) throw new AppError("NOT_FOUND", "Persona no encontrada.");
 
   try {
-    await prisma.householdMember.create({
-      data: { householdId, personId: input.personId, role: input.role },
+    await prisma.$transaction(async (tx) => {
+      const member = await tx.householdMember.create({
+        data: { householdId, personId: input.personId, role: input.role },
+      });
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "HouseholdMember",
+        entityId: member.id,
+        action: "HOUSEHOLD_ADD_MEMBER",
+        householdId,
+        contactPersonId: input.personId,
+        summary: `${person.firstName} ${person.lastName} agregado(a) al hogar`,
+      });
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -212,6 +273,8 @@ export async function removeHouseholdMember(actor: AuthorizedUser, rawId: unknow
     select: {
       id: true,
       householdId: true,
+      personId: true,
+      person: { select: { firstName: true, lastName: true } },
       household: { select: { members: { select: { person: { select: { assignedAgentId: true } } } } } },
     },
   });
@@ -219,7 +282,18 @@ export async function removeHouseholdMember(actor: AuthorizedUser, rawId: unknow
   assertCanAccessHousehold(actor, member.household.members);
 
   // Elimina el HouseholdMember (la relación), nunca la Person.
-  await prisma.householdMember.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    await tx.householdMember.delete({ where: { id } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "HouseholdMember",
+      entityId: member.id,
+      action: "HOUSEHOLD_REMOVE_MEMBER",
+      householdId: member.householdId,
+      contactPersonId: member.personId,
+      summary: `${member.person.firstName} ${member.person.lastName} removido(a) del hogar`,
+    });
+  });
   return { householdId: member.householdId };
 }
 
@@ -236,13 +310,36 @@ export async function updateHouseholdMemberRole(
     select: {
       id: true,
       householdId: true,
+      personId: true,
+      role: true,
+      person: { select: { firstName: true, lastName: true } },
       household: { select: { members: { select: { person: { select: { assignedAgentId: true } } } } } },
     },
   });
   if (!member) throw new AppError("NOT_FOUND", "Miembro de hogar no encontrado.");
   assertCanAccessHousehold(actor, member.household.members);
 
-  await prisma.householdMember.update({ where: { id }, data: { role: input.role } });
+  const changes = buildDiff(
+    { role: member.role },
+    { role: input.role },
+    ["role"] as const
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.householdMember.update({ where: { id }, data: { role: input.role } });
+    if (changes) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "HouseholdMember",
+        entityId: member.id,
+        action: "HOUSEHOLD_ROLE_CHANGE",
+        householdId: member.householdId,
+        contactPersonId: member.personId,
+        summary: `Filiación de ${member.person.firstName} ${member.person.lastName} actualizada`,
+        changes,
+      });
+    }
+  });
   return getHouseholdById(actor, member.householdId);
 }
 
@@ -272,7 +369,24 @@ export async function createPersonAndAddToHousehold(
 
   await prisma.$transaction(async (tx) => {
     const person = await tx.person.create({ data: { ...personInput, assignedAgentId } });
-    await tx.householdMember.create({ data: { householdId, personId: person.id, role } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Person",
+      entityId: person.id,
+      action: "CONTACT_CREATE",
+      contactPersonId: person.id,
+      summary: `Contacto creado: ${person.firstName} ${person.lastName}`,
+    });
+    const member = await tx.householdMember.create({ data: { householdId, personId: person.id, role } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "HouseholdMember",
+      entityId: member.id,
+      action: "HOUSEHOLD_ADD_MEMBER",
+      householdId,
+      contactPersonId: person.id,
+      summary: `${person.firstName} ${person.lastName} agregado(a) al hogar`,
+    });
   });
 
   return getHouseholdById(actor, householdId);

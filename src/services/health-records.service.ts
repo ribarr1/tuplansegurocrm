@@ -13,6 +13,7 @@ import {
   updatePersonProviderSchema,
 } from "@/schemas/health-record.schema";
 import type { Prisma } from "@/generated/prisma/client";
+import { recordAuditEvent } from "@/services/audit.service";
 
 // ---------------------------------------------------------------------------
 // Medicamentos y proveedores/médicos preferidos — Fase 019.8 (hallazgo
@@ -84,15 +85,30 @@ export async function createPersonMedication(actor: AuthorizedUser, rawInput: un
   const person = await loadPersonForAccessCheck(input.personId);
   assertCanAccessHealthRecords(actor, person);
 
-  return prisma.personMedication.create({
-    data: {
-      personId: input.personId,
-      name: input.name,
-      dosage: input.dosage ?? null,
-      frequency: input.frequency ?? null,
-      notes: input.notes ?? null,
-    },
-    select: medicationSelect,
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.personMedication.create({
+      data: {
+        personId: input.personId,
+        name: input.name,
+        dosage: input.dosage ?? null,
+        frequency: input.frequency ?? null,
+        notes: input.notes ?? null,
+      },
+      select: medicationSelect,
+    });
+    // Nunca se guarda name/dosage/frequency/notes en el audit log —
+    // información operacional de salud, minimización de PII/PHI (ver
+    // docs/SECURITY.md y ficha §14-§15). El resumen genérico ya es
+    // suficiente para el timeline del contacto.
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "PersonMedication",
+      entityId: created.id,
+      action: "MEDICATION_CREATE",
+      contactPersonId: input.personId,
+      summary: "Medicamento agregado",
+    });
+    return created;
   });
 }
 
@@ -121,7 +137,18 @@ export async function updatePersonMedication(
   if (input.frequency !== undefined) data.frequency = input.frequency;
   if (input.notes !== undefined) data.notes = input.notes;
 
-  return prisma.personMedication.update({ where: { id }, data, select: medicationSelect });
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.personMedication.update({ where: { id }, data, select: medicationSelect });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "PersonMedication",
+      entityId: id,
+      action: "MEDICATION_UPDATE",
+      contactPersonId: medication.personId,
+      summary: "Medicamento actualizado",
+    });
+    return updated;
+  });
 }
 
 // "Eliminar" desde la UI — nunca DELETE físico, marca isActive=false
@@ -132,7 +159,17 @@ export async function deletePersonMedication(actor: AuthorizedUser, rawId: unkno
   const medication = await loadMedicationForAccessCheck(id);
   assertCanAccessHealthRecords(actor, medication.person);
 
-  await prisma.personMedication.update({ where: { id }, data: { isActive: false } });
+  await prisma.$transaction(async (tx) => {
+    await tx.personMedication.update({ where: { id }, data: { isActive: false } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "PersonMedication",
+      entityId: id,
+      action: "MEDICATION_DEACTIVATE",
+      contactPersonId: medication.personId,
+      summary: "Medicamento eliminado",
+    });
+  });
   return { personId: medication.personId };
 }
 
@@ -168,17 +205,28 @@ export async function createPersonProvider(actor: AuthorizedUser, rawInput: unkn
   const person = await loadPersonForAccessCheck(input.personId);
   assertCanAccessHealthRecords(actor, person);
 
-  return prisma.personProvider.create({
-    data: {
-      personId: input.personId,
-      type: input.type,
-      name: input.name,
-      specialty: input.specialty ?? null,
-      phone: input.phone ?? null,
-      organization: input.organization ?? null,
-      notes: input.notes ?? null,
-    },
-    select: providerSelect,
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.personProvider.create({
+      data: {
+        personId: input.personId,
+        type: input.type,
+        name: input.name,
+        specialty: input.specialty ?? null,
+        phone: input.phone ?? null,
+        organization: input.organization ?? null,
+        notes: input.notes ?? null,
+      },
+      select: providerSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "PersonProvider",
+      entityId: created.id,
+      action: "PROVIDER_CREATE",
+      contactPersonId: input.personId,
+      summary: "Proveedor preferido agregado",
+    });
+    return created;
   });
 }
 
@@ -205,7 +253,18 @@ export async function updatePersonProvider(actor: AuthorizedUser, rawId: unknown
   if (input.organization !== undefined) data.organization = input.organization;
   if (input.notes !== undefined) data.notes = input.notes;
 
-  return prisma.personProvider.update({ where: { id }, data, select: providerSelect });
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.personProvider.update({ where: { id }, data, select: providerSelect });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "PersonProvider",
+      entityId: id,
+      action: "PROVIDER_UPDATE",
+      contactPersonId: provider.personId,
+      summary: "Proveedor preferido actualizado",
+    });
+    return updated;
+  });
 }
 
 // PersonProvider no tiene isActive (a diferencia de PersonMedication) —
@@ -216,6 +275,16 @@ export async function deletePersonProvider(actor: AuthorizedUser, rawId: unknown
   const provider = await loadProviderForAccessCheck(id);
   assertCanAccessHealthRecords(actor, provider.person);
 
-  await prisma.personProvider.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    await tx.personProvider.delete({ where: { id } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "PersonProvider",
+      entityId: id,
+      action: "PROVIDER_DELETE",
+      contactPersonId: provider.personId,
+      summary: "Proveedor preferido eliminado",
+    });
+  });
   return { personId: provider.personId };
 }

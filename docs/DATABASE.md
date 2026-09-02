@@ -276,3 +276,33 @@ Fase 019.7 (UAT hallazgos #12-#15). El nombre de carpeta de la migración mencio
 ### Fuera de alcance de esta migración
 
 Catálogo de Ciudad/Condado/ZIP en base de datos (diferido explícitamente, ver [DECISIONS.md](./DECISIONS.md) — requiere decidir sobre registro USPS CRID/Mailer ID u otra fuente). Ningún cambio en `households.state` a nivel de columna (sigue siendo `String? @db.VarChar(2)`; la validación del catálogo `US_STATES` vive en `stateCodeSchema`, capa de aplicación).
+
+## Migración 011 — Audit Trail & Client History
+
+Fase 019.9. Detalle completo del diseño y uso en [AUDIT_TRAIL.md](./AUDIT_TRAIL.md) — aquí solo el schema.
+
+### Tablas nuevas
+
+- **`audit_events`** — log append-only de acciones de negocio (ver `AUDIT_TRAIL.md`). Nunca se actualiza ni se borra desde código de aplicación.
+
+### Columnas
+
+`id` (uuid, PK), `actorUserId` (uuid?, FK a `users`), `actorType` (`AuditActorType`: `USER`/`SYSTEM`, default `USER`), `entityType` (string — "Person", "Policy", "PersonMedication", etc., nunca un enum de DB, ver `AUDIT_TRAIL.md`), `entityId` (uuid), `action` (string — catálogo completo en `AUDIT_TRAIL.md`), `contactPersonId` (uuid?, FK a `people`), `policyId` (uuid?, FK a `policies`), `householdId` (uuid?, FK a `households`), `summary` (string), `changes` (jsonb?), `metadata` (jsonb?), `createdAt` (timestamp, default now).
+
+### Enum nuevo
+
+- `AuditActorType`: `USER`, `SYSTEM`.
+
+### Cambio adicional en esta migración
+
+- **`PolicyOperationType` gana el valor `REPLACEMENT`** (además de `NEW_ENROLLMENT`/`RENEWAL`/`PLAN_CHANGE` ya existentes) — usado por el flujo "Renovar póliza" (hallazgo #3/#4 de UAT) cuando el usuario indica que en realidad es un reemplazo de póliza (ej. cambio de carrier), no una renovación pura. `ALTER TYPE ... ADD VALUE`, sin afectar filas existentes.
+
+### Constraints e índices
+
+- `audit_events → users` (`actorUserId`) — `onDelete: SetNull` (el evento sobrevive aunque el usuario se desactive/elimine en el futuro).
+- `audit_events → people` (`contactPersonId`), `audit_events → policies` (`policyId`), `audit_events → households` (`householdId`) — todos `onDelete: SetNull`, mismo principio: el historial nunca debe bloquear ni desaparecer si la entidad relacionada cambia, y estas entidades (`Person`/`Policy`/`Household`) de todas formas nunca se borran físicamente en este sistema (ver CLAUDE.md §31).
+- Índices: `[contactPersonId, createdAt]`, `[policyId, createdAt]`, `[householdId, createdAt]`, `[entityType, entityId, createdAt]`, `[actorUserId, createdAt]` — cubren exactamente las consultas reales (timeline de contacto, timeline de póliza, historial de una entidad puntual, actividad de un usuario), sin índices especulativos.
+
+### Fuera de alcance de esta migración
+
+Retención/expiración automática de `audit_events` (ver `AUDIT_TRAIL.md`, "Retención"). Generación de eventos durante el import legacy (diferido). Un enum de Postgres para `action` (decisión deliberada de mantenerlo como string libre, ver `AUDIT_TRAIL.md`).

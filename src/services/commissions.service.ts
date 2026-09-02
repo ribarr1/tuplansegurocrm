@@ -13,6 +13,7 @@ import {
   addCommissionPaymentSchema,
 } from "@/schemas/commission.schema";
 import { Prisma } from "@/generated/prisma/client";
+import { recordAuditEvent, buildDiff } from "@/services/audit.service";
 
 // ---------------------------------------------------------------------------
 // Política de acceso — Comisiones (V1)
@@ -337,19 +338,32 @@ export async function createCommissionExpectation(actor: AuthorizedUser, rawInpu
   assertAdminOnly(actor);
   const input = parseOrThrow(createCommissionExpectationSchema, rawInput);
 
-  await loadPolicyForCommissions(input.policyId);
+  const policy = await loadPolicyForCommissions(input.policyId);
   if (input.agentId) await assertActiveAgentId(input.agentId);
 
   let created;
   try {
-    created = await prisma.commissionExpectation.create({
-      data: {
+    created = await prisma.$transaction(async (tx) => {
+      const expectation = await tx.commissionExpectation.create({
+        data: {
+          policyId: input.policyId,
+          period: input.period,
+          expectedAmount: input.expectedAmount,
+          agentId: input.agentId ?? null,
+        },
+        select: { id: true },
+      });
+      // Nunca el monto en el audit log (ver docs/SECURITY.md).
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "CommissionExpectation",
+        entityId: expectation.id,
+        action: "COMMISSION_EXPECTATION_CREATE",
         policyId: input.policyId,
-        period: input.period,
-        expectedAmount: input.expectedAmount,
-        agentId: input.agentId ?? null,
-      },
-      select: { id: true },
+        contactPersonId: policy.holder.id,
+        summary: "Expectativa de comisión creada manualmente",
+      });
+      return expectation;
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -380,6 +394,8 @@ export async function updateCommissionExpectation(
       status: true,
       expectedAmount: true,
       calculatedAmount: true,
+      policyId: true,
+      policy: { select: { holderId: true } },
       payments: { select: { id: true }, take: 1 },
     },
   });
@@ -418,8 +434,30 @@ export async function updateCommissionExpectation(
   if (input.agentId !== undefined) data.agentId = input.agentId;
   if (input.period !== undefined) data.period = input.period;
 
+  const isOverride = data.isManualOverride === true;
+  // Nunca se guardan montos (expectedAmount/calculatedAmount) en el
+  // audit log — solo el hecho de que hubo una corrección manual, quién
+  // y cuándo (ya lo guarda la propia fila de CommissionExpectation).
+  const changes = buildDiff(existing, input, ["agentId", "period"]);
+
   try {
-    await prisma.commissionExpectation.update({ where: { id }, data });
+    await prisma.$transaction(async (tx) => {
+      await tx.commissionExpectation.update({ where: { id }, data });
+      if (isOverride || changes) {
+        await recordAuditEvent(tx, {
+          actor,
+          entityType: "CommissionExpectation",
+          entityId: id,
+          action: isOverride ? "COMMISSION_EXPECTATION_OVERRIDE" : "COMMISSION_EXPECTATION_UPDATE",
+          policyId: existing.policyId,
+          contactPersonId: existing.policy.holderId,
+          summary: isOverride
+            ? "Expectativa de comisión corregida manualmente"
+            : "Expectativa de comisión actualizada",
+          changes,
+        });
+      }
+    });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       throw new AppError(
@@ -443,13 +481,24 @@ export async function cancelCommissionExpectation(actor: AuthorizedUser, rawId: 
 
   const existing = await prisma.commissionExpectation.findUnique({
     where: { id },
-    select: { id: true },
+    select: { id: true, policyId: true, policy: { select: { holderId: true } } },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Comisión no encontrada.");
 
-  await prisma.commissionExpectation.update({
-    where: { id },
-    data: { status: "CANCELLED" },
+  await prisma.$transaction(async (tx) => {
+    await tx.commissionExpectation.update({
+      where: { id },
+      data: { status: "CANCELLED" },
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "CommissionExpectation",
+      entityId: id,
+      action: "COMMISSION_EXPECTATION_UPDATE",
+      policyId: existing.policyId,
+      contactPersonId: existing.policy.holderId,
+      summary: "Expectativa de comisión cancelada",
+    });
   });
   return getCommissionExpectationById(actor, id);
 }
@@ -494,7 +543,7 @@ export async function addCommissionPayment(
 
   const expectation = await prisma.commissionExpectation.findUnique({
     where: { id: expectationId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, policyId: true, policy: { select: { holderId: true } } },
   });
   if (!expectation) throw new AppError("NOT_FOUND", "Comisión no encontrada.");
   if (expectation.status === "CANCELLED") {
@@ -505,16 +554,39 @@ export async function addCommissionPayment(
   }
 
   const amount = normalizePaymentAmount(input.type, input.amount);
+  const ACTION_BY_TYPE = {
+    PAYMENT: "COMMISSION_PAYMENT",
+    CHARGEBACK: "COMMISSION_CHARGEBACK",
+    ADJUSTMENT: "COMMISSION_ADJUSTMENT",
+  } as const;
+  const SUMMARY_BY_TYPE = {
+    PAYMENT: "Pago de comisión registrado",
+    CHARGEBACK: "Chargeback de comisión registrado",
+    ADJUSTMENT: "Ajuste de comisión registrado",
+  } as const;
 
-  await prisma.commissionPayment.create({
-    data: {
-      commissionExpectationId: expectationId,
-      amount,
-      type: input.type,
-      receivedAt: input.receivedAt,
-      externalReference: input.externalReference ?? null,
-      notes: input.notes ?? null,
-    },
+  await prisma.$transaction(async (tx) => {
+    const payment = await tx.commissionPayment.create({
+      data: {
+        commissionExpectationId: expectationId,
+        amount,
+        type: input.type,
+        receivedAt: input.receivedAt,
+        externalReference: input.externalReference ?? null,
+        notes: input.notes ?? null,
+      },
+    });
+    // Nunca el monto en el audit log (ver docs/SECURITY.md) — el id del
+    // pago ya permite referenciarlo si hiciera falta.
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "CommissionPayment",
+      entityId: payment.id,
+      action: ACTION_BY_TYPE[input.type],
+      policyId: expectation.policyId,
+      contactPersonId: expectation.policy.holderId,
+      summary: SUMMARY_BY_TYPE[input.type],
+    });
   });
 
   return getCommissionExpectationById(actor, expectationId);

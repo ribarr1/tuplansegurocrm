@@ -14,12 +14,15 @@ import {
 } from "@/lib/labels";
 import { getBirthdayForPerson } from "@/services/birthdays.service";
 import { getHouseholdsForPerson } from "@/services/households.service";
+import { getLastActivityForPerson, type HistoryCategory, HISTORY_CATEGORY_VALUES } from "@/services/history.service";
 import { FamilyTab } from "./family-tab";
 import { PoliciesTab } from "./policies-tab";
 import { TasksTab } from "./tasks-tab";
 import { HealthTab } from "./health-tab";
 import { CommissionsTab } from "./commissions-tab";
 import { NotesTab } from "./notes-tab";
+import { HistoryTab } from "./history-tab";
+import { formatDateTimeUS } from "@/lib/business-time";
 import { MarkSentDialog } from "../../birthdays/mark-sent-dialog";
 import { SkipGreetingButton } from "../../birthdays/greeting-quick-buttons";
 import { formatDateOnlyUS } from "@/lib/date-only";
@@ -32,6 +35,7 @@ const PROFILE_TABS = [
   { key: "tareas", label: "Tareas", enabled: true },
   { key: "comisiones", label: "Comisiones", enabled: true },
   { key: "notas", label: "Notas", enabled: true },
+  { key: "historial", label: "Historial", enabled: true },
 ] as const;
 
 function formatMoney(amount: { toFixed: (n: number) => string } | null | undefined): string {
@@ -46,11 +50,14 @@ export default async function ContactDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; category?: string }>;
 }) {
   const { id } = await params;
-  const { tab: rawTab } = await searchParams;
+  const { tab: rawTab, category: rawCategory } = await searchParams;
   const actor = await requireUser();
+  const category = (HISTORY_CATEGORY_VALUES as readonly string[]).includes(rawCategory ?? "")
+    ? (rawCategory as HistoryCategory)
+    : undefined;
 
   // Comisiones es FINANCIERO/RESTRINGIDO (Fase 016) — se oculta por
   // completo para ASSISTANT, no solo se deshabilita, para evitar
@@ -73,6 +80,7 @@ export default async function ContactDetailPage({
   const birthday = person.dateOfBirth ? await getBirthdayForPerson(actor, person.id) : null;
   const households = activeTab === "resumen" ? await getHouseholdsForPerson(actor, person.id) : [];
   const primaryHousehold = households[0];
+  const lastActivity = activeTab === "resumen" ? await getLastActivityForPerson(actor, person.id) : null;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -138,6 +146,8 @@ export default async function ContactDetailPage({
         actor.role === "ASSISTANT" ? null : <CommissionsTab actor={actor} personId={person.id} />
       ) : activeTab === "notas" ? (
         <NotesTab actor={actor} personId={person.id} />
+      ) : activeTab === "historial" ? (
+        <HistoryTab actor={actor} personId={person.id} category={category} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           <Card>
@@ -203,6 +213,14 @@ export default async function ContactDetailPage({
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground">Notas</span>
                 <span>{person._count.notes}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Última actividad</span>
+                <span className="text-right">
+                  {lastActivity
+                    ? `${lastActivity.summary} — ${formatDateTimeUS(new Date(lastActivity.createdAt))}`
+                    : "—"}
+                </span>
               </div>
             </CardContent>
           </Card>

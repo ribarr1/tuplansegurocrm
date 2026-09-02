@@ -8,6 +8,16 @@ import { listPremiumTrackingQuerySchema, updatePremiumTrackingSchema } from "@/s
 import { getDateOnlyParts } from "@/lib/date-only";
 import { getTodayBusinessRange } from "@/lib/business-time";
 import type { Prisma, PaymentStatus } from "@/generated/prisma/client";
+import { recordAuditEvent, buildDiff } from "@/services/audit.service";
+
+const PREMIUM_AUDIT_FIELDS = [
+  "premiumAmount",
+  "billingFrequency",
+  "nextPaymentDueDate",
+  "paymentStatus",
+  "autopay",
+  "needsPaymentAssistance",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Seguimiento de primas y pagos — Fase 017
@@ -201,6 +211,14 @@ export async function updatePremiumTracking(actor: AuthorizedUser, rawPolicyId: 
     where: { id },
     select: {
       id: true,
+      holderId: true,
+      householdId: true,
+      premiumAmount: true,
+      billingFrequency: true,
+      nextPaymentDueDate: true,
+      paymentStatus: true,
+      autopay: true,
+      needsPaymentAssistance: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
     },
@@ -217,7 +235,24 @@ export async function updatePremiumTracking(actor: AuthorizedUser, rawPolicyId: 
   if (input.nextPaymentDueDate !== undefined) data.nextPaymentDueDate = input.nextPaymentDueDate;
   if (input.paymentStatus !== undefined) data.paymentStatus = input.paymentStatus;
 
-  await prisma.policy.update({ where: { id }, data });
+  const changes = buildDiff(existing, input, PREMIUM_AUDIT_FIELDS);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.policy.update({ where: { id }, data });
+    if (changes) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "PremiumTracking",
+        entityId: id,
+        action: "PREMIUM_UPDATE_TRACKING",
+        policyId: id,
+        householdId: existing.householdId,
+        contactPersonId: existing.holderId,
+        summary: "Seguimiento de pago actualizado",
+        changes,
+      });
+    }
+  });
   return getPremiumTrackingForPolicy(actor, id);
 }
 
@@ -233,6 +268,9 @@ async function setPaymentStatus(actor: AuthorizedUser, rawPolicyId: unknown, sta
     where: { id },
     select: {
       id: true,
+      holderId: true,
+      householdId: true,
+      paymentStatus: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
     },
@@ -240,7 +278,24 @@ async function setPaymentStatus(actor: AuthorizedUser, rawPolicyId: unknown, sta
   if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [existing.holder, ...existing.members.map((m) => m.person)]);
 
-  await prisma.policy.update({ where: { id }, data: { paymentStatus: status } });
+  const changes = buildDiff(existing, { paymentStatus: status }, ["paymentStatus"]);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.policy.update({ where: { id }, data: { paymentStatus: status } });
+    if (changes) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "PremiumTracking",
+        entityId: id,
+        action: "PREMIUM_STATUS_CHANGE",
+        policyId: id,
+        householdId: existing.householdId,
+        contactPersonId: existing.holderId,
+        summary: "Estado de pago actualizado",
+        changes,
+      });
+    }
+  });
   return getPremiumTrackingForPolicy(actor, id);
 }
 

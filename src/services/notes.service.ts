@@ -6,6 +6,7 @@ import { canEditPerson } from "@/services/people.service";
 import { personIdSchema } from "@/schemas/person.schema";
 import { createNoteSchema } from "@/schemas/note.schema";
 import type { Prisma } from "@/generated/prisma/client";
+import { recordAuditEvent } from "@/services/audit.service";
 
 // ---------------------------------------------------------------------------
 // Notas — Fase 019.5
@@ -56,8 +57,22 @@ export async function createNote(actor: AuthorizedUser, rawInput: unknown) {
     throw new AppError("FORBIDDEN", "No tienes acceso a esta persona.");
   }
 
-  return prisma.note.create({
-    data: { personId: input.personId, content: input.content, createdById: actor.id },
-    select: noteSelect,
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.note.create({
+      data: { personId: input.personId, content: input.content, createdById: actor.id },
+      select: noteSelect,
+    });
+    // Nunca se copia el contenido de la nota al audit log — Note ya es
+    // la fuente de verdad de ese texto, el evento solo señala que
+    // ocurrió (ver docs/AUDIT_TRAIL.md, "History vs Notes").
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Note",
+      entityId: created.id,
+      action: "NOTE_CREATE",
+      contactPersonId: input.personId,
+      summary: "Nota agregada",
+    });
+    return created;
   });
 }

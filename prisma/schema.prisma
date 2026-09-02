@@ -68,6 +68,7 @@ model User {
   uploadedDocuments                PolicyDocument[]
   sessions                         Session[]
   accounts                         Account[]
+  auditEvents                      AuditEvent[]
 
   @@map("users")
 }
@@ -99,6 +100,7 @@ model Person {
   birthdayGreetings BirthdayGreeting[]
   providers         PersonProvider[]
   medications       PersonMedication[]
+  auditEvents       AuditEvent[]
 
   @@index([lastName])
   @@index([phone])
@@ -134,8 +136,9 @@ model Household {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  members  HouseholdMember[]
-  policies Policy[]
+  members     HouseholdMember[]
+  policies    Policy[]
+  auditEvents AuditEvent[]
 
   @@map("households")
 }
@@ -210,6 +213,10 @@ enum PolicyOperationType {
   NEW_ENROLLMENT
   RENEWAL
   PLAN_CHANGE
+  // Fase 019.9: reemplazo de una póliza por otra (ej. cambio de
+  // carrier), distinto de PLAN_CHANGE (mismo carrier/producto,
+  // ajuste de plan) y de RENEWAL (continuidad del mismo plan/año).
+  REPLACEMENT
 }
 
 enum PolicyMemberRole {
@@ -291,6 +298,7 @@ model Policy {
   commissionExpectations CommissionExpectation[]
   documents              PolicyDocument[]
   commissionRules        CommissionRule[]
+  auditEvents            AuditEvent[]
 
   @@index([holderId])
   @@index([productId])
@@ -778,4 +786,69 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Migración 011 — Audit Trail & Client History
+// ---------------------------------------------------------------------------
+
+// Quién generó el evento: un User real, o el propio sistema (ej. el
+// pipeline de importación legacy) cuando no hay un actor humano
+// identificable. Nunca se inventa un actor cuando no se conoce.
+enum AuditActorType {
+  USER
+  SYSTEM
+}
+
+// Registro inmutable (append-only) de acciones de negocio relevantes.
+// NO es un log técnico de requests/errores — es la fuente del
+// "Historial" visible al usuario (Contact Detail, Policy Detail) y de
+// cualquier auditoría futura. `entityType`/`entityId` identifican QUÉ
+// fila cambió realmente (ej. "PersonMedication"/<id>); `contactPersonId`
+// /`policyId`/`householdId` son claves de agregación DENORMALIZADAS que
+// permiten armar el timeline de un contacto o de una póliza con un solo
+// índice, sin tener que hacer join contra 12 tablas distintas por
+// entityType. Un mismo evento puede (y normalmente debe) llevar más de
+// una de esas tres claves — ej. "agregar miembro a una póliza" lleva
+// policyId Y contactPersonId (la persona agregada) Y householdId (si la
+// póliza está vinculada a un hogar).
+//
+// `action` es un string libre (no enum de DB) a propósito: el catálogo
+// de acciones auditables crece con cada módulo nuevo (ver
+// docs/AUDIT_TRAIL.md para la lista completa) y un enum de Postgres
+// requeriría una migración por cada acción nueva — la validación de
+// valores permitidos vive en la capa de aplicación (audit.service.ts),
+// no en la base de datos.
+//
+// `changes` guarda SOLO los campos que realmente cambiaron, como
+// { campo: { before, after } } — nunca un snapshot completo de la fila,
+// nunca contenido de archivos/notas clínicas. Ver buildDiff() en
+// audit.service.ts y docs/SECURITY.md sobre redacción de campos
+// sensibles.
+model AuditEvent {
+  id              String         @id @default(uuid()) @db.Uuid
+  actorUserId     String?        @db.Uuid
+  actorType       AuditActorType @default(USER)
+  entityType      String
+  entityId        String         @db.Uuid
+  action          String
+  contactPersonId String?        @db.Uuid
+  policyId        String?        @db.Uuid
+  householdId     String?        @db.Uuid
+  summary         String
+  changes         Json?
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+
+  actor         User?      @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  contactPerson Person?    @relation(fields: [contactPersonId], references: [id], onDelete: SetNull)
+  policy        Policy?    @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  household     Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+
+  @@index([contactPersonId, createdAt])
+  @@index([policyId, createdAt])
+  @@index([householdId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("audit_events")
 }

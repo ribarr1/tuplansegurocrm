@@ -12,6 +12,7 @@ import {
 import { productIdSchema } from "@/schemas/product.schema";
 import { policyIdSchema } from "@/schemas/policy.schema";
 import { getTodayBusinessRange } from "@/lib/business-time";
+import { recordAuditEvent } from "@/services/audit.service";
 
 // ---------------------------------------------------------------------------
 // Reglas de comisión — Fase 019.5
@@ -70,43 +71,81 @@ export async function createCommissionRule(actor: AuthorizedUser, rawInput: unkn
   const product = await prisma.product.findUnique({ where: { id: input.productId }, select: { id: true } });
   if (!product) throw new AppError("NOT_FOUND", "Producto no encontrado.");
 
+  let policyHolderId: string | null = null;
+  let policyHouseholdId: string | null = null;
   if (input.policyId) {
     const policy = await prisma.policy.findUnique({
       where: { id: input.policyId },
-      select: { id: true, productId: true },
+      select: { id: true, productId: true, holderId: true, householdId: true },
     });
     if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
     if (policy.productId !== input.productId) {
       throw new AppError("VALIDATION_ERROR", "policyId: Esta póliza no pertenece al producto seleccionado.");
     }
+    policyHolderId = policy.holderId;
+    policyHouseholdId = policy.householdId;
   }
 
-  return prisma.commissionRule.create({
-    data: {
-      productId: input.productId,
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.commissionRule.create({
+      data: {
+        productId: input.productId,
+        policyId: input.policyId ?? null,
+        method: input.method,
+        base: input.base,
+        initialAmount: input.method === "FIXED_AMOUNT" ? input.initialAmount : null,
+        initialPercentage: input.method === "PERCENTAGE" ? input.initialPercentage : null,
+        initialPeriodicity: input.initialPeriodicity,
+        residualEnabled: input.residualEnabled,
+        residualAmount: input.residualEnabled && input.method === "FIXED_AMOUNT" ? input.residualAmount : null,
+        residualPercentage:
+          input.residualEnabled && input.method === "PERCENTAGE" ? input.residualPercentage : null,
+        residualPeriodicity: input.residualEnabled ? input.residualPeriodicity : null,
+        residualStartYear: input.residualEnabled ? input.residualStartYear : null,
+      },
+      select: ruleSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "CommissionRule",
+      entityId: created.id,
+      action: "COMMISSION_RULE_CREATE",
       policyId: input.policyId ?? null,
-      method: input.method,
-      base: input.base,
-      initialAmount: input.method === "FIXED_AMOUNT" ? input.initialAmount : null,
-      initialPercentage: input.method === "PERCENTAGE" ? input.initialPercentage : null,
-      initialPeriodicity: input.initialPeriodicity,
-      residualEnabled: input.residualEnabled,
-      residualAmount: input.residualEnabled && input.method === "FIXED_AMOUNT" ? input.residualAmount : null,
-      residualPercentage:
-        input.residualEnabled && input.method === "PERCENTAGE" ? input.residualPercentage : null,
-      residualPeriodicity: input.residualEnabled ? input.residualPeriodicity : null,
-      residualStartYear: input.residualEnabled ? input.residualStartYear : null,
-    },
-    select: ruleSelect,
+      householdId: policyHouseholdId,
+      contactPersonId: policyHolderId,
+      summary: "Regla de comisión creada",
+    });
+    return created;
   });
 }
 
 export async function deactivateCommissionRule(actor: AuthorizedUser, rawId: unknown) {
   assertAdminOnly(actor);
   const id = parseOrThrow(commissionRuleIdSchema, rawId);
-  const existing = await prisma.commissionRule.findUnique({ where: { id }, select: { id: true } });
+  const existing = await prisma.commissionRule.findUnique({
+    where: { id },
+    select: { id: true, policyId: true, policy: { select: { holderId: true, householdId: true } } },
+  });
   if (!existing) throw new AppError("NOT_FOUND", "Regla no encontrada.");
-  return prisma.commissionRule.update({ where: { id }, data: { isActive: false }, select: ruleSelect });
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.commissionRule.update({
+      where: { id },
+      data: { isActive: false },
+      select: ruleSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "CommissionRule",
+      entityId: id,
+      action: "COMMISSION_RULE_UPDATE",
+      policyId: existing.policyId,
+      householdId: existing.policy?.householdId ?? null,
+      contactPersonId: existing.policy?.holderId ?? null,
+      summary: "Regla de comisión desactivada",
+    });
+    return updated;
+  });
 }
 
 // Override de Policy (si existe y está activo) > regla de Product
@@ -224,6 +263,7 @@ type GenerationResult =
 async function generateExpectationCore(
   policyId: string,
   period: Date,
+  actor: AuthorizedUser | null,
   options?: { requireActiveStatus?: boolean }
 ): Promise<GenerationResult> {
   const policy = await prisma.policy.findUnique({
@@ -234,6 +274,8 @@ async function generateExpectationCore(
       premiumAmount: true,
       effectiveDate: true,
       status: true,
+      holderId: true,
+      householdId: true,
       _count: { select: { members: true } },
     },
   });
@@ -261,15 +303,31 @@ async function generateExpectationCore(
   }
 
   try {
-    const created = await prisma.commissionExpectation.create({
-      data: {
+    const created = await prisma.$transaction(async (tx) => {
+      const expectation = await tx.commissionExpectation.create({
+        data: {
+          policyId: policy.id,
+          period,
+          expectedAmount: result.amount,
+          calculatedAmount: result.amount,
+          generatedByRuleId: rule.id,
+        },
+        select: { id: true },
+      });
+      // Nunca se guarda el monto en el audit log — ver docs/SECURITY.md
+      // ("montos financieros nunca en logs normales"); el id de la fila
+      // ya es suficiente para referenciarla si hiciera falta.
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "CommissionExpectation",
+        entityId: expectation.id,
+        action: "COMMISSION_EXPECTATION_CREATE",
         policyId: policy.id,
-        period,
-        expectedAmount: result.amount,
-        calculatedAmount: result.amount,
-        generatedByRuleId: rule.id,
-      },
-      select: { id: true },
+        householdId: policy.householdId,
+        contactPersonId: policy.holderId,
+        summary: "Expectativa de comisión generada",
+      });
+      return expectation;
     });
     return { status: "CREATED", expectationId: created.id };
   } catch (error) {
@@ -305,7 +363,7 @@ export async function generateExpectationForPeriod(actor: AuthorizedUser, rawInp
   if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
 
-  return generateExpectationCore(policy.id, input.period);
+  return generateExpectationCore(policy.id, input.period, actor);
 }
 
 // Generación automática — hallazgo #14 de UAT (Fase 019.7):
@@ -320,11 +378,14 @@ export async function generateExpectationForPeriod(actor: AuthorizedUser, rawInp
 // hace nada. Horizonte deliberadamente acotado al mes de negocio
 // actual (nunca meses futuros) — generar el futuro es siempre una
 // acción explícita del ADMIN vía "Generar expectativa".
-export async function autoGenerateCurrentPeriodExpectation(policyId: string): Promise<void> {
+export async function autoGenerateCurrentPeriodExpectation(
+  policyId: string,
+  actor?: AuthorizedUser
+): Promise<void> {
   try {
     const { year, month } = getTodayBusinessRange();
     const period = new Date(Date.UTC(year, month - 1, 1));
-    await generateExpectationCore(policyId, period, { requireActiveStatus: true });
+    await generateExpectationCore(policyId, period, actor ?? null, { requireActiveStatus: true });
   } catch {
     // Efecto secundario best-effort — un fallo aquí nunca debe romper
     // la operación que lo disparó (crear póliza, agregar miembro, etc.).

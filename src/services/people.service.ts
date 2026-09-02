@@ -9,6 +9,21 @@ import {
   personIdSchema,
 } from "@/schemas/person.schema";
 import type { Prisma } from "@/generated/prisma/client";
+import { recordAuditEvent, buildDiff } from "@/services/audit.service";
+
+const PERSON_AUDIT_FIELDS = [
+  "firstName",
+  "middleName",
+  "lastName",
+  "secondLastName",
+  "preferredName",
+  "dateOfBirth",
+  "email",
+  "phone",
+  "contactStatus",
+  "source",
+  "assignedAgentId",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Política de acceso — Person (V1)
@@ -186,11 +201,21 @@ export async function createPerson(actor: AuthorizedUser, rawInput: unknown) {
     input.assignedAgentId
   );
 
-  const person = await prisma.person.create({
-    data: { ...input, assignedAgentId },
-    select: detailSelect,
+  return prisma.$transaction(async (tx) => {
+    const person = await tx.person.create({
+      data: { ...input, assignedAgentId },
+      select: detailSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Person",
+      entityId: person.id,
+      action: "CONTACT_CREATE",
+      contactPersonId: person.id,
+      summary: `Contacto creado: ${person.firstName} ${person.lastName}`,
+    });
+    return person;
   });
-  return person;
 }
 
 export async function updatePerson(
@@ -203,7 +228,20 @@ export async function updatePerson(
 
   const existing = await prisma.person.findUnique({
     where: { id },
-    select: { id: true, assignedAgentId: true },
+    select: {
+      id: true,
+      firstName: true,
+      middleName: true,
+      lastName: true,
+      secondLastName: true,
+      preferredName: true,
+      dateOfBirth: true,
+      email: true,
+      phone: true,
+      contactStatus: true,
+      source: true,
+      assignedAgentId: true,
+    },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Persona no encontrada.");
 
@@ -211,14 +249,47 @@ export async function updatePerson(
 
   const { assignedAgentId: requestedAssignedAgentId, ...rest } = input;
   const data: Prisma.PersonUncheckedUpdateInput = { ...rest };
+  let resolvedAssignedAgentId: string | undefined;
 
   if (requestedAssignedAgentId !== undefined) {
     if (actor.role !== "ADMIN") {
       throw new AppError("FORBIDDEN", "Solo ADMIN puede reasignar el agente.");
     }
-    data.assignedAgentId = await assertActiveAgent(requestedAssignedAgentId);
+    resolvedAssignedAgentId = await assertActiveAgent(requestedAssignedAgentId);
+    data.assignedAgentId = resolvedAssignedAgentId;
   }
 
-  const updated = await prisma.person.update({ where: { id }, data, select: detailSelect });
-  return updated;
+  // El diff se calcula contra el mismo objeto `data` que realmente se
+  // aplica (assignedAgentId ya resuelto), nunca contra el input crudo —
+  // así el before/after siempre refleja el valor real guardado.
+  const changes = buildDiff(
+    existing,
+    { ...rest, ...(resolvedAssignedAgentId !== undefined ? { assignedAgentId: resolvedAssignedAgentId } : {}) },
+    PERSON_AUDIT_FIELDS
+  );
+  // ASSIGN_AGENT es el hecho más relevante de este cambio cuando ocurre
+  // — incluso si además se tocaron otros campos en el mismo submit —
+  // seguido de STATUS_CHANGE, y UPDATE genérico en cualquier otro caso.
+  const action =
+    resolvedAssignedAgentId !== undefined
+      ? "CONTACT_ASSIGN_AGENT"
+      : input.contactStatus !== undefined && input.contactStatus !== existing.contactStatus
+        ? "CONTACT_STATUS_CHANGE"
+        : "CONTACT_UPDATE";
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.person.update({ where: { id }, data, select: detailSelect });
+    if (changes) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "Person",
+        entityId: id,
+        action,
+        contactPersonId: id,
+        summary: `Contacto actualizado: ${updated.firstName} ${updated.lastName}`,
+        changes,
+      });
+    }
+    return updated;
+  });
 }

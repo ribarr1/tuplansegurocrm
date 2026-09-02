@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
 import { userIdSchema, createUserSchema, setUserActiveSchema } from "@/schemas/user.schema";
+import { recordAuditEvent } from "@/services/audit.service";
 
 // Solo para uso administrativo (ej. selector de "agente asignado" al
 // crear/editar un contacto, o "responsable" al crear/editar una tarea
@@ -89,6 +90,15 @@ export async function createUser(actor: AuthorizedUser, rawInput: unknown) {
         password: hashedPassword,
       },
     });
+    // Nunca la contraseña (ni el hash) en el audit log — ver
+    // docs/SECURITY.md.
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "User",
+      entityId: created.id,
+      action: "USER_CREATE",
+      summary: `Usuario creado: ${created.name} (${created.role})`,
+    });
     return created;
   });
 
@@ -114,7 +124,21 @@ export async function setUserActive(actor: AuthorizedUser, rawInput: unknown) {
     }
   }
 
-  return prisma.user.update({ where: { id: input.id }, data: { isActive: input.isActive }, select: userSelect });
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: input.id },
+      data: { isActive: input.isActive },
+      select: userSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "User",
+      entityId: input.id,
+      action: input.isActive ? "USER_ACTIVATE" : "USER_DEACTIVATE",
+      summary: input.isActive ? `Usuario activado: ${updated.name}` : `Usuario desactivado: ${updated.name}`,
+    });
+    return updated;
+  });
 }
 
 export async function getUserById(actor: AuthorizedUser, rawId: unknown) {

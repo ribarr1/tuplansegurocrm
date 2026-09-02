@@ -14,6 +14,9 @@ import {
   TASK_CLOSED_STATUSES,
 } from "@/schemas/task.schema";
 import type { Prisma, TaskStatus } from "@/generated/prisma/client";
+import { recordAuditEvent, buildDiff } from "@/services/audit.service";
+
+const TASK_AUDIT_FIELDS = ["title", "priority", "dueAt", "status", "assignedToId"] as const;
 
 // ---------------------------------------------------------------------------
 // Política de acceso — Task (V1)
@@ -250,21 +253,32 @@ export async function createTask(actor: AuthorizedUser, rawInput: unknown) {
 
   const assignedToId = await resolveAssignedToIdForCreate(actor, input.assignedToId);
 
-  const created = await prisma.task.create({
-    data: {
-      title: input.title,
-      description: input.description,
-      status: input.status,
-      priority: input.priority,
-      dueAt: input.dueAt,
-      personId: input.personId,
-      policyId: input.policyId,
-      assignedToId,
-      createdById: actor.id,
-    },
-    select: taskSelect,
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.task.create({
+      data: {
+        title: input.title,
+        description: input.description,
+        status: input.status,
+        priority: input.priority,
+        dueAt: input.dueAt,
+        personId: input.personId,
+        policyId: input.policyId,
+        assignedToId,
+        createdById: actor.id,
+      },
+      select: taskSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Task",
+      entityId: created.id,
+      action: "TASK_CREATE",
+      contactPersonId: input.personId ?? null,
+      policyId: input.policyId ?? null,
+      summary: `Tarea creada: ${created.title}`,
+    });
+    return created;
   });
-  return created;
 }
 
 export async function updateTask(actor: AuthorizedUser, rawId: unknown, rawInput: unknown) {
@@ -298,8 +312,29 @@ export async function updateTask(actor: AuthorizedUser, rawId: unknown, rawInput
     data.completedAt = input.status === "COMPLETED" ? new Date() : null;
   }
 
-  const updated = await prisma.task.update({ where: { id }, data, select: taskSelect });
-  return updated;
+  const changes = buildDiff(
+    existing,
+    { ...input, ...(resolvedAssignedToId !== undefined ? { assignedToId: resolvedAssignedToId } : {}) },
+    TASK_AUDIT_FIELDS
+  );
+  const isReopeningNow = input.status !== undefined && isClosedStatus(existing.status) && !isClosedStatus(input.status);
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.task.update({ where: { id }, data, select: taskSelect });
+    if (changes) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "Task",
+        entityId: id,
+        action: isReopeningNow ? "TASK_REOPEN" : "TASK_UPDATE",
+        contactPersonId: existing.person?.id ?? null,
+        policyId: existing.policy?.id ?? null,
+        summary: isReopeningNow ? `Tarea reabierta: ${updated.title}` : `Tarea actualizada: ${updated.title}`,
+        changes,
+      });
+    }
+    return updated;
+  });
 }
 
 export async function completeTask(actor: AuthorizedUser, rawId: unknown) {
@@ -308,10 +343,22 @@ export async function completeTask(actor: AuthorizedUser, rawId: unknown) {
   if (!existing) throw new AppError("NOT_FOUND", "Tarea no encontrada.");
   assertCanAccessTask(actor, existing);
 
-  return prisma.task.update({
-    where: { id },
-    data: { status: "COMPLETED", completedAt: new Date() },
-    select: taskSelect,
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.task.update({
+      where: { id },
+      data: { status: "COMPLETED", completedAt: new Date() },
+      select: taskSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Task",
+      entityId: id,
+      action: "TASK_COMPLETE",
+      contactPersonId: existing.person?.id ?? null,
+      policyId: existing.policy?.id ?? null,
+      summary: `Tarea completada: ${updated.title}`,
+    });
+    return updated;
   });
 }
 
@@ -321,9 +368,21 @@ export async function cancelTask(actor: AuthorizedUser, rawId: unknown) {
   if (!existing) throw new AppError("NOT_FOUND", "Tarea no encontrada.");
   assertCanAccessTask(actor, existing);
 
-  return prisma.task.update({
-    where: { id },
-    data: { status: "CANCELLED", completedAt: null },
-    select: taskSelect,
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.task.update({
+      where: { id },
+      data: { status: "CANCELLED", completedAt: null },
+      select: taskSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Task",
+      entityId: id,
+      action: "TASK_CANCEL",
+      contactPersonId: existing.person?.id ?? null,
+      policyId: existing.policy?.id ?? null,
+      summary: `Tarea cancelada: ${updated.title}`,
+    });
+    return updated;
   });
 }

@@ -10,6 +10,20 @@ import {
   ASSISTANT_RESTRICTED_HEALTH_FIELDS,
 } from "@/schemas/health-policy.schema";
 import { Prisma } from "@/generated/prisma/client";
+import { recordAuditEvent, buildDiff } from "@/services/audit.service";
+
+// incomeUsed/taxCreditAmount NUNCA se incluyen aquí — son financiero
+// personal sensible (ver docs/SECURITY.md); el audit log registra que
+// "algo" cambió en el plan de salud, nunca esos dos valores.
+const HEALTH_DETAIL_AUDIT_FIELDS = [
+  "marketplaceApplicationId",
+  "marketplaceState",
+  "planNameSnapshot",
+  "deductibleIndividual",
+  "deductibleFamily",
+  "outOfPocketIndividual",
+  "outOfPocketFamily",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Política de acceso — HealthPolicyDetail (V1)
@@ -83,6 +97,8 @@ async function loadPolicyForHealth(policyId: string) {
     where: { id: policyId },
     select: {
       id: true,
+      holderId: true,
+      householdId: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
       product: { select: { policyType: true } },
@@ -124,9 +140,22 @@ export async function createHealthPolicyDetail(actor: AuthorizedUser, rawInput: 
   const { policyId, ...fields } = input;
 
   try {
-    const created = await prisma.healthPolicyDetail.create({
-      data: { policyId, ...fields },
-      select: healthDetailSelect,
+    const created = await prisma.$transaction(async (tx) => {
+      const result = await tx.healthPolicyDetail.create({
+        data: { policyId, ...fields },
+        select: healthDetailSelect,
+      });
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "HealthPolicyDetail",
+        entityId: result.id,
+        action: "HEALTH_UPDATE_HEALTH_DETAILS",
+        policyId,
+        householdId: policy.householdId,
+        contactPersonId: policy.holderId,
+        summary: "Información del plan de salud agregada",
+      });
+      return result;
     });
     return redactForAssistant(actor, created);
   } catch (error) {
@@ -154,7 +183,7 @@ export async function updateHealthPolicyDetail(
 
   const existing = await prisma.healthPolicyDetail.findUnique({
     where: { policyId },
-    select: { id: true },
+    select: healthDetailSelect,
   });
   if (!existing) {
     throw new AppError(
@@ -170,10 +199,31 @@ export async function updateHealthPolicyDetail(
     }
   }
 
-  const updated = await prisma.healthPolicyDetail.update({
-    where: { policyId },
-    data,
-    select: healthDetailSelect,
+  const changes = buildDiff(existing, input, HEALTH_DETAIL_AUDIT_FIELDS);
+  const touchedRestrictedFields = ["incomeUsed", "taxCreditAmount"].some(
+    (f) => (input as Record<string, unknown>)[f] !== undefined
+  );
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.healthPolicyDetail.update({
+      where: { policyId },
+      data,
+      select: healthDetailSelect,
+    });
+    if (changes || touchedRestrictedFields) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "HealthPolicyDetail",
+        entityId: result.id,
+        action: "HEALTH_UPDATE_HEALTH_DETAILS",
+        policyId,
+        householdId: policy.householdId,
+        contactPersonId: policy.holderId,
+        summary: "Información del plan de salud actualizada",
+        changes,
+      });
+    }
+    return result;
   });
   return redactForAssistant(actor, updated);
 }
