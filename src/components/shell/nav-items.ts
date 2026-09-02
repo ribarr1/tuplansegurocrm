@@ -7,6 +7,7 @@ import {
   DollarSign,
   CreditCard,
   Cake,
+  BarChart3,
   Settings,
 } from "lucide-react";
 
@@ -35,6 +36,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Comisiones", href: "/commissions", icon: DollarSign, enabled: true },
   { label: "Primas / Pagos", href: "/premiums", icon: CreditCard, enabled: true },
   { label: "Cumpleaños", href: "/birthdays", icon: Cake, enabled: true },
+  { label: "Reportes", href: "/reports", icon: BarChart3, enabled: true },
 ];
 
 export const SETTINGS_NAV_ITEM: NavItem = {

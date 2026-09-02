@@ -92,6 +92,10 @@ Ver `.env.example`: `BETTER_AUTH_SECRET` (genera el tuyo con `npx @better-auth/c
 
 `APP_TIME_ZONE` (ver `.env.example`) — identificador IANA (ej. `America/Chicago`) usado para calcular "hoy"/"este mes" en Tareas y Cumpleaños de forma consistente, sin importar en qué zona horaria corre el servidor. **Obligatoria**: si falta o es inválida, la aplicación falla con un mensaje claro en cuanto se usa, en vez de continuar con una zona adivinada. Sin soporte multi-timezone por usuario en V1 — TuPlanSeguro USA opera en una sola zona horaria.
 
+### Cifrado de identidad sensible (SSN / USCIS / documentos migratorios)
+
+`PII_ENCRYPTION_KEY` (ver `.env.example`) — clave AES-256-GCM (32 bytes, base64) usada para cifrar/descifrar SSN, USCIS/A-Number y números de documento migratorio (ver [docs/SENSITIVE_PII.md](docs/SENSITIVE_PII.md)). **Obligatoria y nunca reutilizable entre entornos** — genera la tuya con `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Sin esta clave, esos valores cifrados en la base de datos no son recuperables.
+
 ## Capa de servicios
 
 La lógica de negocio vive en `src/services/*.service.ts`, no directamente en páginas/Route Handlers. Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el flujo completo (UI → autorización → servicio → Prisma).
@@ -214,6 +218,17 @@ Cada contacto y cada póliza tienen una pestaña/sección "Historial" — timeli
 
 Desde la tab "Salud" de un contacto (siempre visible, incluso sin pólizas de Salud): "+ Agregar medicamento" (nombre obligatorio, dosis/frecuencia/notas opcionales) y "+ Agregar proveedor" (tipo PCP/Especialista/Otro, nombre obligatorio, especialidad/teléfono/organización/notas opcionales). Viven en `Person`, nunca en `Policy` — persisten aunque el cliente cambie de póliza. "Eliminar" un medicamento lo desactiva (conserva el historial); "Eliminar" un proveedor sí lo borra. Mismo control de acceso que editar cualquier otro dato del contacto (ver [docs/SECURITY.md](docs/SECURITY.md)). Catálogo de medicamentos/posologías queda explícitamente diferido — V1 es manual.
 
+### Identidad sensible (SSN, información migratoria)
+
+Tab "Identidad" en Contact Detail: categoría migratoria, SSN, USCIS/A-Number y documentos migratorios (tarjeta de residente permanente, EAD, otro). SSN/USCIS/A-Number/número de documento se guardan **cifrados y recuperables** (AES-256-GCM, nunca hash) y se muestran **enmascarados por defecto** (`***-**-6789`) — un botón "Mostrar" los revela bajo demanda (con "Copiar" para pegarlos en Marketplace/Get Covered), y "Ocultar"/recargar la página vuelve a enmascarar. Editar nunca precarga el valor completo — solo "Reemplazar".
+
+- **Autorización más estricta que el resto del contacto**: ADMIN y AGENT-con-acceso pueden registrar/editar/revelar/copiar; **ASSISTANT solo puede ver los valores enmascarados, nunca revelar nada de este módulo** (ni siquiera cambiar la categoría migratoria) — un usuario que puede abrir un contacto no necesariamente puede descifrar sus identificadores. Ver [docs/SENSITIVE_PII.md](docs/SENSITIVE_PII.md).
+- **`ImmigrationCategory` es información administrativa, nunca una conclusión legal** — el CRM no determina estatus migratorio ni elegibilidad de Marketplace/subsidio/Medicaid a partir de este campo.
+- Cada "Mostrar"/reemplazo/eliminación queda auditado en el Historial del contacto, **nunca con el valor en claro** — ver [docs/AUDIT_TRAIL.md](docs/AUDIT_TRAIL.md).
+- Nunca aparece en Búsqueda global ni en ningún CSV exportado (ver [docs/SECURITY.md](docs/SECURITY.md)).
+
+Detalle completo: [docs/SENSITIVE_PII.md](docs/SENSITIVE_PII.md).
+
 ### Documentos de póliza
 
 Desde el detalle de una póliza, sección "Documentos": subir/ver/descargar/eliminar archivos (resumen del plan, brochure, listado de medicamentos, directorio de proveedores, tarjeta/ID, solicitud, otro).
@@ -247,7 +262,11 @@ Compara `CommissionExpectation` (lo esperado) contra pagos reales reportados por
 
 ### Exportación CSV
 
-Botón "Exportar CSV" en Contactos, Pólizas y Comisiones — siempre acotado a lo que el usuario ya puede ver en el listado (ASSISTANT nunca exporta Comisiones). Nunca incluye SSN, datos bancarios, credenciales, contenido de documentos ni texto de notas/medicamentos. Ver [docs/SECURITY.md](docs/SECURITY.md).
+Botón "Exportar CSV" en Contactos, Pólizas, Comisiones y el Reporte de clientes — siempre acotado a lo que el usuario ya puede ver en el listado (ASSISTANT nunca exporta Comisiones). Nunca incluye SSN, USCIS/A-Number, número de documento, datos bancarios, credenciales, contenido de documentos ni texto de notas/medicamentos. Ver [docs/SECURITY.md](docs/SECURITY.md).
+
+### Reportes (`/reports`)
+
+Menú "Reportes" con acceso a Clientes, Pólizas y Comisiones — Pólizas y Comisiones reutilizan sus listados existentes (ya sirven como reporte); **Clientes** (`/reports/clients`) es una vista operativa nueva de cartera, distinta del listado básico de Contactos: filtros por estado, agente asignado, ubicación (estado/ciudad/condado/ZIP), categoría migratoria, póliza activa/tipo/compañía, asistencia de pago y "vencen en 30 días"; columnas de hogar, pólizas activas, última actividad; paginación 25/50/100; exporta CSV respetando los filtros seleccionados. Cada fila enlaza al Contact Detail real — el reporte nunca duplica esa información, solo la resume para filtrar/exportar. Nunca incluye SSN/USCIS/A-Number/número de documento — solo la categoría migratoria. Detalle: [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ### Primas / Seguimiento de pago
 

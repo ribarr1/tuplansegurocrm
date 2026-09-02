@@ -8,6 +8,9 @@ import { policyAgentAccessWhere } from "@/services/policies.service";
 import { agentCommissionAccessWhere, sumPayments } from "@/services/commissions.service";
 import { toCsv } from "@/lib/csv";
 import { formatDateOnlyUS } from "@/lib/date-only";
+import { clientReportQuerySchema } from "@/schemas/reports.schema";
+import { buildClientReportWhere, clientReportSelect } from "@/services/reports.service";
+import { IMMIGRATION_CATEGORY_LABELS, POLICY_TYPE_LABELS } from "@/lib/labels";
 
 // ---------------------------------------------------------------------------
 // Exportación CSV — Fase 020 (§1 de la ficha).
@@ -182,6 +185,73 @@ export async function exportCommissionsCsv(actor: AuthorizedUser): Promise<strin
     action: "EXPORT_COMMISSIONS",
     summary: `Exportación CSV de Comisiones (${expectations.length} filas)`,
     metadata: { rowCount: expectations.length },
+  });
+
+  return csv;
+}
+
+// Reporte de clientes (Fase 021, §37) — respeta EXACTAMENTE los mismos
+// filtros que /reports/clients (buildClientReportWhere compartido, ver
+// reports.service.ts) y la misma visibilidad abierta de Contactos.
+// NUNCA exporta SSN/USCIS/A-Number/número de documento — solo
+// Immigration Category (no un identificador, ver docs/SENSITIVE_PII.md).
+export async function exportClientReportCsv(actor: AuthorizedUser, rawQuery: unknown): Promise<string> {
+  const query = clientReportQuerySchema.parse(rawQuery ?? {});
+  const where = buildClientReportWhere(query);
+
+  const people = await prisma.person.findMany({
+    where,
+    select: clientReportSelect,
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    take: EXPORT_ROW_LIMIT,
+  });
+
+  const csv = toCsv(
+    [
+      "Nombre",
+      "Estado",
+      "Agente",
+      "Ciudad",
+      "Estado (US)",
+      "Categoría migratoria",
+      "Miembros del hogar",
+      "Ingreso familiar anual",
+      "Pólizas activas",
+      "Compañía principal",
+      "Tipo de póliza",
+      "Fecha efectiva",
+      "Fecha de terminación",
+      "Asistencia de pago",
+    ],
+    people.map((p) => {
+      const household = p.householdMembers[0]?.household;
+      const primaryPolicy = p.holderPolicies[0];
+      return [
+        `${p.firstName} ${p.lastName}`,
+        p.contactStatus,
+        p.assignedAgent?.name ?? "",
+        household?.city ?? "",
+        household?.state ?? "",
+        IMMIGRATION_CATEGORY_LABELS[p.sensitiveIdentity?.immigrationCategory ?? "UNKNOWN"],
+        household ? String(household._count.members) : "",
+        household?.annualHouseholdIncome ? household.annualHouseholdIncome.toString() : "",
+        String(p._count.holderPolicies),
+        primaryPolicy?.product.carrier.name ?? "",
+        primaryPolicy ? POLICY_TYPE_LABELS[primaryPolicy.product.policyType] : "",
+        formatDateOnlyUS(primaryPolicy?.effectiveDate),
+        formatDateOnlyUS(primaryPolicy?.terminationDate),
+        primaryPolicy?.needsPaymentAssistance ? "Sí" : "",
+      ];
+    })
+  );
+
+  await recordAuditEvent(prisma, {
+    actor,
+    entityType: "Export",
+    entityId: randomUUID(),
+    action: "EXPORT_CLIENT_REPORT",
+    summary: `Exportación CSV de Reporte de clientes (${people.length} filas)`,
+    metadata: { rowCount: people.length },
   });
 
   return csv;

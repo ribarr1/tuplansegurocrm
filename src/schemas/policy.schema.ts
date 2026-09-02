@@ -74,6 +74,10 @@ export const listPoliciesQuerySchema = z.object({
   policyType: optionalEnumFilter(POLICY_TYPE_VALUES),
   carrierId: optionalUuidFilter(),
   healthSource: optionalEnumFilter(HEALTH_COVERAGE_SOURCE_VALUES),
+  // Agente del TITULAR (Policy no tiene agente propio) — Fase 021
+  // (§39, auditoría de reportes): filtro añadido, faltaba en la lista
+  // ya existente de filtros (status/tipo/compañía/salud).
+  agentId: optionalUuidFilter(),
 });
 export type ListPoliciesQuery = z.infer<typeof listPoliciesQuerySchema>;
 

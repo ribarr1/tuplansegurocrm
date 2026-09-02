@@ -402,6 +402,38 @@ La advertencia residual de `pg` ("Calling client.query() when the client is alre
 
 Verificado: se auditaron todos los demás `select`/`include` con nombre usados dentro de bloques `$transaction(async tx => ...)` en el resto de servicios (`commission-rules`, `health-policies`, `health-records`, `notes`, `people`, `users`) — todos son selects planos (sin relaciones) o de una sola relación simple, y ninguno reprodujo la advertencia al correr sus tests de servicio en aislamiento. Tras ambas correcciones, `npm test` (501 pruebas, 29 archivos) corre limpio sin ninguna advertencia de `pg` — confirmado, no solo inferido.
 
+## Identidad sensible del contacto y reportes operativos (Fase 021)
+
+Migración 013 (`person_sensitive_identities`, `person_immigration_documents`, `ImmigrationCategory`, `ImmigrationDocumentType`) — ver `docs/DATABASE.md` y `docs/SENSITIVE_PII.md` para el detalle completo del módulo de identidad sensible.
+
+### Auditoría del modelo existente antes de tocar el schema (§1)
+
+Se buscó explícitamente en `prisma/schema.prisma` y en todo `src/` cualquier campo/modelo relacionado con SSN/USCIS/Alien Number/immigration/citizenship/resident/work authorization/document number **antes** de diseñar el schema nuevo. Hallazgo: **no existía ningún campo así en el schema**. Sí existían referencias en `src/import/sensitive.ts` (`EXCLUDED_SENSITIVE_COLUMNS`, Fase 019) — el Excel legacy real trae columnas `TITULAR/CONYUGUE/DEPENDIENTE N NUMERO DE SEGURIDAD SOCIAL` y `TITULAR/CONYUGUE/DEPENDIENTE N USCIS#`, que el pipeline de import excluye por completo desde esa fase (nunca se leyó su valor). Confirma que el negocio real necesita estos campos, y que hasta esta fase el CRM no tenía dónde guardarlos de forma segura — exactamente el gap que cierra esta fase.
+
+### `PersonSensitiveIdentity` como extensión 1:1 separada, no columnas en `Person`
+
+Se evaluó agregar `ssnEncrypted`/`ssnLast4`/etc. directamente a `Person` (la ficha lo sugería como "o equivalente") y se decidió en su lugar un modelo separado — mismo patrón ya establecido para `HealthPolicyDetail` sobre `Policy`. Razón: `Person` se selecciona con decenas de `select` distintos en todo el proyecto (`personSummarySelect`, `listSelect`, `detailSelect`, el `select` de cada Task/Policy que incluye al holder, etc.) — agregar columnas cifradas directamente ahí habría significado auditar CADA uno de esos `select` para confirmar que ninguno las incluye por accidente, para siempre, cada vez que alguien agregue un campo nuevo a `Person`. Con un modelo separado, un `select` sobre `Person` simplemente no ve nada de esto salvo que pida explícitamente la relación `sensitiveIdentity`.
+
+### USCIS/A-Number vive a nivel de PERSONA, nunca duplicado por documento
+
+La ficha (§4) sugería `uscisNumberEncrypted` como columna de `PersonImmigrationDocument`, pero también (§6, §24) trata "USCIS / A-Number" como un campo separado de "Número de documento", mostrado junto al SSN en el mock de UI, no anidado dentro de cada documento. Se investigó el significado real: el A-Number es un identificador único asignado por USCIS a la PERSONA, no al documento — la misma tarjeta de residente y el mismo EAD de una persona comparten el mismo A-Number. Decisión: **USCIS/A-Number vive en `PersonSensitiveIdentity` (nivel de persona), `PersonImmigrationDocument.documentNumberEncrypted` es exclusivamente el número físico impreso en cada documento** (distinto por documento). Evita duplicar el cifrado del mismo A-Number en cada documento y el riesgo de que queden desincronizados si se edita en un documento y no en otro.
+
+### `canAccessSensitiveIdentity` — un gate de autorización nuevo, nunca `canEditPerson`
+
+Reafirmado explícitamente por la ficha (§15-§16: "no reutilizar `canViewContact()` para reveal de PII", "un usuario que puede abrir un contacto no necesariamente puede descifrar sus identificadores"). `canEditPerson` (Fase 008) trata a ASSISTANT como sin restricción para el resto de un contacto — aplicarlo aquí habría permitido a ASSISTANT revelar SSN, violando la ficha explícitamente. `sensitive-identity.service.ts` define dos niveles propios: "ver" (masked, mismo criterio que `canEditPerson`, incluye ASSISTANT) y "gestionar" (`canAccessSensitiveIdentity`: ADMIN siempre, AGENT solo con acceso operativo, **ASSISTANT nunca**, ni siquiera para registrar la categoría migratoria — la única acción de este módulo que no es PII de alto riesgo por sí sola, pero la ficha agrupa "registrar/editar/revelar/copiar" como un solo bloque de permisos exclusivo de ADMIN/AGENT).
+
+### Reportes de clientes: sorting limitado a Nombre, documentado explícitamente (§35-§36)
+
+La ficha permite explícitamente omitir un sort "si no puede hacerse limpiamente". "Última actividad" no es una columna real de `Person` (se calcula desde `AuditEvent` en un query batch separado, solo para la página actual) y "Fecha efectiva"/"Fecha de terminación" provienen de una relación a-muchos (`holderPolicies`) reducida a una sola póliza "principal" por fila — Prisma no soporta ordenar una consulta de nivel superior por MIN/MAX de una relación a-muchos sin SQL crudo. Se implementó orden por Nombre (`lastName`, `firstName`) a nivel de base de datos, con paginación consistente; ordenar por Última actividad/Fecha efectiva/Fecha de terminación queda diferido — documentado aquí, no un olvido.
+
+### "Póliza principal" por contacto en el reporte: la más reciente ACTIVA
+
+Un contacto puede tener múltiples pólizas activas de distintos tipos/carriers a la vez, pero el reporte (siguiendo la lista de columnas de la ficha) muestra una sola fila por persona con columnas "Compañía principal"/"Tipo de póliza"/"Vigencia". Se definió "principal" como la póliza `ACTIVE` creada más recientemente para ese titular (`orderBy: createdAt desc, take: 1`) — una simplificación explícita para V1, documentada aquí en vez de construir una fila por combinación persona×póliza (que habría cambiado el significado de "una fila = un cliente").
+
+### Filtro "Agente" agregado a `/policies` (auditoría §39)
+
+Al auditar los filtros existentes de Pólizas contra los pedidos por la ficha (Status/Type/Carrier/Agent/Effective Date/Expiring Soon), faltaba únicamente "Agente" — agregado (`agentId`, filtra por `holder.assignedAgentId`, ya que `Policy` no tiene agente propio). El resto ya existía; Comisiones ya cumplía todos los filtros pedidos sin cambios.
+
 ## Pendiente antes de importar el Excel
 
 - **Dirección y ciertos datos demográficos de `Person` (sexo, idioma preferido, país de origen) no existen todavía en el schema**, aunque CLAUDE.md §4 los menciona como campos que el sistema debe poder registrar. Sexo/idioma/país de origen quedan diferidos hasta demostrar necesidad concreta — no se resolvieron en Fase 019.5. **Dirección** sí se resolvió en Fase 019.5 (ver sección arriba): vive en `Household`, no en `Person`. El import pipeline (Fase 019.5) guarda el valor de `TITULAR DIRECCION` del Excel real tal cual en `Household.addressLine1` (es texto libre e inconsistente en el source — partirlo en líneas/ciudad/estado/ZIP sería adivinar) y `TITULAR CONDADO` en `county`; un titular sin hogar en el modelo actual no tiene dónde guardar su dirección todavía (`ADDRESS_WITHOUT_HOUSEHOLD`, reportado como INFO, no se pierde silenciosamente).

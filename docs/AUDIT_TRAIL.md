@@ -53,8 +53,9 @@ model AuditEvent {
 | Comisiones | `COMMISSION_RULE_CREATE`, `COMMISSION_RULE_UPDATE`, `COMMISSION_EXPECTATION_CREATE`, `COMMISSION_EXPECTATION_UPDATE`, `COMMISSION_EXPECTATION_OVERRIDE`, `COMMISSION_PAYMENT`, `COMMISSION_CHARGEBACK`, `COMMISSION_ADJUSTMENT` |
 | Documentos (`PolicyDocument`) | `DOCUMENT_UPLOAD`, `DOCUMENT_DELETE` |
 | Usuarios (`User`) | `USER_CREATE`, `USER_ACTIVATE`, `USER_DEACTIVATE` (no existe `ROLE_CHANGE` ni `PASSWORD_RESET` como acciones separadas en V1 — el rol se fija al crear y no hay flujo de reset de password todavía, ver docs/DECISIONS.md) |
-| Exportación CSV (Fase 020) | `EXPORT_CONTACTS`, `EXPORT_POLICIES`, `EXPORT_COMMISSIONS` — `entityId` es un UUID nuevo generado en el momento (nunca `actor.id`: no hay una fila real que identifique, es una acción efímera), `changes` siempre `null`, `metadata` guarda solo filtros seguros y un conteo aproximado — nunca el contenido exportado (ver `docs/COMMISSION_RECONCILIATION.md`/`docs/SECURITY.md`) |
+| Exportación CSV (Fase 020, `EXPORT_CLIENT_REPORT` agregado en Fase 021) | `EXPORT_CONTACTS`, `EXPORT_POLICIES`, `EXPORT_COMMISSIONS`, `EXPORT_CLIENT_REPORT` — `entityId` es un UUID nuevo generado en el momento (nunca `actor.id`: no hay una fila real que identifique, es una acción efímera), `changes` siempre `null`, `metadata` guarda solo filtros seguros y un conteo aproximado — nunca el contenido exportado (ver `docs/COMMISSION_RECONCILIATION.md`/`docs/SECURITY.md`) |
 | Conciliación de comisiones (Fase 020) | `COMMISSION_STATEMENT_UPLOAD`, `COMMISSION_STATEMENT_MATCH`, `COMMISSION_STATEMENT_APPLY`, `COMMISSION_PAYMENT_FROM_STATEMENT` — nunca guardan el archivo original ni montos en texto libre fuera de los campos ya permitidos de `CommissionPayment` (ver `docs/COMMISSION_RECONCILIATION.md`) |
+| Identidad sensible (Fase 021) | `IMMIGRATION_CATEGORY_UPDATE` (única acción de este módulo con `changes` — categoría antes/después, no es PII de alto riesgo), `SSN_SET`, `SSN_UPDATE`, `SSN_REMOVED`, `SSN_REVEALED`, `USCIS_SET`, `USCIS_UPDATE`, `USCIS_REMOVED`, `USCIS_REVEALED`, `IMMIGRATION_DOCUMENT_CREATE`, `IMMIGRATION_DOCUMENT_UPDATE`, `IMMIGRATION_DOCUMENT_DEACTIVATE`, `IMMIGRATION_DOCUMENT_REVEALED` — **ninguno de estos incluye el valor en claro ni parcial**, ver `docs/SENSITIVE_PII.md` |
 
 `TASK_REOPEN` es un caso de `updateTask` (reabrir una tarea COMPLETED/CANCELLED) — se detecta comparando `existing.status`/`input.status`, no es una función de servicio separada.
 
@@ -66,6 +67,7 @@ model AuditEvent {
 - Montos de `CommissionExpectation`/`CommissionPayment` (`expectedAmount`, `calculatedAmount`, montos de pago/chargeback/ajuste) — financiero restringido (Fase 016). El override de una expectativa audita QUE hubo una corrección manual (`COMMISSION_EXPECTATION_OVERRIDE`), nunca el monto antes/después.
 - Contenido de archivos subidos — solo `fileName` (metadata), nunca los bytes del documento.
 - Texto de `Note` — el evento (`NOTE_CREATE`) nunca incluye `content`.
+- SSN, USCIS/A-Number, número de documento migratorio (`PersonSensitiveIdentity`/`PersonImmigrationDocument`, Fase 021) — ni en claro ni cifrado, ni siquiera parcial (últimos 4 dígitos). Todos los eventos de este módulo llevan solo un `summary` genérico; `changes` únicamente existe para `IMMIGRATION_CATEGORY_UPDATE` (no es un identificador). Ver `docs/SENSITIVE_PII.md`.
 
 ## Autorización del timeline (`history.service.ts`)
 

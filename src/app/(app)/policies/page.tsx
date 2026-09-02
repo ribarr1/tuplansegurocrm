@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/authorization";
 import { listPolicies, listActiveCarriers } from "@/services/policies.service";
+import { listActiveAgents } from "@/services/users.service";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,7 @@ type SearchParams = {
   policyType?: string;
   carrierId?: string;
   healthSource?: string;
+  agentId?: string;
   page?: string;
 };
 
@@ -39,6 +41,7 @@ function buildHref(current: SearchParams, overrides: Partial<SearchParams>): str
   if (merged.policyType) params.set("policyType", merged.policyType);
   if (merged.carrierId) params.set("carrierId", merged.carrierId);
   if (merged.healthSource) params.set("healthSource", merged.healthSource);
+  if (merged.agentId) params.set("agentId", merged.agentId);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
   const qs = params.toString();
   return qs ? `/policies?${qs}` : "/policies";
@@ -71,19 +74,23 @@ export default async function PoliciesPage({
     ? sp.healthSource
     : undefined;
 
-  const [{ items, total, pageSize }, carriers] = await Promise.all([
+  const [{ items, total, pageSize }, carriers, activeAgents] = await Promise.all([
     listPolicies(actor, {
       search: sp.q || undefined,
       status,
       policyType,
       carrierId: sp.carrierId || undefined,
       healthSource,
+      agentId: sp.agentId || undefined,
       page,
     }),
     listActiveCarriers(actor),
+    actor.role === "ADMIN" || actor.role === "ASSISTANT" ? listActiveAgents(actor) : Promise.resolve([]),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const hasFilters = Boolean(sp.q || sp.status || sp.policyType || sp.carrierId || sp.healthSource);
+  const hasFilters = Boolean(
+    sp.q || sp.status || sp.policyType || sp.carrierId || sp.healthSource || sp.agentId
+  );
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -174,6 +181,24 @@ export default async function PoliciesPage({
             ))}
           </select>
         </div>
+        {activeAgents.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="agentId">Agente</Label>
+            <select
+              id="agentId"
+              name="agentId"
+              defaultValue={sp.agentId ?? ""}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Todos</option>
+              {activeAgents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <Button type="submit" variant="secondary">
           Filtrar
         </Button>

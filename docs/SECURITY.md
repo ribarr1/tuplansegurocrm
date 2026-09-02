@@ -172,3 +172,31 @@ Detalle funcional completo (qué se audita, formato, servicio central) en [AUDIT
 - **Conciliación de comisiones es ADMIN-only en su totalidad** (subir, ver vista previa, emparejar, ignorar, aplicar) — decisión explícita documentada en `docs/DECISIONS.md`. AGENT conserva su acceso ya existente y acotado a sus propias comisiones (sin cambios); ASSISTANT sigue sin acceso al módulo de Comisiones en absoluto.
 - **Archivos de reporte de comisión**: extensión validada contra el adaptador, tamaño máximo 5 MB, firma binaria verificada para `.xlsx` (`looksLikeZipArchive`) antes de parsear — nunca se confía en el nombre de archivo ni en el `Content-Type` declarado por el navegador (mismo principio que `file-sniff.ts` ya establecido para documentos de póliza). El archivo original nunca se guarda en la base de datos.
 - **"Ver actividad" de un usuario (Configuración → Usuarios) es ADMIN-only** (`getUserActivity` en `history.service.ts`) — reutiliza la misma redacción/allowlist de `AuditEvent` ya vigente, nunca expone el JSON crudo de `changes`/`metadata` sin pasar por el mismo renderizado que el resto del Historial.
+
+## Identidad sensible del contacto — Fase 021
+
+Detalle funcional completo en [SENSITIVE_PII.md](./SENSITIVE_PII.md). Aquí solo las propiedades de seguridad, siguiendo la clasificación de PII pedida por la ficha (§49).
+
+### Clasificación de PII
+
+- **Máxima sensibilidad, cifrado recuperable obligatorio**: SSN, USCIS/A-Number, número de documento migratorio.
+- **Alta sensibilidad, sin cifrar (controles de autorización + minimización, no criptografía)**: medicamentos, proveedores/médicos preferidos (Fase 019.8), `incomeUsed`/`taxCreditAmount` (Fase 016).
+- **Administrativa, no PII identificatoria por sí sola**: `ImmigrationCategory`, tipo de documento, fechas de emisión/vencimiento — exportables en reportes; nunca los identificadores anteriores.
+
+### SSN / USCIS / número de documento
+
+- **Cifrado autenticado en reposo (AES-256-GCM), nunca hash irreversible** — el negocio necesita recuperar el valor completo para operaciones de Marketplace. `src/lib/pii-crypto.ts` es el único punto de cifrado/descifrado de la aplicación para este tipo de dato.
+- **`PII_ENCRYPTION_KEY`**: 32 bytes en base64, nunca en base de datos/repo/`NEXT_PUBLIC_*`/logs/`AuditEvent`. Local en `.env` (gitignored) para desarrollo; secreto de producción generado e independiente (nunca reutilizado entre entornos, mismo principio ya aplicado a `BETTER_AUTH_SECRET`).
+- **Enmascarado por defecto en TODA superficie** (Contact Detail, resumen, reporte de clientes) — `***-**-6789` / `*****1234` / `******9876`. El valor completo solo se calcula server-side cuando el usuario pulsa "Mostrar", vía una Server Action dedicada (nunca en la carga inicial de la página, nunca en HTML/props/hidden inputs/query strings).
+- **Autorización de revelar/gestionar es un gate propio (`canAccessSensitiveIdentity`), nunca `canEditPerson`** — ADMIN siempre, AGENT solo con acceso operativo al contacto, ASSISTANT NUNCA (ni para registrar la categoría migratoria). Ver `docs/SENSITIVE_PII.md`.
+- **Revelar se audita siempre** (`SSN_REVEALED`/`USCIS_REVEALED`/`IMMIGRATION_DOCUMENT_REVEALED`) — nunca con el valor en el summary/metadata.
+- **Nunca cacheable**: las Server Actions de reveal se ejecutan como POST bajo demanda, nunca servidas desde un caché intermedio.
+- **Errores de descifrado nunca exponen ciphertext ni clave** — mensaje genérico tanto para formato inválido como para fallo de autenticación GCM (ciphertext manipulado o clave incorrecta).
+- **Editar nunca decripta automáticamente** — reemplazar un valor siempre pasa por un input vacío explícito ("Reemplazar SSN"/"Reemplazar número"), nunca un formulario precargado.
+- **Excluidos de Búsqueda global y de todo CSV** (Contactos/Pólizas/Comisiones/Reporte de clientes) — ver `docs/SENSITIVE_PII.md`.
+
+### Gestión de la clave de cifrado
+
+- Generación documentada en `.env.example` (comando, nunca una key real de ejemplo funcional).
+- **Backup del `PII_ENCRYPTION_KEY` es responsabilidad separada del backup de la base de datos** — un backup de Postgres contiene solo ciphertext; sin la clave correspondiente, esos valores nunca son recuperables. Antes de producción: confirmar que la clave de producción se respalda de forma independiente y segura (gestor de secretos), nunca junto al backup de la base de datos ni en el mismo repositorio/artefacto.
+- Rotación de clave / KMS externo: evaluado y diferido explícitamente (ver `docs/SENSITIVE_PII.md`, "Pendiente") — el formato versionado (`v1:...`) permite implementarlo después sin romper datos ya cifrados.

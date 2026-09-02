@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { exportContactsCsv, exportPoliciesCsv, exportCommissionsCsv } from "@/services/export.service";
+import {
+  exportContactsCsv,
+  exportPoliciesCsv,
+  exportCommissionsCsv,
+  exportClientReportCsv,
+} from "@/services/export.service";
+import { setSsn, setUscisNumber } from "@/services/sensitive-identity.service";
 import { createPolicy } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -99,5 +105,38 @@ describe("export.service — CSV", () => {
     expect(event).toBeTruthy();
     expect(event?.changes).toBeNull();
     expect(JSON.stringify(event?.metadata ?? {})).not.toContain("555-0000");
+  });
+
+  it("AR/AS) el reporte de clientes en CSV respeta filtros y nunca incluye SSN/USCIS/A-Number", async () => {
+    const label = uniqueName("ReportCsv");
+    const person = await prisma.person.create({
+      data: { firstName: label, lastName: uniqueName("Person"), contactStatus: "CLIENT" },
+    });
+    createdPersonIds.push(person.id);
+    await setSsn(admin, { personId: person.id, ssn: "123-45-6789" });
+    await setUscisNumber(admin, { personId: person.id, uscisNumber: "A999999999" });
+
+    const csv = await exportClientReportCsv(admin, { search: label });
+    expect(csv).toContain(label);
+    expect(csv).not.toContain("123456789");
+    expect(csv).not.toContain("123-45-6789");
+    expect(csv).not.toContain("A999999999");
+    expect(csv.toLowerCase()).not.toContain("ssn");
+    expect(csv.toLowerCase()).not.toContain("uscis");
+    expect(csv.toLowerCase()).not.toContain("a-number");
+
+    const otherLabel = uniqueName("NotIncluded");
+    const csvFiltered = await exportClientReportCsv(admin, { search: otherLabel });
+    expect(csvFiltered).not.toContain(label);
+  });
+
+  it("registra un AuditEvent EXPORT_CLIENT_REPORT", async () => {
+    await exportClientReportCsv(admin, {});
+    const event = await prisma.auditEvent.findFirst({
+      where: { entityType: "Export", action: "EXPORT_CLIENT_REPORT", actorUserId: admin.id },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(event).toBeTruthy();
+    expect(event?.changes).toBeNull();
   });
 });

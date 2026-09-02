@@ -262,7 +262,7 @@ export async function listActiveProducts(actor: AuthorizedUser, rawQuery: unknow
 }
 
 export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
-  const { page, pageSize, search, status, policyType, carrierId, healthSource } = parseOrThrow(
+  const { page, pageSize, search, status, policyType, carrierId, healthSource, agentId } = parseOrThrow(
     listPoliciesQuerySchema,
     rawQuery
   );
@@ -272,6 +272,7 @@ export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
     ...(policyType ? { product: { policyType } } : {}),
     ...(carrierId ? { product: { carrierId } } : {}),
     ...(healthSource ? { healthCoverageSource: healthSource } : {}),
+    ...(agentId ? { holder: { assignedAgentId: agentId } } : {}),
     ...(search
       ? {
           OR: [

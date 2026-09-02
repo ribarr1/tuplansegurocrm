@@ -538,6 +538,23 @@ describe("policies.service", () => {
     expect(items.some((i) => i.id === policy.id)).toBe(true);
   });
 
+  // Fase 021 (§39, auditoría de reportes): filtro agentId, faltaba
+  // hasta esta fase — filtra por el agente asignado al TITULAR.
+  it("filtro /policies?agentId= devuelve solo pólizas de titulares asignados a ese agente", async () => {
+    const holder = await makePerson(agent.id);
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "false" })
+    );
+    const otherHolder = await makePerson();
+    const otherPolicy = trackPolicy(
+      await createPolicy(admin, { holderId: otherHolder.id, productId: activeProductId, holderCovered: "false" })
+    );
+    const { items } = await listPolicies(admin, { agentId: agent.id, pageSize: 100 });
+    const ids = items.map((i) => i.id);
+    expect(ids).toContain(policy.id);
+    expect(ids).not.toContain(otherPolicy.id);
+  });
+
   it("G) effectiveDate === terminationDate es válido", async () => {
     const holder = await makePerson();
     const policy = trackPolicy(

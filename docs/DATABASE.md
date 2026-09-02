@@ -335,3 +335,27 @@ Detalle funcional completo en `docs/COMMISSION_RECONCILIATION.md`; aquí solo el
 ### Fuera de alcance de esta migración
 
 Persistencia del archivo binario original del reporte (usaría `FileStorage`, no `Postgres`, si se agrega en el futuro). Un modelo para chargebacks/ajustes (el adaptador actual solo produce pagos).
+
+## Migración 013 — Identidad sensible del contacto (Fase 021)
+
+Detalle funcional completo en `docs/SENSITIVE_PII.md`; aquí solo el schema. Ningún campo de esta migración se agregó a `Person` directamente — ver `docs/DECISIONS.md` para el razonamiento de mantenerlos en modelos 1:1/1:N separados.
+
+### Enum nuevo: `ImmigrationCategory`
+
+`US_CITIZEN`, `LAWFUL_PERMANENT_RESIDENT`, `EMPLOYMENT_AUTHORIZATION`, `OTHER`, `UNKNOWN` (default). Información administrativa, nunca una determinación legal — ver `docs/SENSITIVE_PII.md`.
+
+### `person_sensitive_identities` (nueva, 1:1 con `people`)
+
+`id`, `personId` (uuid, `@unique`, FK a `people`, `onDelete: Cascade`), `immigrationCategory` (default `UNKNOWN`), `ssnEncrypted` (text?), `ssnLast4` (varchar(4)?), `uscisNumberEncrypted` (text?), `uscisNumberLast4` (varchar(4)?), `createdAt`, `updatedAt`. Los campos `*Encrypted` guardan el formato versionado de `src/lib/pii-crypto.ts` (`v1:<iv>:<authTag>:<ciphertext>`, AES-256-GCM) — **nunca** el valor en claro. `*Last4` es la única parte que se guarda en claro, exclusivamente para poder enmascarar (`***-**-6789`) sin tener que descifrar.
+
+### Enum nuevo: `ImmigrationDocumentType`
+
+`PERMANENT_RESIDENT_CARD`, `EMPLOYMENT_AUTHORIZATION_DOCUMENT`, `OTHER`.
+
+### `person_immigration_documents` (nueva, 1:N con `people`)
+
+`id`, `personId` (uuid, FK a `people`, `onDelete: Restrict`), `documentType`, `documentNumberEncrypted` (text?), `documentNumberLast4` (varchar(4)?), `issuedDate` (date?), `expirationDate` (date?), `isActive` (default true), `createdAt`, `updatedAt`. `onDelete: Restrict` (no `Cascade`) — mismo criterio que `PersonProvider`/`PersonMedication`: una persona con documentos migratorios registrados nunca debería poder eliminarse físicamente sin resolver primero esas filas (en la práctica, `Person` nunca se borra físicamente en este sistema, ver CLAUDE.md §31). Índices en `personId` y `[personId, isActive]` — misma forma que `person_medications`.
+
+### Fuera de alcance de esta migración
+
+Persistencia de un escaneo/foto del documento físico (solo se registra el número, cifrado). Rotación de `PII_ENCRYPTION_KEY`/KMS (el formato versionado lo permite después). Import real de los valores del Excel legacy (`src/import/sensitive.ts` sigue excluyendo esas columnas).

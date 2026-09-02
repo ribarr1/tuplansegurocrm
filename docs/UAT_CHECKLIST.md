@@ -242,6 +242,51 @@ Si tienes forma de ver la consola del navegador (F12 → pestaña "Console") o l
 - [ ] Probar un caso de medianoche (12:00 AM) y uno de mediodía (12:00 PM) — confirmar que ambos se guardan y muestran correctamente, sin confundirse entre sí.
 - [ ] Confirmar que la tarea sigue apareciendo correctamente en los conteos "Tareas de hoy"/"Tareas vencidas" del Dashboard.
 
+## 32. Reporte de clientes (Fase 021)
+
+- [ ] Ir a Reportes → Clientes.
+- [ ] Filtrar por Estado de contacto — confirmar que solo aparecen clientes con ese estado.
+- [ ] Filtrar por Agente asignado — confirmar que solo aparecen clientes de ese agente.
+- [ ] Filtrar por Categoría migratoria — confirmar que solo aparecen clientes con esa categoría.
+- [ ] Abrir un contacto desde una fila del reporte — confirmar que lleva al Contact Detail real.
+- [ ] Exportar CSV con al menos un filtro activo — confirmar que el CSV descargado respeta ese filtro y nunca contiene SSN/USCIS/A-Number/número de documento.
+
+## 33. SSN (Fase 021)
+
+- [ ] Desde la tab "Identidad" de un contacto, registrar un SSN (ej. 123-45-6789).
+- [ ] Guardar y confirmar que se muestra enmascarado (`***-**-6789`).
+- [ ] Recargar la página — confirmar que sigue enmascarado (nunca se precarga el valor completo).
+- [ ] Pulsar "Mostrar" — confirmar que aparece el SSN completo.
+- [ ] Pulsar "Copiar" — confirmar que se copia al portapapeles (pegar en otro campo para verificar).
+- [ ] Pulsar "Ocultar" — confirmar que vuelve a mostrarse enmascarado.
+- [ ] Recargar la página nuevamente — confirmar que sigue enmascarado.
+- [ ] Revisar el Historial del contacto — confirmar que aparecen los eventos de "SSN registrado" y "SSN consultado", sin el número en ningún lado.
+- [ ] Iniciar sesión como Asistente y abrir el mismo contacto — confirmar que el SSN se ve enmascarado pero el botón "Mostrar" no existe o está bloqueado.
+
+## 34. Información migratoria — Residente permanente (Fase 021)
+
+- [ ] Seleccionar categoría migratoria "Residente permanente" y guardar.
+- [ ] Registrar un USCIS/A-Number.
+- [ ] Agregar un documento "Tarjeta de residente permanente" con número y fecha de vencimiento.
+- [ ] Guardar y confirmar que el número se ve enmascarado (`******9876`).
+- [ ] Pulsar "Mostrar" en el USCIS/A-Number y en el número del documento — confirmar ambos valores completos.
+- [ ] Probar "Copiar" en al menos uno de los dos.
+- [ ] Pulsar "Ocultar" en ambos.
+- [ ] Revisar el Historial — confirmar los eventos correspondientes, sin ningún número visible.
+
+## 35. Información migratoria — Autorización de empleo (EAD) (Fase 021)
+
+- [ ] Cambiar la categoría migratoria a "Autorización de empleo" en otro contacto.
+- [ ] Agregar un documento "Permiso de trabajo / EAD" con número y fecha de vencimiento.
+- [ ] Confirmar que se puede revelar/copiar el número igual que con la tarjeta de residente.
+- [ ] Revisar el Historial del contacto para confirmar el evento correspondiente.
+
+## 36. Exportación CSV nunca incluye identidad sensible (Fase 021)
+
+- [ ] Con al menos un contacto que tenga SSN/USCIS/A-Number/documento registrados, exportar el Reporte de clientes en CSV.
+- [ ] Abrir el CSV descargado y confirmar la ausencia de: SSN, A-Number, número USCIS, número de documento (buscar tanto el valor completo como fragmentos).
+- [ ] Repetir la misma verificación con la exportación de Contactos (`/contacts`, botón "Exportar CSV").
+
 ---
 
 **Si algo de esta lista falla o se ve distinto a lo esperado, anótalo con la mayor cantidad de detalle posible (qué se hizo, qué se esperaba, qué pasó) antes de continuar con los siguientes pasos del proyecto** (creación de usuarios reales, resolución de bloqueos de importación, segundo dry run, autorización de `--apply`).
