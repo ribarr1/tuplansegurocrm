@@ -19,6 +19,7 @@ import type {
   CommissionMethod,
   CommissionBase,
   CommissionPeriodicity,
+  ProviderType,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -270,4 +271,11 @@ export const COMMISSION_PERIODICITY_LABELS: Record<CommissionPeriodicity, string
   ONE_TIME: "Única vez",
   MONTHLY: "Mensual",
   ANNUAL: "Anual",
+};
+
+// Fase 019.8 (hallazgo #18 de UAT) — proveedores/médicos preferidos.
+export const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
+  PCP: "Médico primario (PCP)",
+  SPECIALIST: "Especialista",
+  OTHER: "Otro",
 };

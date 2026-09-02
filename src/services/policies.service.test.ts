@@ -10,6 +10,8 @@ import {
   addPolicyMember,
   removePolicyMember,
   getPolicyMembersDetailed,
+  getHouseholdLinkCandidates,
+  linkPolicyToHousehold,
 } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -692,5 +694,176 @@ describe("policies.service", () => {
     // se conoce la relación real del hogar.
     expect(entry.householdRole).toBe("CHILD");
     expect(entry.role).toBe("DEPENDENT");
+  });
+
+  // ---------------------------------------------------------------------
+  // Reparar Policy.householdId cuando quedó null — Fase 019.8 (hallazgo
+  // #17 de UAT). Letras H-P (G, "vincula en creación cuando es
+  // inequívoco", ya está cubierta por el test A de este mismo bloque).
+  // ---------------------------------------------------------------------
+
+  it("H) Policy creada ANTES del Household puede vincularse después (Flujo B obligatorio de la ficha)", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    expect(policy.householdId).toBeNull();
+
+    // El Household se crea DESPUÉS de la póliza — mismo caso reportado
+    // en UAT real (contacto "camila cespedes").
+    const household = await makeHouseholdWithMembers(holder.id, []);
+
+    const candidates = await getHouseholdLinkCandidates(admin, policy.id);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].householdId).toBe(household.id);
+
+    const linked = await linkPolicyToHousehold(admin, policy.id, household.id);
+    expect(linked.householdId).toBe(household.id);
+  });
+
+  it("I) titular con MÚLTIPLES Households nunca se vincula automáticamente — exige elección explícita", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    // Dos hogares para el mismo titular, creados DESPUÉS de la póliza.
+    const householdOne = await makeHouseholdWithMembers(holder.id, []);
+    // makeHouseholdWithMembers siempre agrega holder como HEAD del
+    // nuevo hogar — dos households distintos con el mismo holder.
+    const householdTwo = await prisma.household.create({ data: {} });
+    createdHouseholdIds.push(householdTwo.id);
+    await prisma.householdMember.create({
+      data: { householdId: householdTwo.id, personId: holder.id, role: "HEAD" },
+    });
+
+    const candidates = await getHouseholdLinkCandidates(admin, policy.id);
+    expect(candidates.map((c) => c.householdId).sort()).toEqual(
+      [householdOne.id, householdTwo.id].sort()
+    );
+
+    // linkPolicyToHousehold nunca elige por sí solo: exige un
+    // householdId explícito, pero acepta cualquiera de los reales.
+    const linked = await linkPolicyToHousehold(admin, policy.id, householdOne.id);
+    expect(linked.householdId).toBe(householdOne.id);
+  });
+
+  it("J) titular sin ningún Household: la póliza queda válida con householdId null (sin candidatos que ofrecer)", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    expect(policy.householdId).toBeNull();
+    const candidates = await getHouseholdLinkCandidates(admin, policy.id);
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("K) vincular un Household nunca agrega miembros automáticamente (no auto-enroll)", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    const household = await makeHouseholdWithMembers(holder.id, [{ personId: spouse.id, role: "SPOUSE" }]);
+
+    await linkPolicyToHousehold(admin, policy.id, household.id);
+
+    const detailed = await getPolicyMembersDetailed(admin, policy.id);
+    expect(detailed.some((m) => m.person.id === spouse.id)).toBe(false);
+  });
+
+  it("L) una vez vinculada, la póliza lista al cónyuge como candidato elegible", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    const household = await makeHouseholdWithMembers(holder.id, [{ personId: spouse.id, role: "SPOUSE" }]);
+    await linkPolicyToHousehold(admin, policy.id, household.id);
+
+    const eligible = await getEligibleHouseholdMembersForPolicy(admin, policy.id);
+    expect(eligible.some((c) => c.personId === spouse.id && c.householdRole === "SPOUSE")).toBe(true);
+  });
+
+  it("M) el cónyuge se muestra como 'Esposo/a' (filiación real, nunca 'Otro')", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    const household = await makeHouseholdWithMembers(holder.id, [{ personId: spouse.id, role: "SPOUSE" }]);
+    await linkPolicyToHousehold(admin, policy.id, household.id);
+
+    const eligible = await getEligibleHouseholdMembersForPolicy(admin, policy.id);
+    const entry = eligible.find((c) => c.personId === spouse.id)!;
+    expect(entry.householdRole).toBe("SPOUSE");
+  });
+
+  it("N) agregar miembro funciona correctamente después de vincular el hogar", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    const household = await makeHouseholdWithMembers(holder.id, [{ personId: spouse.id, role: "SPOUSE" }]);
+    await linkPolicyToHousehold(admin, policy.id, household.id);
+
+    const updated = await addPolicyMember(admin, policy.id, { personId: spouse.id, role: "SPOUSE" });
+    expect(updated.members.some((m) => m.person.id === spouse.id)).toBe(true);
+  });
+
+  it("O) quitar un miembro de la póliza preserva el Household (y su HouseholdMember)", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    const household = await makeHouseholdWithMembers(holder.id, [{ personId: spouse.id, role: "SPOUSE" }]);
+    await linkPolicyToHousehold(admin, policy.id, household.id);
+    const withMember = await addPolicyMember(admin, policy.id, { personId: spouse.id, role: "SPOUSE" });
+    const memberRow = withMember.members.find((m) => m.person.id === spouse.id)!;
+
+    await removePolicyMember(admin, policy.id, memberRow.id);
+
+    const stillHouseholdMember = await prisma.householdMember.findUnique({
+      where: { personId_householdId: { personId: spouse.id, householdId: household.id } },
+    });
+    expect(stillHouseholdMember).not.toBeNull();
+    const stillLinked = await getPolicyById(admin, policy.id);
+    expect(stillLinked.householdId).toBe(household.id);
+  });
+
+  it("P) una póliza tipo-UAT con householdId null puede repararse explícitamente (caso real: 'camila cespedes')", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    // Simula el estado exacto reportado en UAT: Policy.householdId
+    // null aunque el titular YA tiene un hogar (ej. quedó así por una
+    // ejecución anterior, antes de esta reparación).
+    const household = await makeHouseholdWithMembers(holder.id, []);
+    expect((await getPolicyById(admin, policy.id)).householdId).toBeNull();
+
+    await linkPolicyToHousehold(admin, policy.id, household.id);
+    expect((await getPolicyById(admin, policy.id)).householdId).toBe(household.id);
+
+    // Repetir la vinculación ya no debe ser posible (evita pisar una
+    // vinculación existente sin una acción explícita de "cambiar de
+    // hogar", fuera de alcance de esta fase).
+    await expect(linkPolicyToHousehold(admin, policy.id, household.id)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+  });
+
+  it("linkPolicyToHousehold rechaza un householdId que no es del titular (nunca vincula un hogar arbitrario)", async () => {
+    const holder = await makePerson();
+    const stranger = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    const strangerHousehold = await makeHouseholdWithMembers(stranger.id, []);
+
+    await expect(linkPolicyToHousehold(admin, policy.id, strangerHousehold.id)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
   });
 });

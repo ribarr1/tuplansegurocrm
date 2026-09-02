@@ -4,6 +4,7 @@ import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
 import { canEditPerson } from "@/services/people.service";
 import { personIdSchema } from "@/schemas/person.schema";
+import { householdIdSchema } from "@/schemas/household.schema";
 import {
   policyIdSchema,
   createPolicySchema,
@@ -506,6 +507,7 @@ async function loadPolicyForMemberManagement(policyId: string) {
     where: { id: policyId },
     select: {
       id: true,
+      holderId: true,
       householdId: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
@@ -630,5 +632,83 @@ export async function removePolicyMember(actor: AuthorizedUser, rawPolicyId: unk
   }
 
   await prisma.policyMember.delete({ where: { id: memberId } });
+  return getPolicyById(actor, policyId);
+}
+
+// ---------------------------------------------------------------------------
+// Reparar Policy.householdId cuando quedó null — Fase 019.8 (hallazgo #17)
+//
+// createPolicy (Fase 019.7) solo resuelve el hogar del titular en el
+// momento de crear la póliza. Si el Household se crea DESPUÉS (Flujo B
+// de la ficha: contacto -> póliza -> hogar -> familiar), la póliza se
+// queda con householdId=null para siempre sin este mecanismo explícito
+// de reparación. Nunca se actualiza en masa/silenciosamente — el ADMIN/
+// agente decide explícitamente vincular, y solo entre los hogares
+// reales del titular (nunca un householdId arbitrario).
+// ---------------------------------------------------------------------------
+
+// Hogares candidatos para vincular una póliza que todavía tiene
+// householdId=null. Vacío si la póliza ya está vinculada o si el
+// titular no pertenece a ningún hogar.
+export async function getHouseholdLinkCandidates(actor: AuthorizedUser, rawPolicyId: unknown) {
+  const policyId = parseOrThrow(policyIdSchema, rawPolicyId);
+  const policy = await loadPolicyForMemberManagement(policyId);
+  assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+
+  if (policy.householdId) return [];
+
+  const memberships = await prisma.householdMember.findMany({
+    where: { personId: policy.holderId },
+    select: {
+      householdId: true,
+      household: {
+        select: {
+          members: {
+            select: { role: true, person: { select: personSummarySelect } },
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      },
+    },
+  });
+
+  return memberships.map((m) => ({
+    householdId: m.householdId,
+    members: m.household.members.map((hm) => ({ role: hm.role, person: hm.person })),
+  }));
+}
+
+// Vincula la póliza a UNO de los hogares reales del titular — nunca
+// agrega miembros automáticamente (NO AUTO-ENROLL, solo habilita el
+// universo de candidatos para "+ Agregar miembro"). Rechaza si la
+// póliza ya tiene un hogar (evita pisar una vinculación existente sin
+// una acción explícita de "cambiar de hogar", fuera de alcance de esta
+// fase) o si el householdId dado no es un hogar real del titular.
+export async function linkPolicyToHousehold(
+  actor: AuthorizedUser,
+  rawPolicyId: unknown,
+  rawHouseholdId: unknown
+) {
+  const policyId = parseOrThrow(policyIdSchema, rawPolicyId);
+  const householdId = parseOrThrow(householdIdSchema, rawHouseholdId);
+  const policy = await loadPolicyForMemberManagement(policyId);
+  assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+
+  if (policy.householdId) {
+    throw new AppError("CONFLICT", "Esta póliza ya está vinculada a un hogar.");
+  }
+
+  const membership = await prisma.householdMember.findFirst({
+    where: { householdId, personId: policy.holderId },
+    select: { id: true },
+  });
+  if (!membership) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "householdId: El hogar seleccionado no corresponde al titular de esta póliza."
+    );
+  }
+
+  await prisma.policy.update({ where: { id: policyId }, data: { householdId } });
   return getPolicyById(actor, policyId);
 }

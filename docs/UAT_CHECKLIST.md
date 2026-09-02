@@ -1,4 +1,4 @@
-# Checklist de prueba funcional manual (UAT) — Fase 019.5 / 019.6 / 019.7
+# Checklist de prueba funcional manual (UAT) — Fase 019.5 / 019.6 / 019.7 / 019.8
 
 Lista de pruebas para que el dueño de TuPlanSeguro USA verifique el CRM de punta a punta, con datos de prueba (nunca el Excel real todavía). Marcar cada punto al probarlo; anotar cualquier problema encontrado para reportarlo antes de continuar con el import real.
 
@@ -134,6 +134,34 @@ Si tienes forma de ver la consola del navegador (F12 → pestaña "Console") o l
 - [ ] Revisar fechas visibles en Dashboard, Contactos, Hogar, Pólizas (fecha efectiva/terminación), Tareas, Cumpleaños, Primas, Comisiones, Notas y Usuarios — todas deben mostrarse como **MM/DD/AAAA** (ej. "09/01/2026"), nunca como "01/09/2026" ni con nombres de mes en español.
 - [ ] Confirmar que los campos de fecha (fecha de nacimiento, fechas de póliza, fecha de tarea) muestran la pista "(MM/DD/AAAA)" junto a la etiqueta.
 - [ ] Guardar una fecha (ej. fecha de nacimiento 03/15/1990) y recargar la página — debe seguir mostrando exactamente esa fecha, sin desplazarse un día por husos horarios.
+
+## 20. Entrada de fecha con formato garantizado MM/DD/AAAA (Fase 019.8 — Hallazgo #16)
+
+- [ ] En el formulario de un contacto nuevo, hacer clic en el campo "Fecha de nacimiento" e introducir `09011990` seguido — el campo debe insertar las barras automáticamente y mostrar `09/01/1990` (nunca `dd/mm/aaaa` del navegador).
+- [ ] Guardar y confirmar que el resumen del contacto muestra `09/01/1990`. Recargar la página completa (F5) y confirmar que sigue mostrando la misma fecha.
+- [ ] Repetir la prueba en Fecha efectiva/Fecha de terminación de una póliza y en la fecha de nacimiento al editar un contacto — mismo comportamiento en los tres casos.
+- [ ] Intentar escribir una fecha imposible (ej. `13/10/2026` o `02/30/2026`) y guardar — debe rechazarse con un mensaje de error visible, nunca guardarse silenciosamente.
+
+## 21. Póliza vinculada al Household en todos los flujos (Fase 019.8 — Hallazgo #17)
+
+- [ ] Crear un contacto nuevo.
+- [ ] Crear una póliza para ese contacto ANTES de armar su hogar (Flujo B).
+- [ ] Ir al tab "Familia" del contacto, crear el hogar y agregar un cónyuge.
+- [ ] Volver al detalle de la póliza — debe aparecer un aviso para "Vincular hogar" con el hogar recién creado.
+- [ ] Hacer clic en "Vincular hogar".
+- [ ] Usar "+ Agregar miembro" y confirmar que el cónyuge ya aparece como candidato elegible.
+- [ ] Agregarlo y confirmar que se muestra como "Esposo/a" tanto en la filiación familiar como (por defecto) en el rol sugerido de la póliza.
+- [ ] Usar "Quitar de la póliza" sobre ese miembro y confirmar que sigue apareciendo normalmente en el tab "Familia" del contacto (nunca se borra del hogar).
+
+## 22. Medicamentos y proveedores/médicos preferidos (Fase 019.8 — Hallazgo #18)
+
+- [ ] Abrir el tab "Salud" de un contacto (con o sin pólizas de Salud — las secciones de Medicamentos y Proveedores deben aparecer siempre).
+- [ ] Usar "+ Agregar medicamento", ingresar solo el nombre (dejar dosis/frecuencia/notas vacíos) y guardar — debe guardarse sin exigir los campos opcionales.
+- [ ] Editar ese medicamento agregando dosis y frecuencia — debe reflejarse de inmediato.
+- [ ] Eliminarlo — debe desaparecer de la lista.
+- [ ] Usar "+ Agregar proveedor", elegir un tipo (PCP/Especialista/Otro), completar nombre y teléfono, guardar.
+- [ ] Editar ese proveedor y luego eliminarlo — debe desaparecer de la lista.
+- [ ] Confirmar que un usuario con rol Agente sin acceso a ese contacto no puede ver ni editar sus medicamentos/proveedores.
 
 ---
 

@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { USDateInput } from "@/components/ui/us-date-input";
 import { Label } from "@/components/ui/label";
 import { CONTACT_STATUS_VALUES } from "@/schemas/person.schema";
 import { CONTACT_STATUS_LABELS } from "@/lib/labels";
@@ -84,7 +85,7 @@ export function ContactForm({
 
       <div className="flex flex-col gap-1">
         <Label htmlFor="dateOfBirth">Fecha de nacimiento (MM/DD/AAAA)</Label>
-        <Input id="dateOfBirth" name="dateOfBirth" type="date" defaultValue={values.dateOfBirth} />
+        <USDateInput id="dateOfBirth" name="dateOfBirth" defaultValue={values.dateOfBirth} />
         {state?.fieldErrors?.dateOfBirth && (
           <p className="text-sm text-destructive">{state.fieldErrors.dateOfBirth}</p>
         )}

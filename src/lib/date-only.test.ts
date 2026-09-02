@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { getDateOnlyParts, isLeapYear, effectiveBirthdayForYear, formatDateOnlyUS } from "@/lib/date-only";
+import {
+  getDateOnlyParts,
+  isLeapYear,
+  effectiveBirthdayForYear,
+  formatDateOnlyUS,
+  maskUsDate,
+  usDateToIso,
+  isoToUsDate,
+} from "@/lib/date-only";
 
 describe("date-only", () => {
   it("getDateOnlyParts lee una columna DATE (medianoche UTC) sin desplazarse de día", () => {
@@ -77,5 +85,56 @@ describe("date-only", () => {
     // principio ya documentado para nextPaymentDueDate/effectiveDate.
     const parsed = new Date(isoDateOnly);
     expect(formatDateOnlyUS(parsed)).toBe("12/25/2026");
+  });
+
+  // A-F) UAT hallazgo #16 (Fase 019.8): <USDateInput> reemplaza
+  // <input type="date"> para garantizar MM/DD/AAAA sin depender del
+  // locale del navegador — estas funciones puras son su lógica.
+  it("A) usDateToIso interpreta MM/DD/AAAA -> YYYY-MM-DD", () => {
+    expect(usDateToIso("09/01/2026")).toBe("2026-09-01");
+  });
+
+  it("B) usDateToIso produce el string exacto que ya esperaban los schemas existentes", () => {
+    expect(usDateToIso("12/31/2026")).toBe("2026-12-31");
+  });
+
+  it("C) usDateToIso rechaza un mes inválido (13/10/2026, 00/01/2026)", () => {
+    expect(usDateToIso("13/10/2026")).toBe("");
+    expect(usDateToIso("00/01/2026")).toBe("");
+  });
+
+  it("D) usDateToIso rechaza un día inválido (30 de febrero)", () => {
+    expect(usDateToIso("02/30/2026")).toBe("");
+  });
+
+  it("E) usDateToIso acepta 29 de febrero en año bisiesto y lo rechaza en año no bisiesto", () => {
+    expect(usDateToIso("02/29/2028")).toBe("2028-02-29");
+    expect(usDateToIso("02/29/2026")).toBe("");
+  });
+
+  it("F) usDateToIso retorna '' para un valor incompleto (nunca lanza)", () => {
+    expect(usDateToIso("09/01")).toBe("");
+    expect(usDateToIso("")).toBe("");
+  });
+
+  it("isoToUsDate hace el camino inverso para precargar un formulario de edición", () => {
+    expect(isoToUsDate("2026-09-01")).toBe("09/01/2026");
+    expect(isoToUsDate(null)).toBe("");
+    expect(isoToUsDate(undefined)).toBe("");
+  });
+
+  it("maskUsDate inserta las barras automáticamente mientras el usuario escribe", () => {
+    expect(maskUsDate("0")).toBe("0");
+    expect(maskUsDate("09")).toBe("09");
+    expect(maskUsDate("090")).toBe("09/0");
+    expect(maskUsDate("09012026")).toBe("09/01/2026");
+  });
+
+  it("maskUsDate ignora caracteres no numéricos (pegado con barras ya incluidas)", () => {
+    expect(maskUsDate("09/01/2026")).toBe("09/01/2026");
+  });
+
+  it("maskUsDate trunca cualquier dígito extra más allá de MMDDYYYY", () => {
+    expect(maskUsDate("090120269999")).toBe("09/01/2026");
   });
 });

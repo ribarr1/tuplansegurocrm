@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { USDateInput } from "@/components/ui/us-date-input";
 import { Label } from "@/components/ui/label";
 import { BILLING_FREQUENCY_VALUES, PAYMENT_STATUS_VALUES } from "@/schemas/policy.schema";
 import { BILLING_FREQUENCY_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/labels";
@@ -79,10 +80,9 @@ export function PremiumDetailForm({
 
         <div className="flex flex-col gap-1">
           <Label htmlFor="nextPaymentDueDate">Próxima fecha de pago (MM/DD/AAAA)</Label>
-          <Input
+          <USDateInput
             id="nextPaymentDueDate"
             name="nextPaymentDueDate"
-            type="date"
             defaultValue={values.nextPaymentDueDate ?? defaultValues.nextPaymentDueDate ?? ""}
           />
           <p className="text-xs text-muted-foreground">

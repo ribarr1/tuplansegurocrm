@@ -10,6 +10,8 @@ import {
   HEALTH_COVERAGE_SOURCE_LABELS,
 } from "@/lib/labels";
 import { formatDateOnlyUS } from "@/lib/date-only";
+import { MedicationsSection } from "./medications-section";
+import { ProvidersSection } from "./providers-section";
 
 const formatDate = formatDateOnlyUS;
 
@@ -23,25 +25,26 @@ function formatMoney(amount: { toFixed: (n: number) => string } | null | undefin
 // 013/019.5). incomeUsed/taxCreditAmount llegan ya redactados por el
 // servicio para ASSISTANT (la clave ni siquiera existe en el objeto) —
 // esta vista no necesita ninguna lógica adicional de ocultamiento.
+// Fase 019.8 (hallazgo #18 de UAT): Medicamentos y Médicos/proveedores
+// se muestran SIEMPRE, incluso sin pólizas de Salud — viven en Person,
+// no en Policy (una persona puede no tener ninguna póliza de Salud
+// todavía y aun así necesitar registrar su medicación actual).
 export async function HealthTab({ actor, personId }: { actor: AuthorizedUser; personId: string }) {
   const policies = await getPoliciesForPerson(actor, personId);
   const healthPolicies = policies.filter((p) => p.product.policyType === "HEALTH");
-
-  if (healthPolicies.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-3 rounded-md border border-dashed py-16 text-center">
-        <p className="text-sm text-muted-foreground">Este contacto no tiene pólizas de Salud.</p>
-      </div>
-    );
-  }
-
-  const details = await Promise.all(
-    healthPolicies.map((p) => getHealthPolicyDetail(actor, p.id))
-  );
+  const details =
+    healthPolicies.length > 0
+      ? await Promise.all(healthPolicies.map((p) => getHealthPolicyDetail(actor, p.id)))
+      : [];
 
   return (
     <div className="flex flex-col gap-4">
-      {healthPolicies.map((policy, i) => {
+      {healthPolicies.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed py-10 text-center">
+          <p className="text-sm text-muted-foreground">Este contacto no tiene pólizas de Salud.</p>
+        </div>
+      ) : (
+      healthPolicies.map((policy, i) => {
         const detail = details[i];
         return (
           <Card key={policy.id}>
@@ -99,7 +102,11 @@ export async function HealthTab({ actor, personId }: { actor: AuthorizedUser; pe
             </CardContent>
           </Card>
         );
-      })}
+      })
+      )}
+
+      <MedicationsSection actor={actor} personId={personId} />
+      <ProvidersSection actor={actor} personId={personId} />
     </div>
   );
 }

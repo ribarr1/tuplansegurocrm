@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { USDateInput } from "@/components/ui/us-date-input";
 import { Label } from "@/components/ui/label";
 import {
   POLICY_STATUS_VALUES,
@@ -219,10 +220,9 @@ export function PolicyForm({
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="effectiveDate">Fecha efectiva (MM/DD/AAAA)</Label>
-            <Input
+            <USDateInput
               id="effectiveDate"
               name="effectiveDate"
-              type="date"
               defaultValue={values.effectiveDate ?? ""}
             />
             {state?.fieldErrors?.effectiveDate && (
@@ -231,10 +231,9 @@ export function PolicyForm({
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="terminationDate">Fecha de terminación (MM/DD/AAAA)</Label>
-            <Input
+            <USDateInput
               id="terminationDate"
               name="terminationDate"
-              type="date"
               defaultValue={values.terminationDate ?? ""}
               aria-invalid={!!state?.fieldErrors?.terminationDate}
               aria-describedby={state?.fieldErrors?.terminationDate ? "terminationDate-error" : undefined}
@@ -281,10 +280,9 @@ export function PolicyForm({
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="nextPaymentDueDate">Próximo pago (MM/DD/AAAA)</Label>
-            <Input
+            <USDateInput
               id="nextPaymentDueDate"
               name="nextPaymentDueDate"
-              type="date"
               defaultValue={values.nextPaymentDueDate ?? ""}
             />
           </div>

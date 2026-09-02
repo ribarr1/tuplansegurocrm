@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
-import { addPolicyMember, removePolicyMember } from "@/services/policies.service";
+import { addPolicyMember, removePolicyMember, linkPolicyToHousehold } from "@/services/policies.service";
 import { autoGenerateCurrentPeriodExpectation } from "@/services/commission-rules.service";
 import { AppError } from "@/services/errors";
 
@@ -59,4 +59,39 @@ export async function removePolicyMemberAction(
     if (error instanceof AppError) return { error: error.message };
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
   }
+}
+
+export type LinkHouseholdFormState =
+  | { error?: string; fieldErrors?: Record<string, string>; success?: true }
+  | undefined;
+
+// Hallazgo #17 de UAT (Fase 019.8): repara Policy.householdId cuando
+// quedó null (ej. el hogar se creó DESPUÉS de la póliza) — nunca
+// agrega miembros automáticamente, solo habilita el universo de
+// candidatos elegibles para "+ Agregar miembro".
+export async function linkPolicyToHouseholdAction(
+  policyId: string,
+  _prevState: LinkHouseholdFormState,
+  formData: FormData
+): Promise<LinkHouseholdFormState> {
+  const actor = await requireSessionUser();
+  const householdId = String(formData.get("householdId") ?? "");
+
+  try {
+    await linkPolicyToHousehold(actor, policyId, householdId);
+  } catch (error) {
+    if (error instanceof AppError) {
+      if (error.code === "VALIDATION_ERROR") {
+        const sep = error.message.indexOf(": ");
+        if (sep > 0) {
+          return { fieldErrors: { [error.message.slice(0, sep)]: error.message.slice(sep + 2) } };
+        }
+      }
+      return { error: error.message };
+    }
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+
+  revalidatePath(`/policies/${policyId}`);
+  return { success: true };
 }

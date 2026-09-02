@@ -25,9 +25,14 @@ Notas de seguridad específicas del proyecto. No es una política general — so
 - **El Proxy (`src/proxy.ts`) hace solo una verificación optimista** (existencia de cookie, sin tocar la base de datos) para redirigir rápido a `/login` — la verificación real (sesión válida + `isActive`) ocurre siempre en `requireUser()`/`requireRole()` dentro de la página o Route Handler. Nunca depender solo del Proxy para proteger datos sensibles.
 - **Matriz de roles inicial:** `ADMIN` (acceso total), `AGENT` y `ASSISTANT` (clientes, hogares, pólizas, tareas, cumpleaños; acceso financiero/salud a definir por regla específica cuando se construyan esos módulos). Reglas granulares por módulo se implementan cuando cada módulo se construya, no de forma anticipada. **Excepción explícita desde Fase 016:** Comisiones es el único módulo donde ASSISTANT no tiene ningún acceso (ni lectura ni escritura) — ver sección "Comisiones — Fase 016" más abajo.
 
-## Información médica y financiera — acceso futuro
+## Medicamentos y proveedores/médicos preferidos (`PersonMedication`/`PersonProvider`) — Fase 019.8
 
-`PersonProvider`, `PersonMedication` requieren autorización server-side cuando sus módulos se construyan — nunca deben quedar accesibles solo porque alguien conozca la URL. Con Auth ya implementado (`requireUser()`/`requireRole()` disponibles), cada endpoint/Server Action de esos módulos debe usarlos explícitamente. `CommissionExpectation`/`CommissionPayment` ya se implementaron en Fase 016 — ver esa sección para las reglas reales.
+Clasificación: información operacional de salud, más sensible que el resto del CRM (el CRM no es un sistema clínico).
+
+- **Autorización: `canEditPerson`** (misma regla que editar cualquier otro dato de un contacto — ADMIN/ASSISTANT sin restricción de asignación, AGENT solo si tiene acceso al contacto), aplicada tanto a lectura como a escritura en `health-records.service.ts`. Deliberadamente más estricta que ver el perfil básico de un contacto (Fase 008, abierto a cualquier usuario activo) — se decidió que incluso LEER esta información debiera seguir la regla de asignación, no solo escribirla.
+- **Viven en `Person`, nunca en `Policy`.** Una persona puede cambiar de póliza y su historial de medicamentos/proveedores debe permanecer — nunca se consultan ni se muestran desde el contexto de una `Policy`.
+- **Nunca se exponen fuera de la sección "Salud" del perfil de contacto** — no aparecen en tablas generales de contactos, el Dashboard, resultados de búsqueda global, ni notificaciones/resúmenes automáticos (mismo principio ya aplicado a `HealthPolicyDetail`).
+- **`CommissionExpectation`/`CommissionPayment` ya se implementaron en Fase 016 — ver esa sección para las reglas reales.**
 
 ## `HealthPolicyDetail` — Fase 013
 

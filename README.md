@@ -194,6 +194,10 @@ Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáti
 - Nunca aparece en listados generales de pólizas — solo se consulta explícitamente desde el detalle de una póliza de Salud.
 - **Tipo de cobertura**: cada póliza de Salud se clasifica explícitamente como Marketplace o Privada (`Policy.healthCoverageSource`) al crearla — nunca se infiere del nombre de la compañía, porque un mismo carrier puede vender ambos tipos.
 
+### Medicamentos y proveedores/médicos preferidos
+
+Desde la tab "Salud" de un contacto (siempre visible, incluso sin pólizas de Salud): "+ Agregar medicamento" (nombre obligatorio, dosis/frecuencia/notas opcionales) y "+ Agregar proveedor" (tipo PCP/Especialista/Otro, nombre obligatorio, especialidad/teléfono/organización/notas opcionales). Viven en `Person`, nunca en `Policy` — persisten aunque el cliente cambie de póliza. "Eliminar" un medicamento lo desactiva (conserva el historial); "Eliminar" un proveedor sí lo borra. Mismo control de acceso que editar cualquier otro dato del contacto (ver [docs/SECURITY.md](docs/SECURITY.md)). Catálogo de medicamentos/posologías queda explícitamente diferido — V1 es manual.
+
 ### Documentos de póliza
 
 Desde el detalle de una póliza, sección "Documentos": subir/ver/descargar/eliminar archivos (resumen del plan, brochure, listado de medicamentos, directorio de proveedores, tarjeta/ID, solicitud, otro).

@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { getPolicyMembersDetailed, getEligibleHouseholdMembersForPolicy } from "@/services/policies.service";
+import {
+  getPolicyMembersDetailed,
+  getEligibleHouseholdMembersForPolicy,
+  getHouseholdLinkCandidates,
+} from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +11,7 @@ import { POLICY_MEMBER_ROLE_LABELS, HOUSEHOLD_MEMBER_ROLE_LABELS } from "@/lib/l
 import type { HouseholdMemberRole } from "@/generated/prisma/client";
 import { AddPolicyMemberDialog } from "./add-policy-member-dialog";
 import { RemovePolicyMemberButton } from "./remove-policy-member-button";
+import { LinkHouseholdForm } from "./link-household-form";
 
 // Hallazgo #12 de UAT (Fase 019.7): agregar/quitar miembros de una
 // póliza YA existente, sin recrearla. HouseholdMember y PolicyMember
@@ -21,9 +26,10 @@ export async function PolicyMembersSection({
   policyId: string;
   holderIsCovered: boolean;
 }) {
-  const [members, candidates] = await Promise.all([
+  const [members, candidates, householdLinkCandidates] = await Promise.all([
     getPolicyMembersDetailed(actor, policyId),
     getEligibleHouseholdMembersForPolicy(actor, policyId),
+    getHouseholdLinkCandidates(actor, policyId),
   ]);
 
   return (
@@ -33,6 +39,7 @@ export async function PolicyMembersSection({
         <AddPolicyMemberDialog policyId={policyId} candidates={candidates} />
       </CardHeader>
       <CardContent className="flex flex-col gap-2 text-sm">
+        <LinkHouseholdForm policyId={policyId} candidates={householdLinkCandidates} />
         {!holderIsCovered && (
           <p className="text-xs text-muted-foreground">El titular no está cubierto por esta póliza.</p>
         )}
