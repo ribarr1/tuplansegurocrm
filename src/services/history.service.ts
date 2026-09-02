@@ -183,3 +183,27 @@ export async function getLastActivityForPerson(actor: AuthorizedUser, rawPersonI
   const page = await getContactTimeline(actor, rawPersonId, { limit: 1 });
   return page.events[0] ?? null;
 }
+
+// "Ver actividad" de un usuario — Fase 020 (§2). ADMIN only: ver la
+// actividad de otro usuario es en sí una operación administrativa,
+// nunca abierta como el resto del historial.
+export async function getUserActivity(
+  actor: AuthorizedUser,
+  targetUserId: string,
+  options?: { cursor?: string; limit?: number }
+): Promise<HistoryPage> {
+  if (actor.role !== "ADMIN") {
+    throw new AppError("FORBIDDEN", "Solo un administrador puede ver la actividad de un usuario.");
+  }
+  const limit = resolvePageSize(options?.limit);
+  const rows = await prisma.auditEvent.findMany({
+    where: { actorUserId: targetUserId },
+    select: historyEventSelect,
+    orderBy: { createdAt: "desc" },
+    take: limit + 1,
+    ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+  });
+  const hasMore = rows.length > limit;
+  const events = hasMore ? rows.slice(0, limit) : rows;
+  return { events, nextCursor: hasMore ? events[events.length - 1].id : null };
+}

@@ -89,9 +89,14 @@ export default async function PoliciesPage({
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Pólizas</h2>
-        <Button nativeButton={false} render={<Link href="/policies/new" />}>
-          + Nueva póliza
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" nativeButton={false} render={<a href="/api/export/policies" />}>
+            Exportar CSV
+          </Button>
+          <Button nativeButton={false} render={<Link href="/policies/new" />}>
+            + Nueva póliza
+          </Button>
+        </div>
       </div>
 
       <form className="flex flex-wrap items-end gap-3" method="GET">

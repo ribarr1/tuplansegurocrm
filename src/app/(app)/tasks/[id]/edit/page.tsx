@@ -5,14 +5,9 @@ import { getTaskById } from "@/services/tasks.service";
 import { listActiveAgents } from "@/services/users.service";
 import { AppError } from "@/services/errors";
 import { Button } from "@/components/ui/button";
+import { toBusinessDateTimeLocalString } from "@/lib/business-time";
 import { EditTaskForm } from "../edit-task-form";
 import { updateTaskAction } from "../../actions";
-
-function toDatetimeLocal(date: Date | null): string | undefined {
-  if (!date) return undefined;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 export default async function EditTaskPage({
   params,
@@ -55,7 +50,7 @@ export default async function EditTaskPage({
           description: task.description ?? undefined,
           status: task.status,
           priority: task.priority,
-          dueAt: toDatetimeLocal(task.dueAt),
+          dueAt: toBusinessDateTimeLocalString(task.dueAt) || undefined,
           assignedToId: task.assignedTo?.id,
         }}
         showAssigneeSelect={showAssigneeSelect}

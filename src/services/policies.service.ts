@@ -14,6 +14,7 @@ import {
   policyMemberIdSchema,
   addPolicyMemberSchema,
   renewPolicySchema,
+  cancelPolicySchema,
 } from "@/schemas/policy.schema";
 import { Prisma } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
@@ -695,6 +696,67 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       });
     }
   });
+  return getPolicyById(actor, id);
+}
+
+// Cancelación guiada — Fase 020 (§4). Único cambio real: status ->
+// CANCELLED + terminationDate. NUNCA borra la Policy ni toca members/
+// documents/healthDetail/commissionExpectations/payments/notes — esas
+// relaciones ya son independientes en el schema, no requieren ninguna
+// acción explícita para "preservarse". `reason` (opcional) se guarda
+// en AuditEvent.metadata, nunca en Note ni en una columna nueva de
+// Policy — no existe un campo apropiado en el modelo actual y agregar
+// uno solo para esto no se justificó (ver docs/DECISIONS.md).
+export async function cancelPolicy(actor: AuthorizedUser, rawId: unknown, rawInput: unknown) {
+  const id = parseOrThrow(policyIdSchema, rawId);
+  const input = parseOrThrow(cancelPolicySchema, rawInput);
+
+  const existing = await prisma.policy.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      holderId: true,
+      householdId: true,
+      status: true,
+      effectiveDate: true,
+      terminationDate: true,
+      holder: { select: { assignedAgentId: true } },
+      members: { select: { person: { select: { assignedAgentId: true } } } },
+    },
+  });
+  if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
+  assertCanAccessPolicy(actor, [existing.holder, ...existing.members.map((m) => m.person)]);
+
+  if (existing.status === "CANCELLED") {
+    throw new AppError("VALIDATION_ERROR", "Esta póliza ya está cancelada.");
+  }
+  assertTerminationNotBeforeEffective(existing.effectiveDate, input.terminationDate);
+
+  const changes = buildDiff(
+    existing,
+    { status: "CANCELLED", terminationDate: input.terminationDate },
+    ["status", "terminationDate"]
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.policy.update({
+      where: { id },
+      data: { status: "CANCELLED", terminationDate: input.terminationDate },
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Policy",
+      entityId: id,
+      action: "POLICY_CANCEL",
+      policyId: id,
+      householdId: existing.householdId,
+      contactPersonId: existing.holderId,
+      summary: "Póliza cancelada",
+      changes,
+      metadata: input.reason ? { reason: input.reason } : undefined,
+    });
+  });
+
   return getPolicyById(actor, id);
 }
 

@@ -4,7 +4,7 @@ import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
 import { canEditPerson } from "@/services/people.service";
 import { canAccessPolicy } from "@/services/policies.service";
-import { getTodayBusinessRange } from "@/lib/business-time";
+import { getTodayBusinessRange, zonedTimeToUtc, getAppTimeZone } from "@/lib/business-time";
 import { personIdSchema } from "@/schemas/person.schema";
 import {
   taskIdSchema,
@@ -82,6 +82,21 @@ type TaskWithAccessData = Prisma.TaskGetPayload<{ select: typeof taskSelect }>;
 
 function isClosedStatus(status: string): status is (typeof TASK_CLOSED_STATUSES)[number] {
   return (TASK_CLOSED_STATUSES as readonly string[]).includes(status);
+}
+
+// "YYYY-MM-DDTHH:mm" (ya validado por task.schema.ts) -> instante UTC
+// real, interpretando esos componentes como hora de pared en
+// APP_TIME_ZONE (Fase 020, §5) — nunca la zona horaria del proceso
+// Node, que podía no coincidir con la del negocio.
+function resolveDueAt(raw: string | undefined): Date | undefined;
+function resolveDueAt(raw: string | null | undefined): Date | null | undefined;
+function resolveDueAt(raw: string | null | undefined): Date | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(raw);
+  if (!match) return undefined;
+  const [year, month, day, hour, minute] = match.slice(1).map(Number);
+  return zonedTimeToUtc(year, month, day, hour, minute, 0, getAppTimeZone());
 }
 
 // Derivado, nunca almacenado — ver docs/DECISIONS.md. Comparar dos
@@ -253,20 +268,31 @@ export async function createTask(actor: AuthorizedUser, rawInput: unknown) {
 
   const assignedToId = await resolveAssignedToIdForCreate(actor, input.assignedToId);
 
-  return prisma.$transaction(async (tx) => {
+  const createdId = await prisma.$transaction(async (tx) => {
+    // select mínimo dentro de la transacción interactiva a propósito:
+    // taskSelect trae varias relaciones anidadas (person, policy con
+    // product/holder/members, assignedTo, createdBy) — Prisma resuelve
+    // esas relaciones con sub-consultas que, dentro de una transacción
+    // interactiva (una sola conexión pg pinneada), pueden dispararse de
+    // forma concurrente y producir la advertencia real de pg "Calling
+    // client.query() when the client is already executing a query"
+    // (mismo hallazgo de Fase 019.6, aplicado aquí a un write con
+    // select multi-relación en vez de un $transaction([...]) en forma
+    // de arreglo). La forma completa con taskSelect se relee después de
+    // confirmar la transacción — ver docs/DECISIONS.md, Fase 020 §6.
     const created = await tx.task.create({
       data: {
         title: input.title,
         description: input.description,
         status: input.status,
         priority: input.priority,
-        dueAt: input.dueAt,
+        dueAt: resolveDueAt(input.dueAt),
         personId: input.personId,
         policyId: input.policyId,
         assignedToId,
         createdById: actor.id,
       },
-      select: taskSelect,
+      select: { id: true, title: true },
     });
     await recordAuditEvent(tx, {
       actor,
@@ -277,8 +303,10 @@ export async function createTask(actor: AuthorizedUser, rawInput: unknown) {
       policyId: input.policyId ?? null,
       summary: `Tarea creada: ${created.title}`,
     });
-    return created;
+    return created.id;
   });
+  const created = await prisma.task.findUniqueOrThrow({ where: { id: createdId }, select: taskSelect });
+  return created;
 }
 
 export async function updateTask(actor: AuthorizedUser, rawId: unknown, rawInput: unknown) {
@@ -300,12 +328,17 @@ export async function updateTask(actor: AuthorizedUser, rawId: unknown, rawInput
   }
 
   const resolvedAssignedToId = await resolveAssignedToIdForUpdate(actor, input.assignedToId);
+  // Resuelto UNA sola vez y reutilizado tanto para `data` (lo que se
+  // guarda) como para el diff de auditoría — nunca comparar el string
+  // crudo "YYYY-MM-DDTHH:mm" contra el Date ya existente, formatos
+  // distintos que nunca coincidirían aunque el valor real no cambiara.
+  const resolvedDueAt = input.dueAt !== undefined ? resolveDueAt(input.dueAt) : undefined;
 
   const data: Prisma.TaskUncheckedUpdateInput = {};
   if (input.title !== undefined) data.title = input.title;
   if (input.description !== undefined) data.description = input.description;
   if (input.priority !== undefined) data.priority = input.priority;
-  if (input.dueAt !== undefined) data.dueAt = input.dueAt;
+  if (resolvedDueAt !== undefined) data.dueAt = resolvedDueAt;
   if (resolvedAssignedToId !== undefined) data.assignedToId = resolvedAssignedToId;
   if (input.status !== undefined) {
     data.status = input.status;
@@ -314,13 +347,19 @@ export async function updateTask(actor: AuthorizedUser, rawId: unknown, rawInput
 
   const changes = buildDiff(
     existing,
-    { ...input, ...(resolvedAssignedToId !== undefined ? { assignedToId: resolvedAssignedToId } : {}) },
+    {
+      ...input,
+      ...(resolvedDueAt !== undefined ? { dueAt: resolvedDueAt } : {}),
+      ...(resolvedAssignedToId !== undefined ? { assignedToId: resolvedAssignedToId } : {}),
+    },
     TASK_AUDIT_FIELDS
   );
   const isReopeningNow = input.status !== undefined && isClosedStatus(existing.status) && !isClosedStatus(input.status);
 
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.task.update({ where: { id }, data, select: taskSelect });
+  await prisma.$transaction(async (tx) => {
+    // select mínimo dentro de la transacción — ver el comentario
+    // equivalente en createTask (Fase 020 §6).
+    const updated = await tx.task.update({ where: { id }, data, select: { id: true, title: true } });
     if (changes) {
       await recordAuditEvent(tx, {
         actor,
@@ -333,8 +372,8 @@ export async function updateTask(actor: AuthorizedUser, rawId: unknown, rawInput
         changes,
       });
     }
-    return updated;
   });
+  return prisma.task.findUniqueOrThrow({ where: { id }, select: taskSelect });
 }
 
 export async function completeTask(actor: AuthorizedUser, rawId: unknown) {
@@ -343,11 +382,11 @@ export async function completeTask(actor: AuthorizedUser, rawId: unknown) {
   if (!existing) throw new AppError("NOT_FOUND", "Tarea no encontrada.");
   assertCanAccessTask(actor, existing);
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const updated = await tx.task.update({
       where: { id },
       data: { status: "COMPLETED", completedAt: new Date() },
-      select: taskSelect,
+      select: { id: true, title: true },
     });
     await recordAuditEvent(tx, {
       actor,
@@ -358,8 +397,8 @@ export async function completeTask(actor: AuthorizedUser, rawId: unknown) {
       policyId: existing.policy?.id ?? null,
       summary: `Tarea completada: ${updated.title}`,
     });
-    return updated;
   });
+  return prisma.task.findUniqueOrThrow({ where: { id }, select: taskSelect });
 }
 
 export async function cancelTask(actor: AuthorizedUser, rawId: unknown) {
@@ -368,11 +407,11 @@ export async function cancelTask(actor: AuthorizedUser, rawId: unknown) {
   if (!existing) throw new AppError("NOT_FOUND", "Tarea no encontrada.");
   assertCanAccessTask(actor, existing);
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const updated = await tx.task.update({
       where: { id },
       data: { status: "CANCELLED", completedAt: null },
-      select: taskSelect,
+      select: { id: true, title: true },
     });
     await recordAuditEvent(tx, {
       actor,
@@ -383,6 +422,6 @@ export async function cancelTask(actor: AuthorizedUser, rawId: unknown) {
       policyId: existing.policy?.id ?? null,
       summary: `Tarea cancelada: ${updated.title}`,
     });
-    return updated;
   });
+  return prisma.task.findUniqueOrThrow({ where: { id }, select: taskSelect });
 }

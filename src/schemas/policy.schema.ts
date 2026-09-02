@@ -181,6 +181,17 @@ export const renewPolicySchema = z
   });
 export type RenewPolicyInput = z.infer<typeof renewPolicySchema>;
 
+// Cancelación guiada — Fase 020 (§4). terminationDate siempre
+// requerida (a diferencia de updatePolicySchema, donde es opcional);
+// reason es opcional y NUNCA se guarda en una columna nueva de Policy
+// — vive en AuditEvent.metadata (ver policies.service.ts::cancelPolicy
+// y docs/DECISIONS.md).
+export const cancelPolicySchema = z.object({
+  terminationDate: z.coerce.date({ error: "Selecciona una fecha de terminación válida." }),
+  reason: z.string().trim().max(500).optional(),
+});
+export type CancelPolicyInput = z.infer<typeof cancelPolicySchema>;
+
 export const listActiveProductsQuerySchema = z.object({
   policyType: optionalEnumFilter(POLICY_TYPE_VALUES),
   carrierId: optionalUuidFilter(),

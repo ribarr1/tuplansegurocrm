@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
-import { createPolicy, updatePolicy, renewPolicy } from "@/services/policies.service";
+import { createPolicy, updatePolicy, renewPolicy, cancelPolicy } from "@/services/policies.service";
+import { AppError } from "@/services/errors";
 import { autoGenerateCurrentPeriodExpectation } from "@/services/commission-rules.service";
 import {
   formDataToCreatePolicyInput,
@@ -95,4 +96,39 @@ export async function updatePolicyAction(
   // conteos Activas/Pendientes del Dashboard.
   revalidatePath("/dashboard");
   redirect(`/policies/${id}`);
+}
+
+export type CancelPolicyFormState =
+  | { error?: string; fieldErrors?: Record<string, string>; success?: true }
+  | undefined;
+
+// Cancelación guiada — Fase 020 (§4). Mismo patrón useActionState +
+// diálogo que AddPolicyMemberDialog (se cierra solo al tener éxito) —
+// la póliza se queda en la misma página, solo cambia su estado.
+export async function cancelPolicyAction(
+  policyId: string,
+  _prevState: CancelPolicyFormState,
+  formData: FormData
+): Promise<CancelPolicyFormState> {
+  const actor = await requireSessionUser();
+  try {
+    await cancelPolicy(actor, policyId, {
+      terminationDate: formData.get("terminationDate"),
+      reason: formData.get("reason") || undefined,
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      if (error.code === "VALIDATION_ERROR") {
+        const sep = error.message.indexOf(": ");
+        if (sep > 0) {
+          return { fieldErrors: { [error.message.slice(0, sep)]: error.message.slice(sep + 2) } };
+        }
+      }
+      return { error: error.message };
+    }
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  revalidatePath(`/policies/${policyId}`);
+  revalidatePath("/dashboard");
+  return { success: true };
 }

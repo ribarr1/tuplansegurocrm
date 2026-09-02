@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { USDateTimeInput } from "@/components/ui/us-datetime-input";
 import { TASK_PRIORITY_VALUES } from "@/schemas/task.schema";
 import { TASK_PRIORITY_LABELS } from "@/lib/labels";
 import type { TaskFormState } from "./form-helpers";
@@ -82,13 +83,8 @@ export function TaskForm({
           </select>
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="dueAt">Vencimiento (MM/DD/AAAA)</Label>
-          <Input
-            id="dueAt"
-            name="dueAt"
-            type="datetime-local"
-            defaultValue={values.dueAt ?? ""}
-          />
+          <Label htmlFor="dueAt">Vencimiento</Label>
+          <USDateTimeInput id="dueAt" name="dueAt" defaultValue={values.dueAt ?? ""} />
           {state?.fieldErrors?.dueAt && (
             <p className="text-sm text-destructive">{state.fieldErrors.dueAt}</p>
           )}

@@ -57,7 +57,10 @@ export default async function UsersPage() {
                   </Badge>
                 </TableCell>
                 <TableCell>{formatDate(user.createdAt)}</TableCell>
-                <TableCell className="text-right">
+                <TableCell className="flex justify-end gap-2 text-right">
+                  <Link href={`/settings/users/${user.id}/activity`} className="text-sm underline">
+                    Ver actividad
+                  </Link>
                   <ToggleUserActiveButton userId={user.id} isActive={user.isActive} />
                 </TableCell>
               </TableRow>

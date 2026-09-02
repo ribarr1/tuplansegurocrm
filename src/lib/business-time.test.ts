@@ -9,6 +9,9 @@ import {
   formatDateUS,
   formatPeriodUS,
   formatMonthDayUS,
+  getBusinessDateTimeParts,
+  toBusinessDateTimeLocalString,
+  zonedTimeToUtc,
 } from "@/lib/business-time";
 
 const ORIGINAL_TZ = process.env.APP_TIME_ZONE;
@@ -94,6 +97,70 @@ describe("business-time", () => {
     it("V) formatMonthDayUS produce MM/DD para una ocurrencia de cumpleaños (sin año)", () => {
       expect(formatMonthDayUS(3, 15)).toBe("03/15");
       expect(formatMonthDayUS(12, 1)).toBe("12/01");
+    });
+  });
+
+  // Fase 020 (§5): Task.dueAt es DateTime, no date-only — USDateTimeInput
+  // necesita componentes de hora/minuto correctos en APP_TIME_ZONE (nunca
+  // la zona del proceso Node) tanto para precargar el formulario de
+  // edición como para el round-trip completo string -> Date -> string.
+  describe("hora de pared para Task.dueAt (Fase 020)", () => {
+    it("getBusinessDateTimeParts extrae año/mes/día/hora/minuto en la zona de negocio, no en la del proceso", () => {
+      // 2026-09-01T22:06:00Z = 2026-09-01 17:06 en America/Chicago (CDT, UTC-5).
+      const instant = new Date("2026-09-01T22:06:00.000Z");
+      expect(getBusinessDateTimeParts(instant, "America/Chicago")).toEqual({
+        year: 2026,
+        month: 9,
+        day: 1,
+        hour: 17,
+        minute: 6,
+      });
+    });
+
+    it("getBusinessDateTimeParts: mediodía (12:00 PM) en la zona de negocio", () => {
+      // 2026-09-01T17:00:00Z = 2026-09-01 12:00 en America/Chicago (CDT, UTC-5).
+      const instant = new Date("2026-09-01T17:00:00.000Z");
+      expect(getBusinessDateTimeParts(instant, "America/Chicago").hour).toBe(12);
+    });
+
+    it("getBusinessDateTimeParts: medianoche (12:00 AM) en la zona de negocio", () => {
+      // 2026-09-01T05:00:00Z = 2026-09-01 00:00 en America/Chicago (CDT, UTC-5).
+      const instant = new Date("2026-09-01T05:00:00.000Z");
+      const parts = getBusinessDateTimeParts(instant, "America/Chicago");
+      expect(parts.hour).toBe(0);
+      expect(parts.day).toBe(1);
+    });
+
+    it("toBusinessDateTimeLocalString produce 'YYYY-MM-DDTHH:mm' en la zona de negocio", () => {
+      const instant = new Date("2026-09-01T22:06:00.000Z");
+      expect(toBusinessDateTimeLocalString(instant, "America/Chicago")).toBe("2026-09-01T17:06");
+    });
+
+    it("toBusinessDateTimeLocalString retorna '' para null/undefined", () => {
+      expect(toBusinessDateTimeLocalString(null)).toBe("");
+      expect(toBusinessDateTimeLocalString(undefined)).toBe("");
+    });
+
+    it("toBusinessDateTimeLocalString es consistente entre zonas horarias distintas (mismo instante, distinta hora de pared)", () => {
+      const instant = new Date("2026-01-15T12:00:00.000Z");
+      expect(toBusinessDateTimeLocalString(instant, "America/Chicago")).toBe("2026-01-15T06:00");
+      expect(toBusinessDateTimeLocalString(instant, "Asia/Tokyo")).toBe("2026-01-15T21:00");
+    });
+
+    it("toBusinessDateTimeLocalString(instante) coincide con la hora de pared esperada para un instante conocido", () => {
+      const known = new Date("2026-09-15T20:30:00.000Z"); // 15:30 CDT (UTC-5)
+      expect(toBusinessDateTimeLocalString(known, "America/Chicago")).toBe("2026-09-15T15:30");
+    });
+
+    it("zonedTimeToUtc y toBusinessDateTimeLocalString son inversas (round-trip completo, tal como lo usa resolveDueAt en tasks.service)", () => {
+      const utc = zonedTimeToUtc(2026, 9, 15, 15, 30, 0, "America/Chicago");
+      expect(toBusinessDateTimeLocalString(utc, "America/Chicago")).toBe("2026-09-15T15:30");
+    });
+
+    it("zonedTimeToUtc respeta el cambio de horario (DST) al construir el mismo horario de pared en enero (CST, UTC-6)", () => {
+      const utc = zonedTimeToUtc(2026, 1, 15, 15, 30, 0, "America/Chicago");
+      expect(toBusinessDateTimeLocalString(utc, "America/Chicago")).toBe("2026-01-15T15:30");
+      expect(utc.toISOString()).toBe("2026-01-15T21:30:00.000Z");
     });
   });
 });

@@ -14,6 +14,7 @@ import {
   linkPolicyToHousehold,
   renewPolicy,
   listExpiringPolicies,
+  cancelPolicy,
 } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -1011,5 +1012,106 @@ describe("policies.service", () => {
 
     const expiring = await listExpiringPolicies(admin, 30);
     expect(expiring.some((p) => p.id === policy.id)).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------
+  // Cancelación guiada — Fase 020 (§4).
+  // ---------------------------------------------------------------------
+
+  it("cancelPolicy cambia status a CANCELLED y guarda terminationDate, sin borrar la póliza", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+
+    const cancelled = await cancelPolicy(admin, policy.id, {
+      terminationDate: "2026-06-15",
+      reason: "Cliente cambió de proveedor",
+    });
+    expect(cancelled.status).toBe("CANCELLED");
+    expect(cancelled.terminationDate?.toISOString().slice(0, 10)).toBe("2026-06-15");
+
+    const stillThere = await prisma.policy.findUnique({ where: { id: policy.id } });
+    expect(stillThere).not.toBeNull();
+  });
+
+  it("cancelPolicy preserva members/documents/notes (nunca los toca)", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    const household = await makeHouseholdWithMembers(holder.id, [{ personId: spouse.id, role: "SPOUSE" }]);
+    void household;
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        coveredMembers: [{ personId: spouse.id, role: "SPOUSE" }],
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+
+    await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+    const members = await prisma.policyMember.findMany({ where: { policyId: policy.id } });
+    expect(members).toHaveLength(2);
+  });
+
+  it("cancelPolicy rechaza cancelar una póliza ya CANCELLED", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+    await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+    await expect(cancelPolicy(admin, policy.id, { terminationDate: "2026-07-01" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("cancelPolicy rechaza terminationDate anterior a effectiveDate", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        effectiveDate: new Date("2026-06-01"),
+      })
+    );
+    await expect(cancelPolicy(admin, policy.id, { terminationDate: "2026-01-01" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("cancelPolicy audita POLICY_CANCEL con el motivo en metadata, nunca en Note", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+    await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15", reason: "Ajuste de presupuesto" });
+
+    const event = await prisma.auditEvent.findFirst({
+      where: { policyId: policy.id, action: "POLICY_CANCEL" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(event?.metadata).toMatchObject({ reason: "Ajuste de presupuesto" });
+
+    const notes = await prisma.note.findMany({ where: { policyId: policy.id } });
+    expect(notes).toHaveLength(0);
   });
 });

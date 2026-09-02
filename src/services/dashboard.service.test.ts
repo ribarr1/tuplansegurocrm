@@ -5,7 +5,7 @@ import { createTask } from "@/services/tasks.service";
 import { createPolicy } from "@/services/policies.service";
 import { createCommissionExpectation, addCommissionPayment } from "@/services/commissions.service";
 import { updatePremiumTracking } from "@/services/premiums.service";
-import { getTodayBusinessRange } from "@/lib/business-time";
+import { getTodayBusinessRange, toBusinessDateTimeLocalString } from "@/lib/business-time";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -167,7 +167,9 @@ describe("dashboard.service", () => {
     const before = await getDashboard(admin);
     const { start } = getTodayBusinessRange();
     const dueAt = new Date(start.getTime() + 60 * 60 * 1000);
-    trackTask(await createTask(admin, { title: uniqueName("Tarea hoy"), dueAt: dueAt.toISOString() }));
+    trackTask(
+      await createTask(admin, { title: uniqueName("Tarea hoy"), dueAt: toBusinessDateTimeLocalString(dueAt) })
+    );
     const after = await getDashboard(admin);
     expect(after.tasks.todayCount).toBe(before.tasks.todayCount + 1);
   });
@@ -176,7 +178,7 @@ describe("dashboard.service", () => {
     const before = await getDashboard(admin);
     const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
     trackTask(
-      await createTask(admin, { title: uniqueName("Tarea vencida"), dueAt: past.toISOString() })
+      await createTask(admin, { title: uniqueName("Tarea vencida"), dueAt: toBusinessDateTimeLocalString(past) })
     );
     const after = await getDashboard(admin);
     expect(after.tasks.overdueCount).toBe(before.tasks.overdueCount + 1);
@@ -186,7 +188,10 @@ describe("dashboard.service", () => {
     const before = await getDashboard(admin);
     const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const task = trackTask(
-      await createTask(admin, { title: uniqueName("Tarea completada vencida"), dueAt: past.toISOString() })
+      await createTask(admin, {
+        title: uniqueName("Tarea completada vencida"),
+        dueAt: toBusinessDateTimeLocalString(past),
+      })
     );
     await prisma.task.update({ where: { id: task.id }, data: { status: "COMPLETED" } });
     const after = await getDashboard(admin);
@@ -200,14 +205,14 @@ describe("dashboard.service", () => {
       await createTask(admin, {
         title: uniqueName("Urgente futura"),
         priority: "URGENT",
-        dueAt: future.toISOString(),
+        dueAt: toBusinessDateTimeLocalString(future),
       })
     );
     const normalOverdue = trackTask(
       await createTask(admin, {
         title: uniqueName("Normal vencida"),
         priority: "NORMAL",
-        dueAt: past.toISOString(),
+        dueAt: toBusinessDateTimeLocalString(past),
       })
     );
     const result = await getDashboard(admin);
@@ -434,7 +439,7 @@ describe("dashboard.service", () => {
     const { start } = getTodayBusinessRange();
     const before = await getDashboard(admin);
     trackTask(
-      await createTask(admin, { title: uniqueName("Tarea borde"), dueAt: start.toISOString() })
+      await createTask(admin, { title: uniqueName("Tarea borde"), dueAt: toBusinessDateTimeLocalString(start) })
     );
     const after = await getDashboard(admin);
     expect(after.tasks.todayCount).toBe(before.tasks.todayCount + 1);

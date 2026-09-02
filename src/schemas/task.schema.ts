@@ -32,13 +32,35 @@ export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 
 const titleSchema = z.string().trim().min(1, "El título es requerido.").max(200);
 
-// datetime-local del navegador ("2026-08-31T14:30", sin offset) — el
-// constructor de Date de JS interpreta ese formato como hora LOCAL del
-// proceso que lo evalúa (a diferencia de una fecha sin "T", que se
-// interpreta como UTC). Como el servidor corre en una sola zona
-// horaria para esta V1 (ver docs/DECISIONS.md), z.coerce.date() ya
-// hace la conversión correcta sin lógica adicional.
-const dueAtCreateSchema = z.coerce.date().optional();
+// "YYYY-MM-DDTHH:mm" (24h, SIN offset de zona horaria) — mismo formato
+// que ya producía <input type="datetime-local">, ahora producido por
+// USDateTimeInput (Fase 020, §5). Este schema solo valida el FORMATO y
+// que sea una fecha/hora de calendario real — la conversión a un
+// instante UTC real se hace en tasks.service.ts vía zonedTimeToUtc
+// (business-time.ts), interpretando el string explícitamente como hora
+// de pared en APP_TIME_ZONE. Nunca se hace aquí: business-time.ts
+// depende de "server-only" y este schema se importa también desde
+// componentes cliente (para TASK_STATUS_VALUES/TASK_PRIORITY_VALUES),
+// así que no puede arrastrar esa dependencia.
+const LOCAL_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
+
+function isValidLocalDateTime(value: string): boolean {
+  const match = LOCAL_DATETIME_PATTERN.exec(value);
+  if (!match) return false;
+  const [, year, month, day, hour, minute] = match.map(Number) as unknown as number[];
+  if (month < 1 || month > 12) return false;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) return false;
+  if (hour < 0 || hour > 23) return false;
+  if (minute < 0 || minute > 59) return false;
+  return true;
+}
+
+const dueAtCreateSchema = z
+  .string()
+  .refine((v) => v.trim() === "" || isValidLocalDateTime(v.trim()), "Fecha/hora inválida.")
+  .transform((v) => (v.trim() === "" ? undefined : v.trim()))
+  .optional();
 
 function nullableDueAt() {
   return z
@@ -46,12 +68,11 @@ function nullableDueAt() {
     .transform((v, ctx) => {
       const trimmed = v.trim();
       if (trimmed === "") return null;
-      const date = new Date(trimmed);
-      if (Number.isNaN(date.getTime())) {
-        ctx.addIssue({ code: "custom", message: "Fecha inválida." });
+      if (!isValidLocalDateTime(trimmed)) {
+        ctx.addIssue({ code: "custom", message: "Fecha/hora inválida." });
         return z.NEVER;
       }
-      return date;
+      return trimmed;
     })
     .optional();
 }

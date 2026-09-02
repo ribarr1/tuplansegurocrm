@@ -102,7 +102,9 @@ function policyInvolved(policy: {
   return [policy.holder, ...policy.members.map((m) => m.person)];
 }
 
-function agentCommissionAccessWhere(actor: AuthorizedUser): Prisma.CommissionExpectationWhereInput | null {
+// Exportada para que export.service.ts (Fase 020) reutilice
+// exactamente la misma regla de scoping en la exportación CSV.
+export function agentCommissionAccessWhere(actor: AuthorizedUser): Prisma.CommissionExpectationWhereInput | null {
   if (actor.role === "ADMIN") return null;
   return {
     policy: {

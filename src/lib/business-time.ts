@@ -63,7 +63,13 @@ function formatPartsMap(date: Date, options: Intl.DateTimeFormatOptions, timeZon
 //    de pared corresponde ahí.
 // 3. La diferencia entre ambas es el offset real de esa zona en esa
 //    fecha — se resta para corregir la adivinanza.
-function zonedTimeToUtc(
+// Exportada — Fase 020 (§5): USDateTimeInput necesita convertir la
+// hora de pared que el usuario escribió (interpretada como
+// APP_TIME_ZONE, nunca la zona del proceso Node) al instante UTC real
+// que se guarda en Task.dueAt. Antes de esta fase era una función
+// interna, solo usada para límites de día — ahora también se usa para
+// un instante arbitrario dentro del día.
+export function zonedTimeToUtc(
   year: number,
   month: number,
   day: number,
@@ -105,6 +111,36 @@ export function getBusinessDateParts(
 ): { year: number; month: number; day: number } {
   const map = formatPartsMap(date, { year: "numeric", month: "2-digit", day: "2-digit" }, timeZone);
   return { year: Number(map.year), month: Number(map.month), day: Number(map.day) };
+}
+
+// Igual que getBusinessDateParts, más hora/minuto — Fase 020 (§5):
+// precarga USDateTimeInput con la hora de pared real en APP_TIME_ZONE
+// (nunca UTC crudo ni la zona del proceso Node) al editar una Task
+// existente.
+export function getBusinessDateTimeParts(
+  date: Date,
+  timeZone: string = getAppTimeZone()
+): { year: number; month: number; day: number; hour: number; minute: number } {
+  const map = formatPartsMap(
+    date,
+    { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
+    timeZone
+  );
+  const hour = Number(map.hour) === 24 ? 0 : Number(map.hour);
+  return { year: Number(map.year), month: Number(map.month), day: Number(map.day), hour, minute: Number(map.minute) };
+}
+
+// String "YYYY-MM-DDTHH:mm" (24h) que representa la hora de pared en
+// APP_TIME_ZONE — el formato exacto que consume
+// combineUsDateTimeToIsoLocal en reversa (splitIsoLocalToUsDateTime,
+// src/lib/us-datetime.ts) para precargar el formulario de edición.
+export function toBusinessDateTimeLocalString(
+  date: Date | null | undefined,
+  timeZone: string = getAppTimeZone()
+): string {
+  if (!date) return "";
+  const { year, month, day, hour, minute } = getBusinessDateTimeParts(date, timeZone);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 export function startOfBusinessDay(

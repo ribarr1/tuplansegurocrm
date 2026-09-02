@@ -20,6 +20,7 @@ import { PremiumSection } from "./premium-section";
 import { PolicyDocumentsSection } from "./documents-section";
 import { CommissionRuleSection } from "./commission-rule-section";
 import { PolicyHistorySection } from "./history-section";
+import { CancelPolicyDialog } from "./cancel-policy-dialog";
 import { formatDateOnlyUS } from "@/lib/date-only";
 
 const formatDate = formatDateOnlyUS;
@@ -80,6 +81,7 @@ export default async function PolicyDetailPage({
           >
             Editar
           </Button>
+          {policy.status !== "CANCELLED" && <CancelPolicyDialog policyId={policy.id} />}
         </div>
       </div>
 
