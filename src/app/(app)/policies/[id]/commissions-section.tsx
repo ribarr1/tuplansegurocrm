@@ -8,16 +8,13 @@ import {
   COMMISSION_DERIVED_STATUS_LABELS,
   COMMISSION_DERIVED_STATUS_BADGE_VARIANT,
 } from "@/lib/labels";
+import { formatPeriodUS } from "@/lib/business-time";
 
 function formatMoney(amount: { toFixed: (n: number) => string }): string {
   return `$${amount.toFixed(2)}`;
 }
 
-function formatPeriod(date: Date): string {
-  return new Intl.DateTimeFormat("es-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(
-    date
-  );
-}
+const formatPeriod = formatPeriodUS;
 
 // Comisiones es FINANCIERO/RESTRINGIDO — este componente solo se
 // renderiza para ADMIN/AGENT (ver policies/[id]/page.tsx); ASSISTANT

@@ -4,11 +4,9 @@ import type { AuthorizedUser } from "@/lib/authorization";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { POLICY_STATUS_BADGE_VARIANT, POLICY_STATUS_LABELS, POLICY_TYPE_LABELS } from "@/lib/labels";
+import { formatDateOnlyUS } from "@/lib/date-only";
 
-function formatDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeZone: "UTC" }).format(date);
-}
+const formatDate = formatDateOnlyUS;
 
 // Una Policy puede tener a esta Person como titular, como miembro
 // cubierto, o ambas — se distingue visualmente sin duplicar la fila

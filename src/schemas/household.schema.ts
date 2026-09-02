@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { US_STATE_CODES } from "@/lib/us-states";
 
 // Valores reales de HouseholdMemberRole (prisma/schema.prisma).
 // Duplicado aquí como literales por la misma razón que
@@ -52,13 +53,22 @@ function nullableTrimmedString(max: number, label: string) {
     .optional();
 }
 
+// Hallazgo #15.4 de UAT (Fase 019.7): el estado debe venir de un
+// catálogo controlado (US_STATE_CODES, src/lib/us-states.ts) — nunca
+// un valor arbitrario tipo "Ill"/"ilinois". Antes solo se validaba el
+// formato (2 letras), lo que aceptaba abreviaciones inexistentes.
 const stateCodeSchema = z
   .string()
   .transform((v) => {
     const trimmed = v.trim().toUpperCase();
     return trimmed === "" ? null : trimmed;
   })
-  .pipe(z.union([z.null(), z.string().regex(/^[A-Z]{2}$/, "El estado debe ser de 2 letras (ej. IL, TX, FL).")]))
+  .pipe(
+    z.union([
+      z.null(),
+      z.enum(US_STATE_CODES, "Selecciona un estado válido del catálogo."),
+    ])
+  )
   .optional();
 
 const incomeAmountSchema = z

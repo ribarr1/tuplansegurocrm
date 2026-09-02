@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getDateOnlyParts, isLeapYear, effectiveBirthdayForYear } from "@/lib/date-only";
+import { getDateOnlyParts, isLeapYear, effectiveBirthdayForYear, formatDateOnlyUS } from "@/lib/date-only";
 
 describe("date-only", () => {
   it("getDateOnlyParts lee una columna DATE (medianoche UTC) sin desplazarse de día", () => {
@@ -36,5 +36,46 @@ describe("date-only", () => {
   it("effectiveBirthdayForYear no altera fechas que no son 29 de febrero", () => {
     expect(effectiveBirthdayForYear(9, 15, 2026)).toEqual({ month: 9, day: 15 });
     expect(effectiveBirthdayForYear(2, 28, 2026)).toEqual({ month: 2, day: 28 });
+  });
+
+  // V) formato MM/DD/YYYY para el CRM en EE. UU. (hallazgo adicional de
+  // UAT, Fase 019.7) — nunca DD/MM/YYYY ni un formato escrito.
+  it("V) formatDateOnlyUS produce MM/DD/YYYY, no DD/MM/YYYY", () => {
+    // 1 de septiembre de 2026 — si se leyera como DD/MM daría "01/09"
+    // (1 de septiembre en notación europea); en MM/DD debe ser "09/01".
+    expect(formatDateOnlyUS(new Date("2026-09-01T00:00:00.000Z"))).toBe("09/01/2026");
+  });
+
+  it("V) formatDateOnlyUS rellena con ceros mes y día de un solo dígito", () => {
+    expect(formatDateOnlyUS(new Date("2026-01-05T00:00:00.000Z"))).toBe("01/05/2026");
+  });
+
+  it("formatDateOnlyUS retorna '—' para null/undefined, nunca revienta", () => {
+    expect(formatDateOnlyUS(null)).toBe("—");
+    expect(formatDateOnlyUS(undefined)).toBe("—");
+  });
+
+  // X) sin desplazamiento de zona horaria — misma garantía que
+  // getDateOnlyParts, aplicada al formateo final visible al usuario.
+  it("X) formatDateOnlyUS no se desplaza de día sin importar la zona horaria del proceso", () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = "Pacific/Kiritimati"; // UTC+14, el offset positivo más extremo real
+      expect(formatDateOnlyUS(new Date("2026-01-01T00:00:00.000Z"))).toBe("01/01/2026");
+    } finally {
+      process.env.TZ = original;
+    }
+  });
+
+  // W) round-trip: un Date construido a partir de un string ISO
+  // "YYYY-MM-DD" (como lo produce <input type="date">) siempre da la
+  // misma fecha calendario al formatearse de vuelta con formatDateOnlyUS.
+  it("W) round-trip: 'YYYY-MM-DD' -> Date -> formatDateOnlyUS conserva el mismo día calendario", () => {
+    const isoDateOnly = "2026-12-25";
+    // new Date("YYYY-MM-DD") (sin componente de hora) se interpreta
+    // como medianoche UTC por la especificación ECMA-262 — mismo
+    // principio ya documentado para nextPaymentDueDate/effectiveDate.
+    const parsed = new Date(isoDateOnly);
+    expect(formatDateOnlyUS(parsed)).toBe("12/25/2026");
   });
 });

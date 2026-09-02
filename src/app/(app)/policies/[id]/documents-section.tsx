@@ -4,10 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { POLICY_DOCUMENT_TYPE_LABELS } from "@/lib/labels";
 import { UploadDocumentForm } from "./upload-document-form";
 import { DeleteDocumentButton } from "./delete-document-button";
+import { formatDateUS } from "@/lib/business-time";
 
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium" }).format(date);
-}
+const formatDate = formatDateUS;
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

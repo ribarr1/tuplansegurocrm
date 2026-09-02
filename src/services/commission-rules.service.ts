@@ -11,6 +11,7 @@ import {
 } from "@/schemas/commission-rule.schema";
 import { productIdSchema } from "@/schemas/product.schema";
 import { policyIdSchema } from "@/schemas/policy.schema";
+import { getTodayBusinessRange } from "@/lib/business-time";
 
 // ---------------------------------------------------------------------------
 // Reglas de comisión — Fase 019.5
@@ -198,13 +199,97 @@ export async function getApplicableRuleForPolicy(actor: AuthorizedUser, rawPolic
   return resolveApplicableRule(policy.id, policy.productId);
 }
 
-// Genera (o no) UNA CommissionExpectation para UNA póliza y UN período
-// explícito — nunca un rango abierto (evita "expectativas infinitas").
+type GenerationResult =
+  | { status: "CREATED"; expectationId: string }
+  | { status: "ALREADY_EXISTS"; expectationId: string }
+  | { status: "NO_RULE" }
+  | { status: "SKIPPED"; reason: string };
+
+// Núcleo sin autorización — usado tanto por la acción explícita
+// (generateExpectationForPeriod, ADMIN) como por la generación
+// automática (autoGenerateCurrentPeriodExpectation, disparada por el
+// propio sistema al activar una póliza, asignar una regla, agregar un
+// miembro o cambiar la prima — ver docs/DECISIONS.md). No verifica rol
+// del actor porque no siempre hay un actor "editando comisiones" en el
+// origen (ej. un AGENT agregando un PolicyMember) — la autorización de
+// ESA operación ya ocurrió en su propio servicio; esto es un efecto
+// secundario contable, no una acción que el usuario pide directamente.
+//
+// Nunca genera un rango abierto (evita "expectativas infinitas").
 // Idempotente vía el mismo constraint único (policyId, period) que ya
 // usa Comisiones (Fase 016): si ya existe una expectativa para ese
 // período, se deja intacta y se reporta, nunca se sobrescribe —
 // tampoco si la regla cambió desde entonces (una CommissionRule nueva
 // solo afecta generaciones futuras, nunca reescribe historial).
+async function generateExpectationCore(
+  policyId: string,
+  period: Date,
+  options?: { requireActiveStatus?: boolean }
+): Promise<GenerationResult> {
+  const policy = await prisma.policy.findUnique({
+    where: { id: policyId },
+    select: {
+      id: true,
+      productId: true,
+      premiumAmount: true,
+      effectiveDate: true,
+      status: true,
+      _count: { select: { members: true } },
+    },
+  });
+  if (!policy) return { status: "NO_RULE" };
+  if (options?.requireActiveStatus && policy.status !== "ACTIVE") {
+    return { status: "SKIPPED", reason: "POLICY_NOT_ACTIVE" };
+  }
+
+  const existing = await prisma.commissionExpectation.findUnique({
+    where: { policyId_period: { policyId: policy.id, period } },
+    select: { id: true },
+  });
+  if (existing) {
+    return { status: "ALREADY_EXISTS", expectationId: existing.id };
+  }
+
+  const rule = await resolveApplicableRule(policy.id, policy.productId);
+  if (!rule) {
+    return { status: "NO_RULE" };
+  }
+
+  const result = computeExpectedAmount(rule, policy, policy._count.members, period);
+  if ("skipped" in result) {
+    return { status: "SKIPPED", reason: result.reason };
+  }
+
+  try {
+    const created = await prisma.commissionExpectation.create({
+      data: {
+        policyId: policy.id,
+        period,
+        expectedAmount: result.amount,
+        calculatedAmount: result.amount,
+        generatedByRuleId: rule.id,
+      },
+      select: { id: true },
+    });
+    return { status: "CREATED", expectationId: created.id };
+  } catch (error) {
+    // Carrera: otra llamada (ej. dos disparadores automáticos casi
+    // simultáneos) ya creó la fila entre el findUnique y el create —
+    // el UNIQUE(policyId, period) lo protege a nivel de base de datos;
+    // se reporta como ya existente en vez de dejar escapar un P2002.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const raced = await prisma.commissionExpectation.findUnique({
+        where: { policyId_period: { policyId: policy.id, period } },
+        select: { id: true },
+      });
+      if (raced) return { status: "ALREADY_EXISTS", expectationId: raced.id };
+    }
+    throw error;
+  }
+}
+
+// Acción explícita del ADMIN ("Generar expectativa" en Policy Detail) —
+// requiere período elegido a mano y verifica acceso a la póliza.
 export async function generateExpectationForPeriod(actor: AuthorizedUser, rawInput: unknown) {
   assertAdminOnly(actor);
   const input = parseOrThrow(generateExpectationsSchema, rawInput);
@@ -213,42 +298,35 @@ export async function generateExpectationForPeriod(actor: AuthorizedUser, rawInp
     where: { id: input.policyId },
     select: {
       id: true,
-      productId: true,
-      premiumAmount: true,
-      effectiveDate: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
-      _count: { select: { members: true } },
     },
   });
   if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
 
-  const existing = await prisma.commissionExpectation.findUnique({
-    where: { policyId_period: { policyId: policy.id, period: input.period } },
-    select: { id: true },
-  });
-  if (existing) {
-    return { status: "ALREADY_EXISTS" as const, expectationId: existing.id };
-  }
+  return generateExpectationCore(policy.id, input.period);
+}
 
-  const rule = await resolveApplicableRule(policy.id, policy.productId);
-  if (!rule) {
-    return { status: "NO_RULE" as const };
+// Generación automática — hallazgo #14 de UAT (Fase 019.7):
+// CommissionRule debe ser la base real de CommissionExpectation, no
+// solo informativa. Se llama desde la capa de Server Actions (nunca
+// desde dentro de policies.service.ts, para evitar un import
+// circular) cuando ocurre un evento relevante: activar una póliza,
+// asignar/cambiar una CommissionRule, agregar un PolicyMember, o
+// cambiar la prima. SIEMPRE "best effort": nunca lanza, nunca bloquea
+// la operación principal — si la póliza no tiene regla aplicable, o el
+// período ya tiene una expectativa (generada o manual), simplemente no
+// hace nada. Horizonte deliberadamente acotado al mes de negocio
+// actual (nunca meses futuros) — generar el futuro es siempre una
+// acción explícita del ADMIN vía "Generar expectativa".
+export async function autoGenerateCurrentPeriodExpectation(policyId: string): Promise<void> {
+  try {
+    const { year, month } = getTodayBusinessRange();
+    const period = new Date(Date.UTC(year, month - 1, 1));
+    await generateExpectationCore(policyId, period, { requireActiveStatus: true });
+  } catch {
+    // Efecto secundario best-effort — un fallo aquí nunca debe romper
+    // la operación que lo disparó (crear póliza, agregar miembro, etc.).
   }
-
-  const result = computeExpectedAmount(rule, policy, policy._count.members, input.period);
-  if ("skipped" in result) {
-    return { status: "SKIPPED" as const, reason: result.reason };
-  }
-
-  const created = await prisma.commissionExpectation.create({
-    data: {
-      policyId: policy.id,
-      period: input.period,
-      expectedAmount: result.amount,
-    },
-    select: { id: true },
-  });
-  return { status: "CREATED" as const, expectationId: created.id };
 }

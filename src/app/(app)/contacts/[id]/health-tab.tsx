@@ -9,11 +9,9 @@ import {
   POLICY_STATUS_LABELS,
   HEALTH_COVERAGE_SOURCE_LABELS,
 } from "@/lib/labels";
+import { formatDateOnlyUS } from "@/lib/date-only";
 
-function formatDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeZone: "UTC" }).format(date);
-}
+const formatDate = formatDateOnlyUS;
 
 function formatMoney(amount: { toFixed: (n: number) => string } | null | undefined): string {
   if (!amount) return "—";

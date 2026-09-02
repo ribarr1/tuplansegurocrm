@@ -4,8 +4,10 @@ import {
   createCommissionRule,
   generateExpectationForPeriod,
   computeExpectedAmount,
+  autoGenerateCurrentPeriodExpectation,
 } from "@/services/commission-rules.service";
-import { createPolicy } from "@/services/policies.service";
+import { createPolicy, addPolicyMember } from "@/services/policies.service";
+import { getTodayBusinessRange } from "@/lib/business-time";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -263,5 +265,127 @@ describe("commission-rules.service", () => {
 
     const result = await generateExpectationForPeriod(admin, { policyId: policy.id, period: "2026-01" });
     expect(result.status).toBe("NO_RULE");
+  });
+
+  // -------------------------------------------------------------------
+  // Generación automática — Fase 019.7 (hallazgo #14 de UAT):
+  // CommissionRule debe ser la base real de CommissionExpectation, no
+  // solo informativa.
+  // -------------------------------------------------------------------
+
+  it("H) autoGenerateCurrentPeriodExpectation genera la expectativa del mes de negocio actual cuando la póliza está ACTIVE", async () => {
+    const holder = await makePerson();
+    const policy = await createPolicy(admin, {
+      holderId: holder.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: new Date("2026-01-15"),
+    });
+    createdPolicyIds.push(policy.id);
+    const rule = await createCommissionRule(admin, {
+      productId,
+      method: "FIXED_AMOUNT",
+      base: "FIXED",
+      initialAmount: "25.00",
+      initialPeriodicity: "MONTHLY",
+    });
+    createdRuleIds.push(rule.id);
+
+    await autoGenerateCurrentPeriodExpectation(policy.id);
+
+    const { year, month } = getTodayBusinessRange();
+    const currentPeriod = new Date(Date.UTC(year, month - 1, 1));
+    const created = await prisma.commissionExpectation.findUnique({
+      where: { policyId_period: { policyId: policy.id, period: currentPeriod } },
+    });
+    expect(created).not.toBeNull();
+    expect(created?.expectedAmount.toString()).toBe("25");
+    expect(created?.calculatedAmount?.toString()).toBe("25");
+    expect(created?.generatedByRuleId).toBe(rule.id);
+    if (created) createdExpectationIds.push(created.id);
+  });
+
+  it("autoGenerateCurrentPeriodExpectation NO genera nada si la póliza no está ACTIVE (ej. PENDING)", async () => {
+    const holder = await makePerson();
+    const policy = await createPolicy(admin, {
+      holderId: holder.id,
+      productId,
+      holderCovered: "true",
+      status: "PENDING",
+      effectiveDate: new Date("2026-01-15"),
+    });
+    createdPolicyIds.push(policy.id);
+    const rule = await createCommissionRule(admin, {
+      productId,
+      method: "FIXED_AMOUNT",
+      base: "FIXED",
+      initialAmount: "25.00",
+      initialPeriodicity: "MONTHLY",
+    });
+    createdRuleIds.push(rule.id);
+
+    await autoGenerateCurrentPeriodExpectation(policy.id);
+
+    const { year, month } = getTodayBusinessRange();
+    const currentPeriod = new Date(Date.UTC(year, month - 1, 1));
+    const created = await prisma.commissionExpectation.findUnique({
+      where: { policyId_period: { policyId: policy.id, period: currentPeriod } },
+    });
+    expect(created).toBeNull();
+  });
+
+  it("autoGenerateCurrentPeriodExpectation nunca lanza (best effort) aunque la póliza no exista", async () => {
+    await expect(autoGenerateCurrentPeriodExpectation("00000000-0000-0000-0000-000000000000")).resolves.toBeUndefined();
+  });
+
+  it("P) agregar un PolicyMember bajo una regla PER_MEMBER afecta períodos futuros, nunca el ya generado", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    const policy = await createPolicy(admin, {
+      holderId: holder.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: new Date("2026-01-15"),
+    });
+    createdPolicyIds.push(policy.id);
+    const rule = await createCommissionRule(admin, {
+      productId,
+      method: "FIXED_AMOUNT",
+      base: "PER_MEMBER",
+      initialAmount: "25.00",
+      initialPeriodicity: "MONTHLY",
+    });
+    createdRuleIds.push(rule.id);
+
+    // Mes actual: solo el titular cubierto (1 miembro) -> $25.
+    await autoGenerateCurrentPeriodExpectation(policy.id);
+    const { year, month } = getTodayBusinessRange();
+    const currentPeriod = new Date(Date.UTC(year, month - 1, 1));
+    const currentExp = await prisma.commissionExpectation.findUnique({
+      where: { policyId_period: { policyId: policy.id, period: currentPeriod } },
+    });
+    expect(currentExp?.expectedAmount.toString()).toBe("25");
+    if (currentExp) createdExpectationIds.push(currentExp.id);
+
+    // Se agrega un cónyuge cubierto a la póliza — el mes ya generado NO cambia.
+    await addPolicyMember(admin, policy.id, { personId: spouse.id, role: "SPOUSE" });
+    const stillCurrentExp = await prisma.commissionExpectation.findUnique({
+      where: { policyId_period: { policyId: policy.id, period: currentPeriod } },
+    });
+    expect(stillCurrentExp?.expectedAmount.toString()).toBe("25");
+
+    // Un período futuro, generado explícitamente después de agregar el
+    // miembro, sí refleja el nuevo conteo (2 miembros -> $50).
+    const nextMonth = new Date(Date.UTC(year, month, 1)); // mes siguiente
+    const nextPeriodStr = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, "0")}`;
+    const future = await generateExpectationForPeriod(admin, { policyId: policy.id, period: nextPeriodStr });
+    expect(future.status).toBe("CREATED");
+    if (future.status === "CREATED") createdExpectationIds.push(future.expectationId);
+    const futureExp = await prisma.commissionExpectation.findUnique({
+      where: { id: (future as { expectationId: string }).expectationId },
+    });
+    expect(futureExp?.expectedAmount.toString()).toBe("50");
   });
 });

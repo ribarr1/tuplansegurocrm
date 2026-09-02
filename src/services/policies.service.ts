@@ -10,6 +10,8 @@ import {
   updatePolicySchema,
   listPoliciesQuerySchema,
   listActiveProductsQuerySchema,
+  policyMemberIdSchema,
+  addPolicyMemberSchema,
 } from "@/schemas/policy.schema";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -61,6 +63,7 @@ const productSelect = {
 // es únicamente el núcleo Policy + PolicyMember.
 const policySelect = {
   id: true,
+  householdId: true,
   policyNumber: true,
   status: true,
   effectiveDate: true,
@@ -326,6 +329,21 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
     throw new AppError("FORBIDDEN", "No tienes acceso a esta persona.");
   }
 
+  // Hallazgo #12 de UAT (Fase 019.7): la póliza necesita quedar
+  // vinculada al Household del titular para poder ofrecer después
+  // "miembros elegibles" al agregar cobertura (getEligibleHouseholdMembersForPolicy).
+  // Solo se asigna cuando es inequívoco (el titular pertenece a
+  // exactamente un hogar) — nunca se adivina cuál household usar si
+  // pertenece a varios o a ninguno; esta era una omisión real (Policy.
+  // householdId nunca se poblaba desde este flujo, solo desde el
+  // importador legacy).
+  const holderHouseholds = await prisma.householdMember.findMany({
+    where: { personId: input.holderId },
+    select: { householdId: true },
+    distinct: ["householdId"],
+  });
+  const householdId = holderHouseholds.length === 1 ? holderHouseholds[0].householdId : null;
+
   const product = await assertActiveProduct(input.productId);
   assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);
   assertTerminationNotBeforeEffective(input.effectiveDate ?? null, input.terminationDate ?? null);
@@ -359,6 +377,7 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
       const created = await tx.policy.create({
         data: {
           holderId: input.holderId,
+          householdId,
           productId: input.productId,
           policyNumber: input.policyNumber,
           status: input.status,
@@ -471,4 +490,145 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
 
   await prisma.policy.update({ where: { id }, data });
   return getPolicyById(actor, id);
+}
+
+// ---------------------------------------------------------------------------
+// Gestión de PolicyMember tras la creación — Fase 019.7 (hallazgo #12)
+//
+// HouseholdMember y PolicyMember siguen siendo conceptos separados: que
+// alguien esté en el Household de la póliza NO lo cubre automáticamente
+// (nunca auto-enroll) — el usuario decide explícitamente a qué póliza
+// pertenece cada quien, ver docs/DECISIONS.md.
+// ---------------------------------------------------------------------------
+
+async function loadPolicyForMemberManagement(policyId: string) {
+  const policy = await prisma.policy.findUnique({
+    where: { id: policyId },
+    select: {
+      id: true,
+      householdId: true,
+      holder: { select: { assignedAgentId: true } },
+      members: { select: { person: { select: { assignedAgentId: true } } } },
+    },
+  });
+  if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
+  return policy;
+}
+
+// Miembros cubiertos de la póliza + su filiación familiar real
+// (HouseholdMember.role) cuando la póliza tiene household asociado —
+// hallazgo #13 de UAT: la UI no debe volver a preguntar/inventar la
+// relación familiar ("Otro" por defecto) cuando ya la conocemos vía el
+// hogar. Nunca se mezcla con PolicyMemberRole (rol de cobertura) — son
+// dos conceptos distintos mostrados juntos, no uno sustituyendo al otro.
+export async function getPolicyMembersDetailed(actor: AuthorizedUser, rawPolicyId: unknown) {
+  const id = parseOrThrow(policyIdSchema, rawPolicyId);
+  const policy = await prisma.policy.findUnique({
+    where: { id },
+    select: {
+      householdId: true,
+      holder: { select: { assignedAgentId: true } },
+      members: {
+        select: { id: true, role: true, createdAt: true, person: { select: personSummarySelect } },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+  });
+  if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
+  assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+
+  const householdRoleByPersonId = new Map<string, string>();
+  if (policy.householdId) {
+    const householdMembers = await prisma.householdMember.findMany({
+      where: { householdId: policy.householdId },
+      select: { personId: true, role: true },
+    });
+    for (const hm of householdMembers) householdRoleByPersonId.set(hm.personId, hm.role);
+  }
+
+  return policy.members.map((m) => ({
+    id: m.id,
+    role: m.role,
+    person: m.person,
+    householdRole: householdRoleByPersonId.get(m.person.id) ?? null,
+  }));
+}
+
+// Personas del Household de la póliza que todavía NO son PolicyMember —
+// candidatos para "Agregar miembro". Si la póliza no tiene household
+// asociado, no hay candidatos (nunca se ofrece una búsqueda global de
+// personas aquí — mismo principio de simplicidad de Fase 011).
+export async function getEligibleHouseholdMembersForPolicy(actor: AuthorizedUser, rawPolicyId: unknown) {
+  const id = parseOrThrow(policyIdSchema, rawPolicyId);
+  const policy = await loadPolicyForMemberManagement(id);
+  assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+
+  if (!policy.householdId) return [];
+
+  const [householdMembers, existingPolicyMembers] = await Promise.all([
+    prisma.householdMember.findMany({
+      where: { householdId: policy.householdId },
+      select: { role: true, person: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.policyMember.findMany({ where: { policyId: id }, select: { personId: true } }),
+  ]);
+
+  const alreadyCovered = new Set(existingPolicyMembers.map((m) => m.personId));
+  return householdMembers
+    .filter((m) => !alreadyCovered.has(m.person.id))
+    .map((m) => ({
+      personId: m.person.id,
+      firstName: m.person.firstName,
+      lastName: m.person.lastName,
+      householdRole: m.role,
+    }));
+}
+
+// Agrega un PolicyMember a una póliza ya existente — nunca recrea la
+// póliza, nunca duplica (UNIQUE(policyId, personId) ya lo protege a
+// nivel de base de datos). El servicio no restringe personId a los
+// candidatos del Household de la póliza (la UI sí lo hace) — mismo
+// principio ya documentado para coveredMembers en createPolicy
+// (Fase 011): la lista de candidatos es conveniencia de UI, no el
+// límite de seguridad real.
+export async function addPolicyMember(actor: AuthorizedUser, rawPolicyId: unknown, rawInput: unknown) {
+  const policyId = parseOrThrow(policyIdSchema, rawPolicyId);
+  const input = parseOrThrow(addPolicyMemberSchema, rawInput);
+  const policy = await loadPolicyForMemberManagement(policyId);
+  assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+
+  const person = await prisma.person.findUnique({ where: { id: input.personId }, select: { id: true } });
+  if (!person) throw new AppError("NOT_FOUND", "Persona no encontrada.");
+
+  try {
+    await prisma.policyMember.create({
+      data: { policyId, personId: input.personId, role: input.role },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new AppError("CONFLICT", "Esta persona ya está cubierta por esta póliza.");
+    }
+    throw error;
+  }
+
+  return getPolicyById(actor, policyId);
+}
+
+// Quita a alguien de la cobertura de la póliza — borra únicamente la
+// fila PolicyMember, nunca la Person ni su HouseholdMember (sigue en
+// el hogar, solo deja de estar cubierto por ESTA póliza en particular).
+export async function removePolicyMember(actor: AuthorizedUser, rawPolicyId: unknown, rawMemberId: unknown) {
+  const policyId = parseOrThrow(policyIdSchema, rawPolicyId);
+  const memberId = parseOrThrow(policyMemberIdSchema, rawMemberId);
+  const policy = await loadPolicyForMemberManagement(policyId);
+  assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+
+  const member = await prisma.policyMember.findUnique({ where: { id: memberId }, select: { id: true, policyId: true } });
+  if (!member || member.policyId !== policyId) {
+    throw new AppError("NOT_FOUND", "Miembro de la póliza no encontrado.");
+  }
+
+  await prisma.policyMember.delete({ where: { id: memberId } });
+  return getPolicyById(actor, policyId);
 }

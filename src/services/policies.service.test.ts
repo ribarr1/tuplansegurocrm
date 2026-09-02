@@ -6,12 +6,17 @@ import {
   getPoliciesForPerson,
   createPolicy,
   updatePolicy,
+  getEligibleHouseholdMembersForPolicy,
+  addPolicyMember,
+  removePolicyMember,
+  getPolicyMembersDetailed,
 } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
 const createdPersonIds: string[] = [];
 const createdPolicyIds: string[] = [];
+const createdHouseholdIds: string[] = [];
 let carrierId: string;
 let activeProductId: string;
 let inactiveProductId: string;
@@ -80,6 +85,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
   await prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } });
+  await prisma.householdMember.deleteMany({ where: { householdId: { in: createdHouseholdIds } } });
+  await prisma.household.deleteMany({ where: { id: { in: createdHouseholdIds } } });
   await prisma.product.deleteMany({ where: { carrierId } });
   await prisma.carrier.deleteMany({ where: { id: carrierId } });
   await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
@@ -571,5 +578,119 @@ describe("policies.service", () => {
 
     const allIds = [...page1.items, ...page2.items].map((p) => p.id).sort();
     expect(allIds).toEqual(created.map((p) => p.id).sort());
+  });
+
+  // ---------------------------------------------------------------------
+  // Gestión de miembros de una póliza ya existente — Fase 019.7
+  // (hallazgos #12 y #13 de UAT).
+  // ---------------------------------------------------------------------
+
+  async function makeHouseholdWithMembers(
+    headPersonId: string,
+    otherMembers: { personId: string; role: "SPOUSE" | "CHILD" | "DEPENDENT" | "OTHER" }[]
+  ) {
+    const household = await prisma.household.create({ data: {} });
+    createdHouseholdIds.push(household.id);
+    await prisma.householdMember.create({
+      data: { householdId: household.id, personId: headPersonId, role: "HEAD" },
+    });
+    for (const m of otherMembers) {
+      await prisma.householdMember.create({
+        data: { householdId: household.id, personId: m.personId, role: m.role },
+      });
+    }
+    return household;
+  }
+
+  it("A) createPolicy vincula el household del titular cuando es inequívoco, y agregar un miembro nuevo del hogar lo hace elegible de inmediato", async () => {
+    const holder = await makePerson();
+    const child = await makePerson();
+    await makeHouseholdWithMembers(holder.id, []);
+
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    expect(policy.householdId).not.toBeNull();
+
+    // Household todavía no tenía al child en el momento de crear la
+    // póliza — se agrega DESPUÉS (caso obligatorio 12.3: C).
+    await prisma.householdMember.create({
+      data: { householdId: policy.householdId!, personId: child.id, role: "CHILD" },
+    });
+
+    const eligible = await getEligibleHouseholdMembersForPolicy(admin, policy.id);
+    expect(eligible.some((c) => c.personId === child.id)).toBe(true);
+
+    const updated = await addPolicyMember(admin, policy.id, { personId: child.id, role: "DEPENDENT" });
+    expect(updated.members.some((m) => m.person.id === child.id && m.role === "DEPENDENT")).toBe(true);
+  });
+
+  it("B) agregar alguien al Household NO lo agrega automáticamente a la póliza (no auto-enroll)", async () => {
+    const holder = await makePerson();
+    const spouse = await makePerson();
+    await makeHouseholdWithMembers(holder.id, [{ personId: spouse.id, role: "SPOUSE" }]);
+
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    // El esposo ya estaba en el hogar ANTES de crear la póliza y no se
+    // marcó como covered member — no debe aparecer como PolicyMember.
+    const detailed = await getPolicyMembersDetailed(admin, policy.id);
+    expect(detailed.some((m) => m.person.id === spouse.id)).toBe(false);
+  });
+
+  it("C) no se puede duplicar un PolicyMember ya existente", async () => {
+    const holder = await makePerson();
+    const child = await makePerson();
+    await makeHouseholdWithMembers(holder.id, [{ personId: child.id, role: "CHILD" }]);
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "false" })
+    );
+
+    await addPolicyMember(admin, policy.id, { personId: child.id, role: "DEPENDENT" });
+    await expect(addPolicyMember(admin, policy.id, { personId: child.id, role: "DEPENDENT" })).rejects.toMatchObject(
+      { code: "CONFLICT" }
+    );
+  });
+
+  it("D) quitar un PolicyMember no borra la Person ni su HouseholdMember", async () => {
+    const holder = await makePerson();
+    const child = await makePerson();
+    const household = await makeHouseholdWithMembers(holder.id, [{ personId: child.id, role: "CHILD" }]);
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "false" })
+    );
+    const withMember = await addPolicyMember(admin, policy.id, { personId: child.id, role: "DEPENDENT" });
+    const memberRow = withMember.members.find((m) => m.person.id === child.id)!;
+
+    await removePolicyMember(admin, policy.id, memberRow.id);
+
+    const stillPerson = await prisma.person.findUnique({ where: { id: child.id } });
+    expect(stillPerson).not.toBeNull();
+    const stillHouseholdMember = await prisma.householdMember.findUnique({
+      where: { personId_householdId: { personId: child.id, householdId: household.id } },
+    });
+    expect(stillHouseholdMember).not.toBeNull();
+
+    const detailed = await getPolicyMembersDetailed(admin, policy.id);
+    expect(detailed.some((m) => m.person.id === child.id)).toBe(false);
+  });
+
+  it("G) el rol de póliza (PolicyMemberRole) se muestra separado del rol de hogar (HouseholdMemberRole)", async () => {
+    const holder = await makePerson();
+    const child = await makePerson();
+    await makeHouseholdWithMembers(holder.id, [{ personId: child.id, role: "CHILD" }]);
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "false" })
+    );
+    await addPolicyMember(admin, policy.id, { personId: child.id, role: "DEPENDENT" });
+
+    const detailed = await getPolicyMembersDetailed(admin, policy.id);
+    const entry = detailed.find((m) => m.person.id === child.id)!;
+    // Household: CHILD (filiación familiar real). Policy: DEPENDENT (rol
+    // de cobertura) — nunca se mezclan ni se muestra "Otro" cuando ya
+    // se conoce la relación real del hogar.
+    expect(entry.householdRole).toBe("CHILD");
+    expect(entry.role).toBe("DEPENDENT");
   });
 });

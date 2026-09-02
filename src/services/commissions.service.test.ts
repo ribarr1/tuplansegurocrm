@@ -13,6 +13,7 @@ import {
   getCommissionTotalsForPeriod,
 } from "@/services/commissions.service";
 import { createPolicy, getPolicyById } from "@/services/policies.service";
+import { createCommissionRule, generateExpectationForPeriod } from "@/services/commission-rules.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -65,7 +66,11 @@ async function makePerson(assignedAgentId: string | null = null) {
   return person;
 }
 
-async function makePolicyFor(actor: AuthorizedUser, holder: { id: string }) {
+async function makePolicyFor(
+  actor: AuthorizedUser,
+  holder: { id: string },
+  extra: Record<string, unknown> = {}
+) {
   const carrier = await prisma.carrier.create({ data: { name: uniqueName("Carrier Commission") } });
   createdCarrierIds.push(carrier.id);
   const product = await prisma.product.create({
@@ -76,6 +81,7 @@ async function makePolicyFor(actor: AuthorizedUser, holder: { id: string }) {
     holderId: holder.id,
     productId: product.id,
     holderCovered: "false",
+    ...extra,
   });
   return trackPolicy(policy);
 }
@@ -111,6 +117,9 @@ afterAll(async () => {
     where: { commissionExpectationId: { in: createdExpectationIds } },
   });
   await prisma.commissionExpectation.deleteMany({ where: { id: { in: createdExpectationIds } } });
+  // Reglas de comisión creadas en las pruebas de override (Fase 019.7)
+  // — deben limpiarse antes de borrar los productos que referencian.
+  await prisma.commissionRule.deleteMany({ where: { productId: { in: createdProductIds } } });
   await prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
   await prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } });
   await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
@@ -683,4 +692,127 @@ describe("commissions.service", () => {
       expect(totals.difference.toString()).toBe(String(expectedTotal - receivedTotal));
     }
   }, 30000);
+
+  // -------------------------------------------------------------------
+  // Override manual de una expectativa generada por regla — Fase 019.7
+  // (hallazgo #14.4/#14.5 de UAT).
+  // -------------------------------------------------------------------
+
+  it("AQ) editar expectedAmount de una expectativa generada por regla la marca como override manual", async () => {
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder, { effectiveDate: new Date("2020-01-01") });
+    await createCommissionRule(admin, {
+      productId: policy.product.id,
+      method: "FIXED_AMOUNT",
+      base: "FIXED",
+      initialAmount: "25.00",
+      initialPeriodicity: "MONTHLY",
+    });
+    const period = nextPeriod();
+    const generated = await generateExpectationForPeriod(admin, { policyId: policy.id, period });
+    expect(generated.status).toBe("CREATED");
+    const expectationId = (generated as { expectationId: string }).expectationId;
+    trackExpectation({ id: expectationId });
+
+    const updated = await updateCommissionExpectation(admin, expectationId, {
+      expectedAmount: "40.00",
+      overrideReason: "Bono del carrier",
+    });
+    expect(updated.expectedAmount.toString()).toBe("40");
+    expect(updated.calculatedAmount?.toString()).toBe("25");
+    expect(updated.isManualOverride).toBe(true);
+    expect(updated.overriddenById).toBe(admin.id);
+    expect(updated.overrideReason).toBe("Bono del carrier");
+    expect(updated.overriddenAt).not.toBeNull();
+  });
+
+  it("AR) el override manual NO se destruye si se vuelve a generar/recalcular (nunca se sobrescribe una fila existente)", async () => {
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder, { effectiveDate: new Date("2020-01-01") });
+    await createCommissionRule(admin, {
+      productId: policy.product.id,
+      method: "FIXED_AMOUNT",
+      base: "FIXED",
+      initialAmount: "25.00",
+      initialPeriodicity: "MONTHLY",
+    });
+    const period = nextPeriod();
+    const generated = await generateExpectationForPeriod(admin, { policyId: policy.id, period });
+    const expectationId = (generated as { expectationId: string }).expectationId;
+    trackExpectation({ id: expectationId });
+    await updateCommissionExpectation(admin, expectationId, { expectedAmount: "40.00" });
+
+    // Volver a "generar" el mismo período: debe reportar ALREADY_EXISTS
+    // y no tocar el monto ya corregido manualmente.
+    const again = await generateExpectationForPeriod(admin, { policyId: policy.id, period });
+    expect(again.status).toBe("ALREADY_EXISTS");
+
+    const stillOverridden = await getCommissionExpectationById(admin, expectationId);
+    expect(stillOverridden.expectedAmount.toString()).toBe("40");
+    expect(stillOverridden.isManualOverride).toBe(true);
+  });
+
+  it("AS) un período ya con CommissionPayment (pagado) nunca se recalcula/regenera", async () => {
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder, { effectiveDate: new Date("2020-01-01") });
+    await createCommissionRule(admin, {
+      productId: policy.product.id,
+      method: "FIXED_AMOUNT",
+      base: "FIXED",
+      initialAmount: "25.00",
+      initialPeriodicity: "MONTHLY",
+    });
+    const period = nextPeriod();
+    const generated = await generateExpectationForPeriod(admin, { policyId: policy.id, period });
+    const expectationId = (generated as { expectationId: string }).expectationId;
+    trackExpectation({ id: expectationId });
+    await addCommissionPayment(admin, expectationId, {
+      type: "PAYMENT",
+      amount: "25.00",
+      receivedAt: new Date(),
+    });
+
+    const again = await generateExpectationForPeriod(admin, { policyId: policy.id, period });
+    expect(again.status).toBe("ALREADY_EXISTS");
+
+    const stillPaid = await getCommissionExpectationById(admin, expectationId);
+    expect(stillPaid.payments).toHaveLength(1);
+    expect(stillPaid.expectedAmount.toString()).toBe("25");
+  });
+
+  it("editar hacia el mismo valor calculado no marca override manual", async () => {
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder, { effectiveDate: new Date("2020-01-01") });
+    await createCommissionRule(admin, {
+      productId: policy.product.id,
+      method: "FIXED_AMOUNT",
+      base: "FIXED",
+      initialAmount: "25.00",
+      initialPeriodicity: "MONTHLY",
+    });
+    const period = nextPeriod();
+    const generated = await generateExpectationForPeriod(admin, { policyId: policy.id, period });
+    const expectationId = (generated as { expectationId: string }).expectationId;
+    trackExpectation({ id: expectationId });
+
+    const updated = await updateCommissionExpectation(admin, expectationId, { expectedAmount: "25.00" });
+    expect(updated.isManualOverride).toBe(false);
+  });
+
+  it("una expectativa creada manualmente (sin regla) nunca queda marcada como override", async () => {
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder);
+    const exp = trackExpectation(
+      await createCommissionExpectation(admin, {
+        policyId: policy.id,
+        period: nextPeriod(),
+        expectedAmount: "100.00",
+      })
+    );
+    expect(exp.calculatedAmount).toBeNull();
+
+    const updated = await updateCommissionExpectation(admin, exp.id, { expectedAmount: "150.00" });
+    expect(updated.isManualOverride).toBe(false);
+    expect(updated.calculatedAmount).toBeNull();
+  });
 });

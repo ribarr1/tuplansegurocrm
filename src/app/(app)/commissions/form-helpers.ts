@@ -24,7 +24,7 @@ export function formDataToCreateExpectationInput(formData: FormData): Record<str
 // misma técnica de 3 estados que Task.assignedToId (ver task.schema.ts).
 // expectedAmount/period sí usan formData.get: si vienen vacíos en un
 // formulario de edición completo, es un error de captura, no "no tocar".
-const UPDATE_SCALAR_FIELDS = ["expectedAmount", "period"] as const;
+const UPDATE_SCALAR_FIELDS = ["expectedAmount", "period", "overrideReason"] as const;
 
 export function formDataToUpdateExpectationInput(formData: FormData): Record<string, string> {
   const raw: Record<string, string> = {};

@@ -145,14 +145,22 @@ describe("dashboard.service", () => {
     expect(result).not.toHaveProperty("commissions");
   });
 
-  // Corre antes que cualquier test que registre CommissionExpectation
-  // del mes actual — ADMIN ve comisiones globalmente (sin scoping), así
-  // que este caso solo puede verificarse de forma confiable si todavía
-  // no existe ningún registro para el período actual en toda la suite.
-  it("D) sin expectativas de comisión este mes -> hasData:false (no $0 fantasma)", async () => {
+  // ADMIN ve comisiones globalmente (sin scoping), así que no podemos
+  // asumir que la base de datos está vacía este mes (puede haber datos
+  // reales de UAT manual, ej. pólizas creadas al probar Hallazgo #14).
+  // En vez de depender de un estado vacío, verificamos que hasData
+  // coincide exactamente con si existen filas reales para el período
+  // actual — eso es lo que realmente queremos garantizar (nunca un
+  // $0 fantasma cuando no hay registros).
+  it("D) hasData coincide con si existen expectativas reales para el período actual (nunca $0 fantasma)", async () => {
+    const { year, month } = getTodayBusinessRange();
+    const periodStart = new Date(Date.UTC(year, month - 1, 1));
+    const realCount = await prisma.commissionExpectation.count({ where: { period: periodStart } });
     const result = await getDashboard(admin);
-    expect(result.commissions?.hasData).toBe(false);
-    expect(result.commissions).not.toHaveProperty("expected");
+    expect(result.commissions?.hasData).toBe(realCount > 0);
+    if (realCount === 0) {
+      expect(result.commissions).not.toHaveProperty("expected");
+    }
   });
 
   it("E) today task count correcto", async () => {

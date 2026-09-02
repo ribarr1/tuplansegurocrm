@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/authorization";
 import { getDashboard } from "@/services/dashboard.service";
-import { getAppTimeZone } from "@/lib/business-time";
+import {
+  getAppTimeZone,
+  formatDateTimeUS,
+  formatMonthDayUS,
+  formatPeriodUS,
+} from "@/lib/business-time";
+import { formatDateOnlyUS } from "@/lib/date-only";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,20 +30,9 @@ function greeting(): string {
   return "Buenas noches";
 }
 
-function formatDueAt(date: Date | null): string {
-  if (!date) return "Sin fecha";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
-}
-
-function formatDueDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeZone: "UTC" }).format(date);
-}
-
-function formatOccurrence(month: number, day: number): string {
-  const anchor = new Date(Date.UTC(2000, month - 1, day));
-  return new Intl.DateTimeFormat("es-US", { day: "numeric", month: "long", timeZone: "UTC" }).format(anchor);
-}
+const formatDueAt = formatDateTimeUS;
+const formatDueDate = formatDateOnlyUS;
+const formatOccurrence = formatMonthDayUS;
 
 function formatMoney(amount: { toFixed: (n: number) => string }): string {
   return `$${amount.toFixed(2)}`;
@@ -241,7 +236,7 @@ export default async function DashboardPage() {
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-muted-foreground">
-              Comisiones — {new Intl.DateTimeFormat("es-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(data.commissions.period)}
+              Comisiones — {formatPeriodUS(data.commissions.period)}
             </h3>
             <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/commissions" />}>
               Ver comisiones

@@ -99,7 +99,7 @@ export function EditTaskForm({
       </div>
 
       <div className="flex flex-col gap-1">
-        <Label htmlFor="dueAt">Vencimiento</Label>
+        <Label htmlFor="dueAt">Vencimiento (MM/DD/AAAA)</Label>
         <Input id="dueAt" name="dueAt" type="datetime-local" defaultValue={values.dueAt ?? ""} />
         {state?.fieldErrors?.dueAt && (
           <p className="text-sm text-destructive">{state.fieldErrors.dueAt}</p>

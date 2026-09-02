@@ -58,15 +58,16 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  assignedPeople         Person[]                @relation("PersonAssignedAgent")
-  processedPolicies      Policy[]                @relation("PolicyProcessedBy")
-  assignedTasks          Task[]                  @relation("TaskAssignedTo")
-  createdTasks           Task[]                  @relation("TaskCreatedBy")
-  createdNotes           Note[]                  @relation("NoteCreatedBy")
-  commissionExpectations CommissionExpectation[]
-  uploadedDocuments      PolicyDocument[]
-  sessions               Session[]
-  accounts               Account[]
+  assignedPeople                   Person[]                @relation("PersonAssignedAgent")
+  processedPolicies                Policy[]                @relation("PolicyProcessedBy")
+  assignedTasks                    Task[]                  @relation("TaskAssignedTo")
+  createdTasks                     Task[]                  @relation("TaskCreatedBy")
+  createdNotes                     Note[]                  @relation("NoteCreatedBy")
+  commissionExpectations           CommissionExpectation[]
+  overriddenCommissionExpectations CommissionExpectation[] @relation("CommissionExpectationOverriddenBy")
+  uploadedDocuments                PolicyDocument[]
+  sessions                         Session[]
+  accounts                         Account[]
 
   @@map("users")
 }
@@ -116,22 +117,22 @@ model Person {
 // Person todavía); esta decisión no cierra esa posibilidad futura, ver
 // docs/DECISIONS.md.
 model Household {
-  id             String   @id @default(uuid()) @db.Uuid
-  name           String?
-  addressLine1   String?
-  addressLine2   String?
-  city           String?
-  state          String?  @db.VarChar(2)
-  zipCode        String?
-  county         String?
+  id                    String   @id @default(uuid()) @db.Uuid
+  name                  String?
+  addressLine1          String?
+  addressLine2          String?
+  city                  String?
+  state                 String?  @db.VarChar(2)
+  zipCode               String?
+  county                String?
   // Ingreso familiar general y actual del hogar — DISTINTO de
   // HealthPolicyDetail.incomeUsed (el ingreso declarado en una
   // aplicación/póliza Marketplace específica). Nunca deben confundirse
   // ni sincronizarse automáticamente entre sí, ver docs/DECISIONS.md.
   annualHouseholdIncome Decimal? @db.Decimal(12, 2)
   incomeYear            Int?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   members  HouseholdMember[]
   policies Policy[]
@@ -249,24 +250,24 @@ enum PaymentStatus {
 // que una póliza se marque como renovación de sí misma; ciclos de más de
 // un nivel (A -> B -> A) se validan en aplicación, no en DB.
 model Policy {
-  id                     String               @id @default(uuid()) @db.Uuid
-  holderId               String               @db.Uuid
-  householdId            String?              @db.Uuid
-  productId              String               @db.Uuid
+  id                     String                @id @default(uuid()) @db.Uuid
+  holderId               String                @db.Uuid
+  householdId            String?               @db.Uuid
+  productId              String                @db.Uuid
   policyNumber           String?
-  status                 PolicyStatus         @default(PENDING)
+  status                 PolicyStatus          @default(PENDING)
   // Nullable: una póliza PENDING puede existir antes de conocer su fecha
   // efectiva definitiva. Regla de aplicación (no DB): requerida cuando
   // status = ACTIVE.
-  effectiveDate          DateTime?            @db.Date
-  terminationDate        DateTime?            @db.Date
-  previousPolicyId       String?              @unique @db.Uuid
-  processedById          String?              @db.Uuid
-  premiumAmount          Decimal?             @db.Decimal(12, 2)
+  effectiveDate          DateTime?             @db.Date
+  terminationDate        DateTime?             @db.Date
+  previousPolicyId       String?               @unique @db.Uuid
+  processedById          String?               @db.Uuid
+  premiumAmount          Decimal?              @db.Decimal(12, 2)
   billingFrequency       BillingFrequency?
-  nextPaymentDueDate     DateTime?            @db.Date
-  autopay                Boolean              @default(false)
-  needsPaymentAssistance Boolean              @default(false)
+  nextPaymentDueDate     DateTime?             @db.Date
+  autopay                Boolean               @default(false)
+  needsPaymentAssistance Boolean               @default(false)
   paymentStatus          PaymentStatus?
   operationType          PolicyOperationType?
   // Solo tiene sentido para policyType HEALTH (vía product.policyType) —
@@ -274,8 +275,8 @@ model Policy {
   // de reglas cruzadas de Policy. Null en pólizas no-HEALTH o cuando
   // todavía no se ha clasificado.
   healthCoverageSource   HealthCoverageSource?
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
 
   holder                 Person                  @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
   household              Household?              @relation(fields: [householdId], references: [id], onDelete: SetNull)
@@ -372,16 +373,16 @@ enum PolicyDocumentType {
 // mostrar en la UI, nunca se usa para resolver la ubicación real del
 // archivo (evita path traversal).
 model PolicyDocument {
-  id             String             @id @default(uuid()) @db.Uuid
-  policyId       String             @db.Uuid
-  type           PolicyDocumentType
-  fileName       String
-  storageKey     String             @unique
-  mimeType       String
-  fileSize       Int
-  description    String?
-  uploadedById   String?            @db.Uuid
-  createdAt      DateTime           @default(now())
+  id           String             @id @default(uuid()) @db.Uuid
+  policyId     String             @db.Uuid
+  type         PolicyDocumentType
+  fileName     String
+  storageKey   String             @unique
+  mimeType     String
+  fileSize     Int
+  description  String?
+  uploadedById String?            @db.Uuid
+  createdAt    DateTime           @default(now())
 
   policy     Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
   uploadedBy User?  @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
@@ -430,8 +431,8 @@ model CommissionRule {
   productId String  @db.Uuid
   policyId  String? @db.Uuid
 
-  method   CommissionMethod
-  base     CommissionBase
+  method             CommissionMethod
+  base               CommissionBase
   // Método FIXED_AMOUNT: initialAmount es el monto. Método PERCENTAGE:
   // initialPercentage es el porcentaje (80.00 = 80%). Solo uno de los
   // dos aplica según "method" — validado en la aplicación, no en DB.
@@ -450,8 +451,9 @@ model CommissionRule {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
-  policy  Policy? @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  product               Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  policy                Policy?                 @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  generatedExpectations CommissionExpectation[]
 
   @@index([productId])
   @@index([policyId])
@@ -587,23 +589,40 @@ enum CommissionPaymentType {
 // derivado de los pagos — PARTIAL/PAID/UNPAID se calculan siempre a partir
 // de SUM(CommissionPayment.amount) vs expectedAmount, nunca se almacenan.
 model CommissionExpectation {
-  id             String                      @id @default(uuid()) @db.Uuid
-  policyId       String                      @db.Uuid
-  agentId        String?                     @db.Uuid
+  id                String                      @id @default(uuid()) @db.Uuid
+  policyId          String                      @db.Uuid
+  agentId           String?                     @db.Uuid
   // Primer día del mes de comisión (convención): 2026-08-01 = agosto 2026.
-  period         DateTime                    @db.Date
-  expectedAmount Decimal                     @db.Decimal(12, 2)
-  status         CommissionExpectationStatus @default(ACTIVE)
-  createdAt      DateTime                    @default(now())
-  updatedAt      DateTime                    @updatedAt
+  period            DateTime                    @db.Date
+  // Monto final que se usa en toda la aplicación (reportes, Dashboard,
+  // conciliación con CommissionPayment) — puede ser igual a
+  // calculatedAmount o haber sido corregido manualmente por ADMIN.
+  expectedAmount    Decimal                     @db.Decimal(12, 2)
+  // Fase 019.7: monto que produjo CommissionRule al generar esta fila —
+  // null si la expectativa se creó a mano (flujo Fase 016, sin regla).
+  // Se conserva SIEMPRE tal como se calculó, incluso si expectedAmount
+  // se corrige después — es el punto de comparación "calculado vs
+  // esperado final" que pide la UI, nunca se recalcula retroactivamente.
+  calculatedAmount  Decimal?                    @db.Decimal(12, 2)
+  generatedByRuleId String?                     @db.Uuid
+  isManualOverride  Boolean                     @default(false)
+  overriddenById    String?                     @db.Uuid
+  overriddenAt      DateTime?
+  overrideReason    String?
+  status            CommissionExpectationStatus @default(ACTIVE)
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
 
-  policy   Policy              @relation(fields: [policyId], references: [id], onDelete: Restrict)
-  agent    User?               @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  payments CommissionPayment[]
+  policy          Policy              @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  agent           User?               @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  generatedByRule CommissionRule?     @relation(fields: [generatedByRuleId], references: [id], onDelete: SetNull)
+  overriddenBy    User?               @relation("CommissionExpectationOverriddenBy", fields: [overriddenById], references: [id], onDelete: SetNull)
+  payments        CommissionPayment[]
 
   @@unique([policyId, period])
   @@index([period])
   @@index([agentId, period])
+  @@index([generatedByRuleId])
   @@map("commission_expectations")
 }
 

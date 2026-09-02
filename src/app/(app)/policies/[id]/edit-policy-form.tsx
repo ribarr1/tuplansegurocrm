@@ -132,7 +132,7 @@ export function EditPolicyForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="effectiveDate">Fecha efectiva</Label>
+          <Label htmlFor="effectiveDate">Fecha efectiva (MM/DD/AAAA)</Label>
           <Input
             id="effectiveDate"
             name="effectiveDate"
@@ -144,7 +144,7 @@ export function EditPolicyForm({
           )}
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="terminationDate">Fecha de terminación</Label>
+          <Label htmlFor="terminationDate">Fecha de terminación (MM/DD/AAAA)</Label>
           <Input
             id="terminationDate"
             name="terminationDate"
@@ -190,7 +190,7 @@ export function EditPolicyForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="nextPaymentDueDate">Próximo pago</Label>
+          <Label htmlFor="nextPaymentDueDate">Próximo pago (MM/DD/AAAA)</Label>
           <Input
             id="nextPaymentDueDate"
             name="nextPaymentDueDate"

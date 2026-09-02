@@ -82,7 +82,7 @@ export function TaskForm({
           </select>
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="dueAt">Vencimiento</Label>
+          <Label htmlFor="dueAt">Vencimiento (MM/DD/AAAA)</Label>
           <Input
             id="dueAt"
             name="dueAt"

@@ -20,7 +20,7 @@ import {
   COMMISSION_DERIVED_STATUS_LABELS,
   COMMISSION_DERIVED_STATUS_BADGE_VARIANT,
 } from "@/lib/labels";
-import { formatInBusinessTimeZone } from "@/lib/business-time";
+import { formatDateTimeUS, formatPeriodUS } from "@/lib/business-time";
 import { EditExpectationForm } from "./edit-expectation-form";
 import { PaymentForm } from "./payment-form";
 import { CancelExpectationButton } from "./cancel-button";
@@ -30,11 +30,7 @@ function formatMoney(amount: { toFixed: (n: number) => string }): string {
   return `$${amount.toFixed(2)}`;
 }
 
-function formatPeriod(date: Date): string {
-  return new Intl.DateTimeFormat("es-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(
-    date
-  );
-}
+const formatPeriod = formatPeriodUS;
 
 function periodToMonthInput(date: Date): string {
   const year = date.getUTCFullYear();
@@ -43,7 +39,7 @@ function periodToMonthInput(date: Date): string {
 }
 
 function formatReceivedAt(date: Date): string {
-  return formatInBusinessTimeZone(date, { dateStyle: "medium", timeStyle: "short" });
+  return formatDateTimeUS(date);
 }
 
 // Comisiones es FINANCIERO/RESTRINGIDO — ASSISTANT recibe un 403 real
@@ -138,10 +134,26 @@ export default async function CommissionExpectationDetailPage({
             <CardTitle className="text-sm font-medium text-muted-foreground">Montos</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 text-sm">
+            {expectation.calculatedAmount !== null && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Calculado (regla)</span>
+                <span>{formatMoney(expectation.calculatedAmount)}</span>
+              </div>
+            )}
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Esperado</span>
-              <span>{formatMoney(expectation.expectedAmount)}</span>
+              <span className={expectation.isManualOverride ? "font-medium" : undefined}>
+                {formatMoney(expectation.expectedAmount)}
+              </span>
             </div>
+            {expectation.isManualOverride && (
+              <p className="rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+                Modificado manualmente
+                {expectation.overriddenBy ? ` por ${expectation.overriddenBy.name}` : ""}
+                {expectation.overriddenAt ? ` — ${formatReceivedAt(expectation.overriddenAt)}` : ""}
+                {expectation.overrideReason ? `. Motivo: ${expectation.overrideReason}` : ""}
+              </p>
+            )}
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Recibido</span>
               <span>{formatMoney(expectation.receivedAmount)}</span>

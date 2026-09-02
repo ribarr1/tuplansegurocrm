@@ -15,6 +15,20 @@ export function getDateOnlyParts(date: Date): { year: number; month: number; day
   };
 }
 
+// Hallazgo adicional de UAT (Fase 019.7): el CRM se usa principalmente
+// en EE. UU. — toda fecha visible al usuario debe mostrarse MM/DD/YYYY
+// (ej. "09/01/2026"), nunca DD/MM/YYYY ni un formato escrito en
+// español. Esto es SOLO presentación — el almacenamiento en DB sigue
+// siendo ISO (@db.Date, ancla a medianoche UTC); nunca se cambia eso.
+// Para una columna @db.Date, se usan los getters UTC (igual que
+// getDateOnlyParts) — nunca un Intl.DateTimeFormat con otra zona
+// horaria, que podría mostrar el día equivocado para una fecha pura.
+export function formatDateOnlyUS(date: Date | null | undefined): string {
+  if (!date) return "—";
+  const { year, month, day } = getDateOnlyParts(date);
+  return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${year}`;
+}
+
 export function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }

@@ -73,6 +73,15 @@ const expectationSelect = {
   agentId: true,
   period: true,
   expectedAmount: true,
+  // Fase 019.7 (hallazgo #14) — comparación "calculado vs esperado
+  // final" cuando la expectativa vino de una CommissionRule.
+  calculatedAmount: true,
+  generatedByRuleId: true,
+  isManualOverride: true,
+  overriddenById: true,
+  overriddenAt: true,
+  overrideReason: true,
+  overriddenBy: { select: { id: true, name: true } },
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -366,7 +375,13 @@ export async function updateCommissionExpectation(
 
   const existing = await prisma.commissionExpectation.findUnique({
     where: { id },
-    select: { id: true, status: true, payments: { select: { id: true }, take: 1 } },
+    select: {
+      id: true,
+      status: true,
+      expectedAmount: true,
+      calculatedAmount: true,
+      payments: { select: { id: true }, take: 1 },
+    },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Comisión no encontrada.");
 
@@ -382,7 +397,24 @@ export async function updateCommissionExpectation(
   }
 
   const data: Prisma.CommissionExpectationUncheckedUpdateInput = {};
-  if (input.expectedAmount !== undefined) data.expectedAmount = input.expectedAmount;
+  if (input.expectedAmount !== undefined) {
+    data.expectedAmount = input.expectedAmount;
+    // Override manual (hallazgo #14.4/#14.5): solo se marca cuando el
+    // nuevo monto realmente difiere del calculado por la regla — si la
+    // expectativa nunca tuvo regla (calculatedAmount null) o el ADMIN
+    // "corrige" hacia el mismo valor calculado, no se marca como
+    // override. calculatedAmount en sí NUNCA se toca aquí — es el
+    // registro histórico de qué produjo la regla, se conserva siempre.
+    const calculated = existing.calculatedAmount;
+    const changedFromCalculated =
+      calculated === null || !new Prisma.Decimal(calculated).equals(new Prisma.Decimal(input.expectedAmount));
+    if (calculated !== null && changedFromCalculated) {
+      data.isManualOverride = true;
+      data.overriddenById = actor.id;
+      data.overriddenAt = new Date();
+      if (input.overrideReason !== undefined) data.overrideReason = input.overrideReason;
+    }
+  }
   if (input.agentId !== undefined) data.agentId = input.agentId;
   if (input.period !== undefined) data.period = input.period;
 

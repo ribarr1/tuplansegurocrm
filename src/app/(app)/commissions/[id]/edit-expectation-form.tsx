@@ -62,6 +62,18 @@ export function EditExpectationForm({
           )}
         </div>
 
+        <div className="flex flex-col gap-1 sm:col-span-2">
+          <Label htmlFor="overrideReason">Motivo del cambio (opcional)</Label>
+          <Input
+            id="overrideReason"
+            name="overrideReason"
+            placeholder="Ej. bono del carrier, corrección contractual…"
+          />
+          <p className="text-xs text-muted-foreground">
+            Solo se guarda si el monto esperado cambia respecto al calculado por la regla.
+          </p>
+        </div>
+
         <div className="flex flex-col gap-1">
           <Label htmlFor="agentId">Agente</Label>
           <select

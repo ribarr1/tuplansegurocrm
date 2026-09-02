@@ -11,19 +11,17 @@ import {
   POLICY_STATUS_LABELS,
   POLICY_TYPE_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
-  POLICY_MEMBER_ROLE_LABELS,
 } from "@/lib/labels";
+import { PolicyMembersSection } from "./policy-members-section";
 import { HealthPolicySection } from "./health-section";
 import { PolicyTasksSection } from "./tasks-section";
 import { PolicyCommissionsSection } from "./commissions-section";
 import { PremiumSection } from "./premium-section";
 import { PolicyDocumentsSection } from "./documents-section";
 import { CommissionRuleSection } from "./commission-rule-section";
+import { formatDateOnlyUS } from "@/lib/date-only";
 
-function formatDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "long", timeZone: "UTC" }).format(date);
-}
+const formatDate = formatDateOnlyUS;
 
 export default async function PolicyDetailPage({
   params,
@@ -132,34 +130,7 @@ export default async function PolicyDetailPage({
 
       <PremiumSection actor={actor} policyId={policy.id} />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium text-muted-foreground">
-            Personas cubiertas
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2 text-sm">
-          {!holderIsCovered && (
-            <p className="text-xs text-muted-foreground">
-              El titular no está cubierto por esta póliza.
-            </p>
-          )}
-          {policy.members.length === 0 ? (
-            <p className="text-muted-foreground">Nadie está cubierto todavía.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {policy.members.map((member) => (
-                <div key={member.id} className="flex items-center justify-between gap-4">
-                  <Link href={`/contacts/${member.person.id}`} className="underline">
-                    {member.person.firstName} {member.person.lastName}
-                  </Link>
-                  <Badge variant="outline">{POLICY_MEMBER_ROLE_LABELS[member.role]}</Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <PolicyMembersSection actor={actor} policyId={policy.id} holderIsCovered={holderIsCovered} />
 
       {policy.product.policyType === "HEALTH" && (
         <HealthPolicySection actor={actor} policyId={policy.id} />

@@ -22,6 +22,7 @@ import { CommissionsTab } from "./commissions-tab";
 import { NotesTab } from "./notes-tab";
 import { MarkSentDialog } from "../../birthdays/mark-sent-dialog";
 import { SkipGreetingButton } from "../../birthdays/greeting-quick-buttons";
+import { formatDateOnlyUS } from "@/lib/date-only";
 
 const PROFILE_TABS = [
   { key: "resumen", label: "Resumen", enabled: true },
@@ -38,10 +39,7 @@ function formatMoney(amount: { toFixed: (n: number) => string } | null | undefin
   return `$${amount.toFixed(2)}`;
 }
 
-function formatDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "long", timeZone: "UTC" }).format(date);
-}
+const formatDate = formatDateOnlyUS;
 
 export default async function ContactDetailPage({
   params,

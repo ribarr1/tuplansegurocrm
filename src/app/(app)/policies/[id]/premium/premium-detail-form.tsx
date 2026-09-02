@@ -78,7 +78,7 @@ export function PremiumDetailForm({
         </div>
 
         <div className="flex flex-col gap-1">
-          <Label htmlFor="nextPaymentDueDate">Próxima fecha de pago</Label>
+          <Label htmlFor="nextPaymentDueDate">Próxima fecha de pago (MM/DD/AAAA)</Label>
           <Input
             id="nextPaymentDueDate"
             name="nextPaymentDueDate"

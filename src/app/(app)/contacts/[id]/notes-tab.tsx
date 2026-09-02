@@ -1,10 +1,9 @@
 import { listNotesForPerson } from "@/services/notes.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { NoteForm } from "./note-form";
+import { formatDateTimeUS } from "@/lib/business-time";
 
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
-}
+const formatDate = formatDateTimeUS;
 
 // Registro operativo/informativo — NUNCA reemplaza a Task (acción
 // futura). Orden: más reciente primero.

@@ -137,6 +137,7 @@ async function HolderPolicyForm({
         id: member.person.id,
         firstName: member.person.firstName,
         lastName: member.person.lastName,
+        householdRole: member.role,
       });
     }
   }

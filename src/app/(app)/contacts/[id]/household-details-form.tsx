@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FormError, FormSuccess, FieldError } from "@/components/ui/form-feedback";
+import { US_STATES } from "@/lib/us-states";
 import { updateHouseholdAction, type HouseholdFormState } from "../household-actions";
 
 export type HouseholdDetailsDefaults = {
@@ -61,15 +62,25 @@ export function HouseholdDetailsForm({
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="state">Estado</Label>
-          <Input
+          {/* Catálogo controlado (hallazgo #15.4 de UAT) — nunca texto
+              libre. 56 opciones: un <select> nativo ya soporta
+              búsqueda por tecleo, sin necesidad de un combobox
+              adicional para un catálogo de este tamaño. */}
+          <select
             id="state"
             name="state"
-            maxLength={2}
-            placeholder="Ej. IL"
             defaultValue={values.state ?? ""}
             aria-invalid={!!state?.fieldErrors?.state}
             aria-describedby={state?.fieldErrors?.state ? "state-error" : undefined}
-          />
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Sin definir</option>
+            {US_STATES.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.name} ({s.code})
+              </option>
+            ))}
+          </select>
           <FieldError id="state-error" message={state?.fieldErrors?.state} />
         </div>
         <div className="flex flex-col gap-1">

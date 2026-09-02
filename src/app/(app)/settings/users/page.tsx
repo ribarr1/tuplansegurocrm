@@ -7,10 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ROLE_LABELS } from "@/lib/labels";
 import { CreateUserForm } from "./create-user-form";
 import { ToggleUserActiveButton } from "./toggle-active-button";
+import { formatDateUS } from "@/lib/business-time";
 
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "long", timeZone: "UTC" }).format(date);
-}
+const formatDate = formatDateUS;
 
 export default async function UsersPage() {
   const actor = await requireUser();

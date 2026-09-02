@@ -19,6 +19,7 @@ import {
   POLICY_TYPE_LABELS,
   HEALTH_COVERAGE_SOURCE_LABELS,
 } from "@/lib/labels";
+import { formatDateOnlyUS } from "@/lib/date-only";
 import { POLICY_STATUS_VALUES, POLICY_TYPE_VALUES, HEALTH_COVERAGE_SOURCE_VALUES } from "@/schemas/policy.schema";
 
 type SearchParams = {
@@ -43,10 +44,7 @@ function buildHref(current: SearchParams, overrides: Partial<SearchParams>): str
   return qs ? `/policies?${qs}` : "/policies";
 }
 
-function formatDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeZone: "UTC" }).format(date);
-}
+const formatDate = formatDateOnlyUS;
 
 function formatMoney(amount: unknown): string {
   if (amount === null || amount === undefined) return "—";

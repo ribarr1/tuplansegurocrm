@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { BILLING_FREQUENCY_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/labels";
 import { PAYMENT_STATUS_VALUES } from "@/schemas/policy.schema";
+import { formatDateOnlyUS } from "@/lib/date-only";
 
 type SearchParams = {
   q?: string;
@@ -55,12 +56,7 @@ function formatMoney(amount: { toFixed: (n: number) => string } | null): string 
   return `$${amount.toFixed(2)}`;
 }
 
-// nextPaymentDueDate es @db.Date — formatear con timeZone: "UTC" (ver
-// mismo razonamiento en premium-section.tsx).
-function formatDueDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeZone: "UTC" }).format(date);
-}
+const formatDueDate = formatDateOnlyUS;
 
 const QUICK_VIEWS = [
   { key: "all", label: "Todas", param: undefined },

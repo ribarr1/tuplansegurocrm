@@ -57,6 +57,15 @@ const coveredMemberSchema = z.object({
   role: z.enum(COVERED_MEMBER_ROLE_VALUES, "Selecciona un rol de cobertura válido."),
 });
 
+// Fase 019.7 (hallazgo #12) — agregar un miembro a una póliza ya
+// existente, por separado de la creación de la póliza.
+export const policyMemberIdSchema = z.uuid("Identificador de miembro inválido.");
+
+export const addPolicyMemberSchema = z.object({
+  personId: z.uuid("Selecciona una persona válida."),
+  role: z.enum(COVERED_MEMBER_ROLE_VALUES, "Selecciona un rol de cobertura válido."),
+});
+
 export const listPoliciesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),

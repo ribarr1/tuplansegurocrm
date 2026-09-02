@@ -92,6 +92,10 @@ export const updateCommissionExpectationSchema = z.object({
   expectedAmount: magnitudeDecimalSchema.optional(),
   agentId: nullableAgentId(),
   period: periodSchema.optional(),
+  // Fase 019.7 (hallazgo #14.5) — motivo opcional del override manual,
+  // solo tiene efecto cuando expectedAmount cambia respecto al valor
+  // calculado por la regla.
+  overrideReason: z.string().trim().max(500).optional(),
 });
 export type UpdateCommissionExpectationInput = z.infer<typeof updateCommissionExpectationSchema>;
 

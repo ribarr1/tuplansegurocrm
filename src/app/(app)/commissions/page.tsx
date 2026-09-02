@@ -49,11 +49,9 @@ function formatMoney(amount: { toFixed: (n: number) => string }): string {
   return `$${amount.toFixed(2)}`;
 }
 
-function formatPeriod(date: Date): string {
-  return new Intl.DateTimeFormat("es-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(
-    date
-  );
-}
+import { formatPeriodUS } from "@/lib/business-time";
+
+const formatPeriod = formatPeriodUS;
 
 // Comisiones es FINANCIERO/RESTRINGIDO — ASSISTANT recibe un 403 real
 // (no un redirect silencioso) si navega aquí, ver docs/DECISIONS.md.

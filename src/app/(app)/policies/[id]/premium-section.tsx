@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BILLING_FREQUENCY_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/labels";
+import { formatDateOnlyUS } from "@/lib/date-only";
 import { QuickPaymentStatusButtons } from "./quick-payment-status-buttons";
 
 function formatMoney(amount: { toFixed: (n: number) => string } | null): string {
@@ -12,15 +13,12 @@ function formatMoney(amount: { toFixed: (n: number) => string } | null): string 
   return `$${amount.toFixed(2)}`;
 }
 
-// nextPaymentDueDate es @db.Date (fecha pura, sin hora) — se formatea
-// con timeZone: "UTC" para leer el día calendario exacto tal como
-// Prisma lo entrega, igual que effectiveDate/terminationDate en
-// policies/[id]/page.tsx. No usar formatInBusinessTimeZone aquí: ese
-// helper es para instantes (timestamps), no para columnas @db.Date.
-function formatDueDate(date: Date | null): string {
-  if (!date) return "—";
-  return new Intl.DateTimeFormat("es-US", { dateStyle: "medium", timeZone: "UTC" }).format(date);
-}
+// nextPaymentDueDate es @db.Date (fecha pura, sin hora) — formatDateOnlyUS
+// lee el día calendario exacto tal como Prisma lo entrega (getters UTC),
+// igual que effectiveDate/terminationDate en policies/[id]/page.tsx.
+// No usar formatDateTimeUS aquí: ese helper es para instantes
+// (timestamps), no para columnas @db.Date.
+const formatDueDate = formatDateOnlyUS;
 
 // Prima/seguimiento de pago — módulo FINANCIERO OPERATIVO, distinto de
 // Comisiones (FINANCIERO RESTRINGIDO): ASSISTANT sí ve y edita esta

@@ -18,8 +18,11 @@ import {
   PAYMENT_STATUS_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
   POLICY_MEMBER_ROLE_LABELS,
+  HOUSEHOLD_MEMBER_ROLE_LABELS,
   HEALTH_COVERAGE_SOURCE_LABELS,
+  suggestPolicyMemberRole,
 } from "@/lib/labels";
+import type { HouseholdMemberRole } from "@/generated/prisma/client";
 import type { PolicyFormState } from "./form-helpers";
 
 export type ProductOption = {
@@ -30,7 +33,12 @@ export type ProductOption = {
   carrier: { name: string };
 };
 
-export type CoveredCandidate = { id: string; firstName: string; lastName: string };
+export type CoveredCandidate = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  householdRole: HouseholdMemberRole;
+};
 
 export function PolicyForm({
   action,
@@ -159,10 +167,15 @@ export function PolicyForm({
                   <label className="flex flex-1 items-center gap-2 text-sm">
                     <input type="checkbox" name={`member_${candidate.id}`} />
                     {candidate.firstName} {candidate.lastName}
+                    {/* Filiación familiar ya conocida vía el hogar — no se
+                        vuelve a preguntar (hallazgo #13 de UAT). */}
+                    <span className="text-xs text-muted-foreground">
+                      {HOUSEHOLD_MEMBER_ROLE_LABELS[candidate.householdRole]}
+                    </span>
                   </label>
                   <select
                     name={`role_${candidate.id}`}
-                    defaultValue="OTHER"
+                    defaultValue={suggestPolicyMemberRole(candidate.householdRole)}
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs"
                   >
                     {COVERED_MEMBER_ROLE_VALUES.map((role) => (
@@ -205,7 +218,7 @@ export function PolicyForm({
 
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="effectiveDate">Fecha efectiva</Label>
+            <Label htmlFor="effectiveDate">Fecha efectiva (MM/DD/AAAA)</Label>
             <Input
               id="effectiveDate"
               name="effectiveDate"
@@ -217,7 +230,7 @@ export function PolicyForm({
             )}
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="terminationDate">Fecha de terminación</Label>
+            <Label htmlFor="terminationDate">Fecha de terminación (MM/DD/AAAA)</Label>
             <Input
               id="terminationDate"
               name="terminationDate"
@@ -267,7 +280,7 @@ export function PolicyForm({
 
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="nextPaymentDueDate">Próximo pago</Label>
+            <Label htmlFor="nextPaymentDueDate">Próximo pago (MM/DD/AAAA)</Label>
             <Input
               id="nextPaymentDueDate"
               name="nextPaymentDueDate"

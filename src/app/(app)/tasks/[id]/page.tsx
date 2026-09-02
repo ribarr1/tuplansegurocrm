@@ -13,11 +13,10 @@ import {
   TASK_PRIORITY_BADGE_VARIANT,
 } from "@/lib/labels";
 import { TaskActionButtons } from "./task-actions-buttons";
-import { formatInBusinessTimeZone } from "@/lib/business-time";
+import { formatDateTimeUS } from "@/lib/business-time";
 
 function formatDate(date: Date | null): string {
-  if (!date) return "—";
-  return formatInBusinessTimeZone(date, { dateStyle: "medium", timeStyle: "short" });
+  return formatDateTimeUS(date);
 }
 
 export default async function TaskDetailPage({

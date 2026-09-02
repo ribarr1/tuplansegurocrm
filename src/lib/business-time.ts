@@ -152,3 +152,63 @@ export function formatInBusinessTimeZone(
 ): string {
   return new Intl.DateTimeFormat("es-US", { ...options, timeZone }).format(date);
 }
+
+// Hallazgo adicional de UAT (Fase 019.7): el CRM se usa principalmente
+// en EE. UU. — toda fecha/hora visible debe mostrarse MM/DD/YYYY (ej.
+// "09/01/2026, 5:06 PM"), nunca un formato escrito en español
+// ("1 sept 2026") ni DD/MM/YYYY. locale "en-US" + campos numéricos
+// explícitos, en vez de dateStyle/timeStyle (que en "es-US" produce
+// nombres de mes en español) — solo cambia la PRESENTACIÓN; el
+// almacenamiento sigue siendo el timestamp real, sin tocar.
+export function formatDateTimeUS(
+  date: Date | null | undefined,
+  timeZone: string = getAppTimeZone()
+): string {
+  if (!date) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  }).format(date);
+}
+
+// Igual que formatDateTimeUS pero sin hora — para un timestamp real
+// (ej. Note.createdAt, PolicyDocument.createdAt) que se muestra solo
+// como fecha. A diferencia de formatDateOnlyUS (date-only.ts), este SÍ
+// depende de zona horaria porque el valor de origen es un instante
+// real, no una fecha pura — usa la zona de negocio para decidir a qué
+// día calendario corresponde.
+export function formatDateUS(
+  date: Date | null | undefined,
+  timeZone: string = getAppTimeZone()
+): string {
+  if (!date) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).format(date);
+}
+
+// Para un período de comisión (siempre día 1 del mes, @db.Date anclado
+// a UTC) — MM/YYYY numérico en vez de "septiembre 2026".
+export function formatPeriodUS(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+// Para una ocurrencia de cumpleaños (mes/día, sin año) — MM/DD numérico
+// en vez de "15 de marzo".
+export function formatMonthDayUS(month: number, day: number): string {
+  const anchor = new Date(Date.UTC(2000, month - 1, day));
+  return new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit", timeZone: "UTC" }).format(
+    anchor
+  );
+}

@@ -61,7 +61,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 
 export const HOUSEHOLD_MEMBER_ROLE_LABELS: Record<HouseholdMemberRole, string> = {
   HEAD: "Titular del hogar",
-  SPOUSE: "Cónyuge",
+  SPOUSE: "Esposo/a",
   CHILD: "Hijo/a",
   DEPENDENT: "Dependiente",
   OTHER: "Otro",
@@ -115,10 +115,35 @@ export const POLICY_OPERATION_TYPE_LABELS: Record<PolicyOperationType, string> =
 
 export const POLICY_MEMBER_ROLE_LABELS: Record<PolicyMemberRole, string> = {
   PRIMARY: "Titular cubierto",
-  SPOUSE: "Cónyuge",
+  SPOUSE: "Esposo/a",
   DEPENDENT: "Dependiente",
   OTHER: "Otro",
 };
+
+// Fase 019.7 (hallazgo #13 de UAT): HouseholdMember.role (filiación
+// familiar real, ya capturada al armar el hogar) es el source of
+// truth de la relación — PolicyMember.role es un concepto DISTINTO
+// (rol dentro de la cobertura de la póliza) y nunca debe mezclarse ni
+// mostrarse como si fuera lo mismo. Esta función solo sugiere un
+// default razonable al agregar alguien a una póliza; el usuario puede
+// cambiarlo — no es una regla de negocio impuesta por el servicio.
+// PRIMARY queda deliberadamente fuera del mapeo: está reservado para
+// el titular vía holderCovered, nunca se asigna desde "agregar miembro".
+export function suggestPolicyMemberRole(
+  householdRole: HouseholdMemberRole
+): Exclude<PolicyMemberRole, "PRIMARY"> {
+  switch (householdRole) {
+    case "SPOUSE":
+      return "SPOUSE";
+    case "CHILD":
+    case "DEPENDENT":
+      return "DEPENDENT";
+    case "HEAD":
+    case "OTHER":
+    default:
+      return "OTHER";
+  }
+}
 
 export const BILLING_FREQUENCY_LABELS: Record<BillingFrequency, string> = {
   MONTHLY: "Mensual",

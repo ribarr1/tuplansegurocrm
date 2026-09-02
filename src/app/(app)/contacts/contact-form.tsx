@@ -83,7 +83,7 @@ export function ContactForm({
       </div>
 
       <div className="flex flex-col gap-1">
-        <Label htmlFor="dateOfBirth">Fecha de nacimiento</Label>
+        <Label htmlFor="dateOfBirth">Fecha de nacimiento (MM/DD/AAAA)</Label>
         <Input id="dateOfBirth" name="dateOfBirth" type="date" defaultValue={values.dateOfBirth} />
         {state?.fieldErrors?.dateOfBirth && (
           <p className="text-sm text-destructive">{state.fieldErrors.dateOfBirth}</p>

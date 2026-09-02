@@ -254,3 +254,25 @@ Primera migración desde la 006 (la 007/007b agregaron las tablas técnicas de B
 ### Fuera de alcance de esta migración
 
 `Address` como entidad separada, dirección propia de `Person` (sigue viviendo en `Household`), adapter de almacenamiento S3 real (solo la interfaz `FileStorage`), `AuditLog`. Ver [DECISIONS.md](./DECISIONS.md).
+
+## Migración 010 — Commission Expectation Override Tracking
+
+Fase 019.7 (UAT hallazgos #12-#15). El nombre de carpeta de la migración menciona "household_state_catalog" porque ese fue el alcance inicialmente previsto, pero el catálogo de estados (`US_STATES`, Hallazgo #15) terminó siendo puramente TypeScript (`src/lib/us-states.ts`), sin ningún cambio de schema — no se renombró la carpeta ya aplicada para no desincronizar `_prisma_migrations` con el historial real. El único cambio de base de datos real de esta fase es la extensión de `commission_expectations` para Hallazgo #14.
+
+### Cambios de esquema
+
+- **`commission_expectations`** gana 6 columnas: `calculatedAmount` (`Decimal(12,2)?`, congelado — lo que produjo `CommissionRule` al generar la fila, nunca se recalcula retroactivamente), `generatedByRuleId` (`String? @db.Uuid`, trazabilidad de qué regla generó la fila, nullable porque una expectativa creada a mano desde Fase 016 no tiene regla), `isManualOverride` (`Boolean @default(false)`), `overriddenById` (`String? @db.Uuid`), `overriddenAt` (`DateTime?`), `overrideReason` (`String?`).
+
+### Constraints e índices
+
+- `commission_expectations.generatedByRuleId` — índice
+- `commission_expectations → commission_rules` (`generatedByRuleId`) — `onDelete: SetNull` (borrar una regla nunca debe borrar el historial de expectativas que generó)
+- `commission_expectations → users` (`overriddenById`) — `onDelete: SetNull`, mismo patrón que el resto de referencias hacia `User`
+
+### Dinero
+
+`calculatedAmount` usa `Decimal(12,2)`, igual que `expectedAmount` — nunca `Float`.
+
+### Fuera de alcance de esta migración
+
+Catálogo de Ciudad/Condado/ZIP en base de datos (diferido explícitamente, ver [DECISIONS.md](./DECISIONS.md) — requiere decidir sobre registro USPS CRID/Mailer ID u otra fuente). Ningún cambio en `households.state` a nivel de columna (sigue siendo `String? @db.VarChar(2)`; la validación del catálogo `US_STATES` vive en `stateCodeSchema`, capa de aplicación).

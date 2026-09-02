@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatInBusinessTimeZone } from "@/lib/business-time";
+import { formatDateTimeUS, formatMonthDayUS } from "@/lib/business-time";
 import {
   CONTACT_STATUS_BADGE_VARIANT,
   CONTACT_STATUS_LABELS,
@@ -34,13 +34,7 @@ const VIEWS = [
   { key: "upcoming", label: "Próximos" },
 ] as const;
 
-function formatOccurrence(month: number, day: number): string {
-  // Fecha pura de calendario (mes/día) para mostrar, no un instante —
-  // se ancla en UTC y se formatea con timeZone "UTC" a propósito, mismo
-  // patrón ya usado para dateOfBirth/effectiveDate en el resto del CRM.
-  const anchor = new Date(Date.UTC(2000, month - 1, day));
-  return new Intl.DateTimeFormat("es-US", { day: "numeric", month: "long", timeZone: "UTC" }).format(anchor);
-}
+const formatOccurrence = formatMonthDayUS;
 
 export default async function BirthdaysPage({
   searchParams,
@@ -159,7 +153,7 @@ export default async function BirthdaysPage({
                   <TableCell className="text-xs text-muted-foreground">
                     {r.greeting.channel ? BIRTHDAY_GREETING_CHANNEL_LABELS[r.greeting.channel] : "—"}
                     {r.greeting.sentAt
-                      ? ` · ${formatInBusinessTimeZone(r.greeting.sentAt, { dateStyle: "medium" })}`
+                      ? ` · ${formatDateTimeUS(r.greeting.sentAt)}`
                       : ""}
                   </TableCell>
                   <TableCell className="text-right">

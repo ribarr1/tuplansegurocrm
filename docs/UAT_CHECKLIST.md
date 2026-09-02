@@ -1,4 +1,4 @@
-# Checklist de prueba funcional manual (UAT) — Fase 019.5 / 019.6
+# Checklist de prueba funcional manual (UAT) — Fase 019.5 / 019.6 / 019.7
 
 Lista de pruebas para que el dueño de TuPlanSeguro USA verifique el CRM de punta a punta, con datos de prueba (nunca el Excel real todavía). Marcar cada punto al probarlo; anotar cualquier problema encontrado para reportarlo antes de continuar con el import real.
 
@@ -100,6 +100,40 @@ Si tienes forma de ver la consola del navegador (F12 → pestaña "Console") o l
 ## 14. Cierre
 
 - [ ] Volver al Dashboard y confirmar que refleja los cambios hechos durante esta prueba (tareas, pagos, comisiones, cumpleaños).
+
+## 15. Miembros de una póliza ya existente (Fase 019.7 — Hallazgo #12)
+
+- [ ] Abrir el detalle de una póliza que ya tenga al menos un miembro del hogar SIN cubrir. En la sección "Miembros cubiertos", usar "+ Agregar miembro" y confirmar que solo aparecen las personas del hogar que **todavía no** están cubiertas por esa póliza.
+- [ ] Agregar uno de esos miembros — debe aparecer de inmediato en la lista de cubiertos, sin recargar la página manualmente.
+- [ ] Confirmar que agregar un miembro a la póliza **no** lo agrega automáticamente a ninguna otra póliza del mismo hogar (revisar otra póliza del mismo cliente y confirmar que esa persona sigue sin aparecer ahí).
+- [ ] Ir al tab "Familia" del contacto y agregar una persona nueva (ej. un hijo recién nacido) al hogar. Volver al detalle de la póliza y confirmar que esa persona nueva aparece de inmediato como candidata elegible en "+ Agregar miembro" (sin haber hecho nada más).
+- [ ] Usar "Quitar de la póliza" sobre un miembro cubierto — debe desaparecer de la lista de esa póliza, pero la persona debe seguir existiendo normalmente en el hogar y en el contacto (no se borra a la persona).
+
+## 16. Filiación familiar vs. rol en la póliza (Fase 019.7 — Hallazgo #13)
+
+- [ ] Al agregar un miembro a una póliza, confirmar que junto al nombre aparece su relación familiar real tomada del hogar (ej. "Hija", "Esposo/a") — nunca debe decir "Otro" si esa relación ya se conoce.
+- [ ] Confirmar que el rol de cobertura de la póliza (Dependiente/Otro/etc.) se sugiere automáticamente según esa relación familiar, pero puede cambiarse manualmente si hace falta.
+- [ ] En el listado de miembros cubiertos de la póliza, confirmar que se muestran **ambos** datos por separado, por ejemplo: "Camila Ibarra — Hija — Dependiente de la póliza" (nunca se debe mezclar o inventar uno a partir del otro).
+
+## 17. Comisiones generadas automáticamente por regla (Fase 019.7 — Hallazgo #14)
+
+- [ ] Crear (o confirmar que existe) una regla de comisión para un producto. Activar/crear una póliza de ese producto y confirmar que, sin usar "Generar expectativa" manualmente, ya aparece una expectativa de comisión para el mes actual en la póliza.
+- [ ] En el detalle de esa expectativa, confirmar que se distinguen visualmente el monto **Calculado** (según la regla) y el monto **Esperado** (el que se usa en el resto del sistema) cuando aún no se ha corregido nada — deben coincidir.
+- [ ] Editar manualmente el monto esperado de esa expectativa y guardar un motivo (ej. "Bono del carrier"). Confirmar que ahora se muestra un aviso indicando que el monto fue corregido manualmente, con quién lo hizo y cuándo.
+- [ ] Agregar un cuarto miembro a una póliza con una regla "por miembro" y confirmar que el cambio afecta los períodos **futuros**, pero no modifica ni recalcula ningún mes anterior ya generado o pagado.
+- [ ] Registrar un pago sobre una expectativa y luego intentar "recalcular"/volver a generar el mismo período — debe indicar que ya existe, sin tocar el monto ni el pago ya registrado.
+- [ ] Confirmar que el Dashboard de Comisiones sigue mostrando montos coherentes con lo anterior (nunca debe mostrar un monto que no provenga de una expectativa/pago real).
+
+## 18. Geografía asistida (Fase 019.7 — Hallazgo #15)
+
+- [ ] En la dirección del hogar, confirmar que el campo **Estado** ahora es una lista desplegable con los 50 estados + DC + territorios (nunca texto libre) y que solo permite elegir un valor válido del catálogo.
+- [ ] Confirmar que Ciudad, Condado y ZIP siguen siendo campos de texto por ahora (la búsqueda asistida de Ciudad/Condado/ZIP contra un catálogo público queda pendiente — ver `docs/DECISIONS.md` para el detalle de por qué se pospuso).
+
+## 19. Formato de fechas en Estados Unidos (Fase 019.7 — hallazgo adicional)
+
+- [ ] Revisar fechas visibles en Dashboard, Contactos, Hogar, Pólizas (fecha efectiva/terminación), Tareas, Cumpleaños, Primas, Comisiones, Notas y Usuarios — todas deben mostrarse como **MM/DD/AAAA** (ej. "09/01/2026"), nunca como "01/09/2026" ni con nombres de mes en español.
+- [ ] Confirmar que los campos de fecha (fecha de nacimiento, fechas de póliza, fecha de tarea) muestran la pista "(MM/DD/AAAA)" junto a la etiqueta.
+- [ ] Guardar una fecha (ej. fecha de nacimiento 03/15/1990) y recargar la página — debe seguir mostrando exactamente esa fecha, sin desplazarse un día por husos horarios.
 
 ---
 
