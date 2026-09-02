@@ -66,6 +66,7 @@ model User {
   commissionExpectations           CommissionExpectation[]
   overriddenCommissionExpectations CommissionExpectation[] @relation("CommissionExpectationOverriddenBy")
   uploadedDocuments                PolicyDocument[]
+  uploadedCommissionStatements     CommissionStatement[]
   sessions                         Session[]
   accounts                         Account[]
   auditEvents                      AuditEvent[]
@@ -299,6 +300,8 @@ model Policy {
   documents              PolicyDocument[]
   commissionRules        CommissionRule[]
   auditEvents            AuditEvent[]
+  externalReferences     PolicyExternalReference[]
+  statementRows          CommissionStatementRow[]
 
   @@index([holderId])
   @@index([productId])
@@ -626,6 +629,7 @@ model CommissionExpectation {
   generatedByRule CommissionRule?     @relation(fields: [generatedByRuleId], references: [id], onDelete: SetNull)
   overriddenBy    User?               @relation("CommissionExpectationOverriddenBy", fields: [overriddenById], references: [id], onDelete: SetNull)
   payments        CommissionPayment[]
+  statementRows   CommissionStatementRow[]
 
   @@unique([policyId, period])
   @@index([period])
@@ -649,8 +653,15 @@ model CommissionPayment {
   externalReference       String?
   notes                   String?
   createdAt               DateTime              @default(now())
+  // Fase 020 — Conciliación de comisiones: fila del statement que
+  // produjo este pago (null para pagos manuales, Fase 016). @unique:
+  // como máximo un CommissionPayment por fila de statement — es la
+  // guarda real de "no duplicar Apply de la misma fila", no una
+  // convención de aplicación.
+  statementRowId          String?               @unique @db.Uuid
 
-  commissionExpectation CommissionExpectation @relation(fields: [commissionExpectationId], references: [id], onDelete: Restrict)
+  commissionExpectation CommissionExpectation   @relation(fields: [commissionExpectationId], references: [id], onDelete: Restrict)
+  statementRow          CommissionStatementRow? @relation(fields: [statementRowId], references: [id], onDelete: SetNull)
 
   @@index([commissionExpectationId])
   @@index([receivedAt])
@@ -851,4 +862,110 @@ model AuditEvent {
   @@index([entityType, entityId, createdAt])
   @@index([actorUserId, createdAt])
   @@map("audit_events")
+}
+
+// ---------------------------------------------------------------------------
+// Migración 012 — Commission Reconciliation Foundation (Fase 020)
+// ---------------------------------------------------------------------------
+
+// Identificador externo vinculado a una Policy — el "Member ID" de un
+// reporte de agencia/upline (ej. "OSC74659064-01" de Orange/Oscar) NO
+// se asume igual a Policy.policyNumber; se guarda aparte para que el
+// matching de conciliación pueda reconocerlo en próximos statements
+// sin adivinar. `source`/`type` son strings libres (mismo criterio que
+// AuditEvent.action) — el catálogo de fuentes/tipos crece por
+// configuración, no por migración. UNIQUE(source, type, externalId):
+// un mismo identificador externo, del mismo tipo y la misma fuente,
+// nunca puede apuntar a dos Policies distintas.
+model PolicyExternalReference {
+  id         String   @id @default(uuid()) @db.Uuid
+  policyId   String   @db.Uuid
+  source     String
+  type       String
+  externalId String
+  createdAt  DateTime @default(now())
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([source, type, externalId])
+  @@index([policyId])
+  @@map("policy_external_references")
+}
+
+enum CommissionStatementStatus {
+  PREVIEW
+  APPLIED
+  DUPLICATE_BLOCKED
+}
+
+// Un archivo de reporte de comisiones subido para conciliar (Orange/
+// Oscar u otra agencia futura) — nunca el binario original (ver
+// docs/COMMISSION_RECONCILIATION.md sobre por qué no se persiste el
+// archivo en esta fase). `fingerprint` es la clave de idempotencia
+// real: un hash del CONTENIDO normalizado (filas + montos + fechas),
+// nunca solo el nombre de archivo — subir el mismo reporte dos veces
+// (incluso con otro nombre) se detecta y se bloquea el Apply duplicado.
+model CommissionStatement {
+  id              String                     @id @default(uuid()) @db.Uuid
+  source          String
+  fileName        String
+  fingerprint     String                     @unique
+  statementPeriod String?
+  uploadedById    String?                    @db.Uuid
+  uploadedAt      DateTime                   @default(now())
+  status          CommissionStatementStatus  @default(PREVIEW)
+  totalRows       Int
+  matchedRows     Int                        @default(0)
+  unmatchedRows   Int                        @default(0)
+  ambiguousRows   Int                        @default(0)
+  appliedRows     Int                        @default(0)
+  receivedTotal   Decimal                    @db.Decimal(12, 2)
+  appliedAt       DateTime?
+
+  uploadedBy User?                    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  rows       CommissionStatementRow[]
+
+  @@index([source, uploadedAt])
+  @@map("commission_statements")
+}
+
+enum CommissionStatementRowMatchStatus {
+  MATCHED
+  UNMATCHED
+  AMBIGUOUS
+  IGNORED
+  APPLIED
+}
+
+// Una fila normalizada de un CommissionStatement — nunca la fila cruda
+// del archivo original tal cual. `receivedAmount` es SIEMPRE el monto
+// que debe entrar a CommissionPayment según la regla confirmada por el
+// negocio para cada fuente (Orange/Oscar: Subtotal, nunca Total — ver
+// docs/COMMISSION_RECONCILIATION.md). `metadata` guarda solo campos
+// operativos seguros (state, carrier, saleType, rate, memberCount,
+// agentName) — nunca datos sensibles, nunca la fila cruda completa.
+model CommissionStatementRow {
+  id                 String                             @id @default(uuid()) @db.Uuid
+  statementId        String                             @db.Uuid
+  rowNumber          Int
+  externalId         String?
+  displayName        String?
+  receivedAmount     Decimal                            @db.Decimal(12, 2)
+  effectiveDate      DateTime?                          @db.Date
+  paidAt             DateTime?                          @db.Date
+  matchStatus        CommissionStatementRowMatchStatus  @default(UNMATCHED)
+  matchedPolicyId      String?                          @db.Uuid
+  matchedExpectationId String?                          @db.Uuid
+  errorCode          String?
+  metadata           Json?
+
+  statement          CommissionStatement    @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  matchedPolicy       Policy?                @relation(fields: [matchedPolicyId], references: [id], onDelete: SetNull)
+  matchedExpectation  CommissionExpectation? @relation(fields: [matchedExpectationId], references: [id], onDelete: SetNull)
+  payment             CommissionPayment?
+
+  @@index([statementId])
+  @@index([matchedPolicyId])
+  @@index([matchedExpectationId])
+  @@map("commission_statement_rows")
 }
