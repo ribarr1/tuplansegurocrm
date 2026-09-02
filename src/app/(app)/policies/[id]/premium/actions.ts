@@ -36,7 +36,7 @@ export async function updatePremiumTrackingAction(
   // Hallazgo #14: si la regla de comisión de esta póliza depende de la
   // prima (PREMIUM_MONTHLY/PREMIUM_ANNUALIZED), cambiarla puede
   // habilitar la expectativa del mes actual — best effort.
-  await autoGenerateCurrentPeriodExpectation(policyId);
+  await autoGenerateCurrentPeriodExpectation(policyId, actor);
 
   revalidatePath("/premiums");
   revalidatePath("/dashboard");

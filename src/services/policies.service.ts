@@ -13,8 +13,27 @@ import {
   listActiveProductsQuerySchema,
   policyMemberIdSchema,
   addPolicyMemberSchema,
+  renewPolicySchema,
 } from "@/schemas/policy.schema";
 import { Prisma } from "@/generated/prisma/client";
+import { recordAuditEvent, buildDiff } from "@/services/audit.service";
+import { getTodayBusinessRange } from "@/lib/business-time";
+
+const POLICY_AUDIT_FIELDS = [
+  "policyNumber",
+  "status",
+  "effectiveDate",
+  "terminationDate",
+  "premiumAmount",
+  "billingFrequency",
+  "nextPaymentDueDate",
+  "autopay",
+  "needsPaymentAssistance",
+  "paymentStatus",
+  "operationType",
+  "healthCoverageSource",
+  "productId",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Política de acceso — Policy (V1)
@@ -104,7 +123,9 @@ export function assertCanAccessPolicy(actor: AuthorizedUser, involved: PolicyAcc
   }
 }
 
-function agentAccessWhere(actor: AuthorizedUser): Prisma.PolicyWhereInput | null {
+// Exportada para que search.service.ts (Fase 019.9) reutilice
+// exactamente la misma regla de scoping — nunca reimplementarla.
+export function policyAgentAccessWhere(actor: AuthorizedUser): Prisma.PolicyWhereInput | null {
   if (actor.role === "ADMIN" || actor.role === "ASSISTANT") return null;
   return {
     OR: [
@@ -261,7 +282,7 @@ export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
       : {}),
   };
 
-  const agentWhere = agentAccessWhere(actor);
+  const agentWhere = policyAgentAccessWhere(actor);
   const finalWhere: Prisma.PolicyWhereInput = agentWhere
     ? { AND: [where, agentWhere] }
     : where;
@@ -280,6 +301,33 @@ export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
   ]);
 
   return { items, total, page, pageSize };
+}
+
+// "Vencen en 30 días" — Fase 019.9 (§28-§29). Solo pólizas todavía
+// vigentes (ACTIVE/PENDING) con terminationDate dentro de la ventana —
+// CANCELLED/EXPIRED nunca son "próximas a vencer", ya no son
+// candidatas reales de renovación. Ventana en días de calendario
+// (terminationDate es @db.Date, sin componente de hora), calculada
+// sobre "hoy" de negocio (APP_TIME_ZONE) — mismo principio que el resto
+// del Dashboard.
+export async function listExpiringPolicies(actor: AuthorizedUser, windowDays = 30) {
+  const { year, month, day } = getTodayBusinessRange();
+  const todayUTC = new Date(Date.UTC(year, month - 1, day));
+  const windowEnd = new Date(Date.UTC(year, month - 1, day + windowDays));
+
+  const where: Prisma.PolicyWhereInput = {
+    status: { in: ["ACTIVE", "PENDING"] },
+    terminationDate: { gte: todayUTC, lte: windowEnd },
+  };
+  const agentWhere = policyAgentAccessWhere(actor);
+  const finalWhere: Prisma.PolicyWhereInput = agentWhere ? { AND: [where, agentWhere] } : where;
+
+  return prisma.policy.findMany({
+    where: finalWhere,
+    select: policySelect,
+    orderBy: { terminationDate: "asc" },
+    take: 20,
+  });
 }
 
 export async function getPolicyById(actor: AuthorizedUser, rawId: unknown) {
@@ -303,7 +351,7 @@ export async function getPoliciesForPerson(actor: AuthorizedUser, rawPersonId: u
   const where: Prisma.PolicyWhereInput = {
     OR: [{ holderId: id }, { members: { some: { personId: id } } }],
   };
-  const agentWhere = agentAccessWhere(actor);
+  const agentWhere = policyAgentAccessWhere(actor);
   const finalWhere: Prisma.PolicyWhereInput = agentWhere ? { AND: [where, agentWhere] } : where;
 
   return prisma.policy.findMany({
@@ -403,6 +451,16 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
           data: { policyId: created.id, personId: member.personId, role: member.role },
         });
       }
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "Policy",
+        entityId: created.id,
+        action: "POLICY_CREATE",
+        policyId: created.id,
+        householdId,
+        contactPersonId: input.holderId,
+        summary: `Póliza ${product.policyType} creada`,
+      });
       return created.id;
     });
   } catch (error) {
@@ -422,6 +480,117 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
   return getPolicyById(actor, policyId);
 }
 
+// ---------------------------------------------------------------------------
+// Renovación de póliza — Fase 019.9 (§3-§4). Crea una Policy NUEVA
+// encadenada vía previousPolicyId, nunca modifica destructivamente la
+// anterior. holder/household se heredan siempre (mismo titular/hogar);
+// producto/billing/autopay/asistencia/agente se ofrecen como default en
+// la UI pero el usuario los confirma/edita en el mismo formulario de
+// creación (ver policy-form.tsx). policyNumber/effectiveDate/
+// terminationDate/documentos/comisiones/pagos NUNCA se copian — el
+// UNIQUE(previousPolicyId) en DB impide renovar la misma póliza dos
+// veces (P2002 -> CONFLICT).
+// ---------------------------------------------------------------------------
+
+export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown, rawInput: unknown) {
+  const oldPolicyId = parseOrThrow(policyIdSchema, rawOldPolicyId);
+  const input = parseOrThrow(renewPolicySchema, rawInput);
+
+  const oldPolicy = await prisma.policy.findUnique({
+    where: { id: oldPolicyId },
+    select: {
+      id: true,
+      holderId: true,
+      householdId: true,
+      holder: { select: { assignedAgentId: true } },
+      members: { select: { person: { select: { assignedAgentId: true } } } },
+    },
+  });
+  if (!oldPolicy) throw new AppError("NOT_FOUND", "Póliza anterior no encontrada.");
+  assertCanAccessPolicy(actor, [oldPolicy.holder, ...oldPolicy.members.map((m) => m.person)]);
+
+  const product = await assertActiveProduct(input.productId);
+  assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);
+  assertTerminationNotBeforeEffective(input.effectiveDate ?? null, input.terminationDate ?? null);
+
+  const personIds = input.coveredMembers.map((m) => m.personId);
+  const uniquePersonIds = new Set(personIds);
+  if (uniquePersonIds.size !== personIds.length) {
+    throw new AppError("VALIDATION_ERROR", "coveredMembers: Hay una persona duplicada en la cobertura.");
+  }
+  if (input.holderCovered && uniquePersonIds.has(oldPolicy.holderId)) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "coveredMembers: El titular ya se cubre automáticamente como PRIMARY, no lo agregues también como miembro."
+    );
+  }
+
+  const processedById = await resolveProcessedByIdForCreate(actor, input.processedById);
+  const membersToCreate: { personId: string; role: "PRIMARY" | "SPOUSE" | "DEPENDENT" | "OTHER" }[] = [
+    ...(input.holderCovered ? [{ personId: oldPolicy.holderId, role: "PRIMARY" as const }] : []),
+    ...input.coveredMembers,
+  ];
+
+  let newPolicyId: string;
+  try {
+    newPolicyId = await prisma.$transaction(async (tx) => {
+      const created = await tx.policy.create({
+        data: {
+          holderId: oldPolicy.holderId,
+          householdId: oldPolicy.householdId,
+          productId: input.productId,
+          policyNumber: input.policyNumber,
+          status: input.status,
+          effectiveDate: input.effectiveDate,
+          terminationDate: input.terminationDate,
+          previousPolicyId: oldPolicyId,
+          premiumAmount: input.premiumAmount,
+          billingFrequency: input.billingFrequency,
+          nextPaymentDueDate: input.nextPaymentDueDate,
+          autopay: input.autopay,
+          needsPaymentAssistance: input.needsPaymentAssistance,
+          paymentStatus: input.paymentStatus,
+          operationType: input.operationType,
+          processedById,
+          healthCoverageSource: product.policyType === "HEALTH" ? input.healthCoverageSource : null,
+        },
+      });
+      for (const member of membersToCreate) {
+        await tx.policyMember.create({
+          data: { policyId: created.id, personId: member.personId, role: member.role },
+        });
+      }
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "Policy",
+        entityId: created.id,
+        action: "POLICY_RENEW",
+        policyId: created.id,
+        householdId: oldPolicy.householdId,
+        contactPersonId: oldPolicy.holderId,
+        summary: `Póliza renovada (a partir de la póliza anterior)`,
+        metadata: { previousPolicyId: oldPolicyId },
+      });
+      return created.id;
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2003") {
+        throw new AppError("NOT_FOUND", "Una de las personas a cubrir no existe.");
+      }
+      if (error.code === "P2002") {
+        throw new AppError(
+          "CONFLICT",
+          "Esta póliza ya tiene una renovación registrada, o hay una persona duplicada en la cobertura."
+        );
+      }
+    }
+    throw error;
+  }
+
+  return getPolicyById(actor, newPolicyId);
+}
+
 export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInput: unknown) {
   const id = parseOrThrow(policyIdSchema, rawId);
   const input = parseOrThrow(updatePolicySchema, rawInput);
@@ -430,10 +599,21 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
     where: { id },
     select: {
       id: true,
+      holderId: true,
+      householdId: true,
       status: true,
       effectiveDate: true,
       terminationDate: true,
       productId: true,
+      policyNumber: true,
+      premiumAmount: true,
+      billingFrequency: true,
+      nextPaymentDueDate: true,
+      autopay: true,
+      needsPaymentAssistance: true,
+      paymentStatus: true,
+      operationType: true,
+      healthCoverageSource: true,
       product: { select: { policyType: true } },
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
@@ -489,7 +669,32 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   assertActiveHasEffectiveDate(finalStatus, finalEffectiveDate);
   assertTerminationNotBeforeEffective(finalEffectiveDate, finalTerminationDate);
 
-  await prisma.policy.update({ where: { id }, data });
+  const changes = buildDiff(existing, { ...input, ...data }, POLICY_AUDIT_FIELDS);
+  // CANCEL es el hecho más relevante cuando la póliza pasa a CANCELLED
+  // en este mismo cambio — aunque también se hayan tocado otros campos.
+  const action =
+    input.status === "CANCELLED" && existing.status !== "CANCELLED"
+      ? "POLICY_CANCEL"
+      : input.status !== undefined && input.status !== existing.status
+        ? "POLICY_STATUS_CHANGE"
+        : "POLICY_UPDATE";
+
+  await prisma.$transaction(async (tx) => {
+    await tx.policy.update({ where: { id }, data });
+    if (changes) {
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "Policy",
+        entityId: id,
+        action,
+        policyId: id,
+        householdId: existing.householdId,
+        contactPersonId: existing.holderId,
+        summary: action === "POLICY_CANCEL" ? "Póliza cancelada" : "Póliza actualizada",
+        changes,
+      });
+    }
+  });
   return getPolicyById(actor, id);
 }
 
@@ -600,12 +805,27 @@ export async function addPolicyMember(actor: AuthorizedUser, rawPolicyId: unknow
   const policy = await loadPolicyForMemberManagement(policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
 
-  const person = await prisma.person.findUnique({ where: { id: input.personId }, select: { id: true } });
+  const person = await prisma.person.findUnique({
+    where: { id: input.personId },
+    select: { id: true, firstName: true, lastName: true },
+  });
   if (!person) throw new AppError("NOT_FOUND", "Persona no encontrada.");
 
   try {
-    await prisma.policyMember.create({
-      data: { policyId, personId: input.personId, role: input.role },
+    await prisma.$transaction(async (tx) => {
+      const member = await tx.policyMember.create({
+        data: { policyId, personId: input.personId, role: input.role },
+      });
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "PolicyMember",
+        entityId: member.id,
+        action: "POLICY_ADD_MEMBER",
+        policyId,
+        householdId: policy.householdId,
+        contactPersonId: input.personId,
+        summary: `${person.firstName} ${person.lastName} agregado(a) a la póliza`,
+      });
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -626,12 +846,27 @@ export async function removePolicyMember(actor: AuthorizedUser, rawPolicyId: unk
   const policy = await loadPolicyForMemberManagement(policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
 
-  const member = await prisma.policyMember.findUnique({ where: { id: memberId }, select: { id: true, policyId: true } });
+  const member = await prisma.policyMember.findUnique({
+    where: { id: memberId },
+    select: { id: true, policyId: true, personId: true, person: { select: { firstName: true, lastName: true } } },
+  });
   if (!member || member.policyId !== policyId) {
     throw new AppError("NOT_FOUND", "Miembro de la póliza no encontrado.");
   }
 
-  await prisma.policyMember.delete({ where: { id: memberId } });
+  await prisma.$transaction(async (tx) => {
+    await tx.policyMember.delete({ where: { id: memberId } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "PolicyMember",
+      entityId: member.id,
+      action: "POLICY_REMOVE_MEMBER",
+      policyId,
+      householdId: policy.householdId,
+      contactPersonId: member.personId,
+      summary: `${member.person.firstName} ${member.person.lastName} removido(a) de la póliza`,
+    });
+  });
   return getPolicyById(actor, policyId);
 }
 
@@ -709,6 +944,18 @@ export async function linkPolicyToHousehold(
     );
   }
 
-  await prisma.policy.update({ where: { id: policyId }, data: { householdId } });
+  await prisma.$transaction(async (tx) => {
+    await tx.policy.update({ where: { id: policyId }, data: { householdId } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Policy",
+      entityId: policyId,
+      action: "POLICY_LINK_HOUSEHOLD",
+      policyId,
+      householdId,
+      contactPersonId: policy.holderId,
+      summary: "Póliza vinculada a un hogar",
+    });
+  });
   return getPolicyById(actor, policyId);
 }

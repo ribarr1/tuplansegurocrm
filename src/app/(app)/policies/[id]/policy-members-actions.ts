@@ -37,7 +37,7 @@ export async function addPolicyMemberAction(
   // Hallazgo #14: si la regla de comisión de esta póliza es PER_MEMBER,
   // agregar un miembro puede habilitar la expectativa del mes actual
   // (nunca recalcula meses ya generados/pagados) — best effort.
-  await autoGenerateCurrentPeriodExpectation(policyId);
+  await autoGenerateCurrentPeriodExpectation(policyId, actor);
 
   revalidatePath(`/policies/${policyId}`);
   return { success: true };

@@ -19,6 +19,7 @@ import { PolicyCommissionsSection } from "./commissions-section";
 import { PremiumSection } from "./premium-section";
 import { PolicyDocumentsSection } from "./documents-section";
 import { CommissionRuleSection } from "./commission-rule-section";
+import { PolicyHistorySection } from "./history-section";
 import { formatDateOnlyUS } from "@/lib/date-only";
 
 const formatDate = formatDateOnlyUS;
@@ -64,13 +65,22 @@ export default async function PolicyDetailPage({
             {POLICY_STATUS_LABELS[policy.status]}
           </Badge>
         </div>
-        <Button
-          variant="outline"
-          nativeButton={false}
-          render={<Link href={`/policies/${policy.id}/edit`} />}
-        >
-          Editar
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href={`/policies/${policy.id}/renew`} />}
+          >
+            Renovar póliza
+          </Button>
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href={`/policies/${policy.id}/edit`} />}
+          >
+            Editar
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -145,6 +155,8 @@ export default async function PolicyDetailPage({
       <PolicyDocumentsSection actor={actor} policyId={policy.id} />
 
       <PolicyTasksSection actor={actor} policyId={policy.id} />
+
+      <PolicyHistorySection actor={actor} policyId={policy.id} />
     </div>
   );
 }

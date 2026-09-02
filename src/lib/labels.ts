@@ -112,6 +112,7 @@ export const POLICY_OPERATION_TYPE_LABELS: Record<PolicyOperationType, string> =
   NEW_ENROLLMENT: "Nueva inscripción",
   RENEWAL: "Renovación",
   PLAN_CHANGE: "Cambio de plan",
+  REPLACEMENT: "Reemplazo de póliza",
 };
 
 export const POLICY_MEMBER_ROLE_LABELS: Record<PolicyMemberRole, string> = {

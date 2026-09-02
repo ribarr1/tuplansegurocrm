@@ -49,6 +49,9 @@ export function PolicyForm({
   candidates,
   showProcessedBySelect,
   activeAgents = [],
+  defaultValues,
+  defaultCoveredMemberIds,
+  submitLabel = "Crear póliza",
 }: {
   action: (state: PolicyFormState, formData: FormData) => Promise<PolicyFormState>;
   holderId: string;
@@ -57,11 +60,19 @@ export function PolicyForm({
   candidates: CoveredCandidate[];
   showProcessedBySelect: boolean;
   activeAgents?: { id: string; name: string }[];
+  // Prefill para "Renovar póliza" (Fase 019.9) — nunca incluye
+  // policyNumber/effectiveDate/terminationDate (el usuario siempre debe
+  // introducirlos de nuevo, ver docs/DECISIONS.md).
+  defaultValues?: Partial<Record<string, string>>;
+  defaultCoveredMemberIds?: string[];
+  submitLabel?: string;
 }) {
   const [state, formAction, isPending] = useActionState(action, undefined);
+  const dv = defaultValues ?? {};
+  const defaultCoveredSet = new Set(defaultCoveredMemberIds ?? []);
   const values = state?.values ?? {};
   const formKey = state ? "retry" : "initial";
-  const [selectedProductId, setSelectedProductId] = useState(values.productId ?? "");
+  const [selectedProductId, setSelectedProductId] = useState(values.productId ?? dv.productId ?? "");
   const selectedProduct = products.find((p) => p.id === selectedProductId);
   const isHealthSelected = selectedProduct?.policyType === "HEALTH";
 
@@ -88,7 +99,7 @@ export function PolicyForm({
           <select
             id="productId"
             name="productId"
-            defaultValue={values.productId ?? ""}
+            defaultValue={values.productId ?? dv.productId ?? ""}
             onChange={(e) => setSelectedProductId(e.target.value)}
             required
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
@@ -119,7 +130,7 @@ export function PolicyForm({
             <select
               id="healthCoverageSource"
               name="healthCoverageSource"
-              defaultValue={values.healthCoverageSource ?? ""}
+              defaultValue={values.healthCoverageSource ?? dv.healthCoverageSource ?? ""}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             >
               <option value="">Sin definir</option>
@@ -143,7 +154,7 @@ export function PolicyForm({
                 type="radio"
                 name="holderCovered"
                 value="true"
-                defaultChecked={(values.holderCovered ?? "false") === "true"}
+                defaultChecked={(values.holderCovered ?? dv.holderCovered ?? "false") === "true"}
               />
               Sí
             </label>
@@ -152,7 +163,7 @@ export function PolicyForm({
                 type="radio"
                 name="holderCovered"
                 value="false"
-                defaultChecked={(values.holderCovered ?? "false") === "false"}
+                defaultChecked={(values.holderCovered ?? dv.holderCovered ?? "false") === "false"}
               />
               No
             </label>
@@ -166,7 +177,11 @@ export function PolicyForm({
               {candidates.map((candidate) => (
                 <div key={candidate.id} className="flex items-center gap-3">
                   <label className="flex flex-1 items-center gap-2 text-sm">
-                    <input type="checkbox" name={`member_${candidate.id}`} />
+                    <input
+                      type="checkbox"
+                      name={`member_${candidate.id}`}
+                      defaultChecked={defaultCoveredSet.has(candidate.id)}
+                    />
                     {candidate.firstName} {candidate.lastName}
                     {/* Filiación familiar ya conocida vía el hogar — no se
                         vuelve a preguntar (hallazgo #13 de UAT). */}
@@ -264,7 +279,7 @@ export function PolicyForm({
             <select
               id="billingFrequency"
               name="billingFrequency"
-              defaultValue={values.billingFrequency ?? ""}
+              defaultValue={values.billingFrequency ?? dv.billingFrequency ?? ""}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             >
               <option value="">—</option>
@@ -306,14 +321,18 @@ export function PolicyForm({
 
         <div className="flex gap-6 text-sm">
           <label className="flex items-center gap-1.5">
-            <input type="checkbox" name="autopay" defaultChecked={values.autopay === "true"} />
+            <input
+              type="checkbox"
+              name="autopay"
+              defaultChecked={(values.autopay ?? dv.autopay) === "true"}
+            />
             Autopay
           </label>
           <label className="flex items-center gap-1.5">
             <input
               type="checkbox"
               name="needsPaymentAssistance"
-              defaultChecked={values.needsPaymentAssistance === "true"}
+              defaultChecked={(values.needsPaymentAssistance ?? dv.needsPaymentAssistance) === "true"}
             />
             Necesita asistencia para pagar
           </label>
@@ -324,7 +343,7 @@ export function PolicyForm({
           <select
             id="operationType"
             name="operationType"
-            defaultValue={values.operationType ?? "NEW_ENROLLMENT"}
+            defaultValue={values.operationType ?? dv.operationType ?? "NEW_ENROLLMENT"}
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
           >
             {POLICY_OPERATION_TYPE_VALUES.map((type) => (
@@ -341,7 +360,7 @@ export function PolicyForm({
             <select
               id="processedById"
               name="processedById"
-              defaultValue={values.processedById ?? ""}
+              defaultValue={values.processedById ?? dv.processedById ?? ""}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             >
               <option value="">Yo (quien crea la póliza)</option>
@@ -356,7 +375,7 @@ export function PolicyForm({
       </section>
 
       <Button type="submit" disabled={isPending} className="w-fit">
-        {isPending ? "Guardando…" : "Crear póliza"}
+        {isPending ? "Guardando…" : submitLabel}
       </Button>
     </form>
   );

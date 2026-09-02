@@ -144,6 +144,43 @@ export const updatePolicySchema = z
   .partial();
 export type UpdatePolicyInput = z.infer<typeof updatePolicySchema>;
 
+// Renovación de póliza (Fase 019.9, §3-§4) — mismo shape que
+// createPolicySchema salvo `holderId` (siempre el titular de la
+// póliza anterior, nunca editable en este flujo) y `operationType`
+// (default RENEWAL en vez de NEW_ENROLLMENT; el usuario puede cambiarlo
+// a PLAN_CHANGE/REPLACEMENT si en realidad no es una renovación pura —
+// evita un campo "reason" paralelo, reutiliza el enum ya existente).
+// policyNumber/effectiveDate/terminationDate deliberadamente NO se
+// prefijan desde la UI — siempre en blanco, el usuario los introduce
+// de nuevo.
+export const renewPolicySchema = z
+  .object({
+    productId: z.uuid("Selecciona un producto válido."),
+    holderCovered: z.enum(["true", "false"]).transform((v) => v === "true"),
+    coveredMembers: z.array(coveredMemberSchema).default([]),
+    policyNumber: z.string().trim().min(1).max(100).optional(),
+    status: z.enum(POLICY_STATUS_VALUES).default("PENDING"),
+    effectiveDate: z.coerce.date().optional(),
+    terminationDate: z.coerce.date().optional(),
+    premiumAmount: decimalAmountSchema.optional(),
+    billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
+    nextPaymentDueDate: z.coerce.date().optional(),
+    autopay: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+    needsPaymentAssistance: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
+    operationType: z.enum(POLICY_OPERATION_TYPE_VALUES).default("RENEWAL"),
+    processedById: z.uuid("Selecciona un usuario válido.").optional(),
+    healthCoverageSource: z.enum(HEALTH_COVERAGE_SOURCE_VALUES).optional(),
+  })
+  .refine((data) => data.status !== "ACTIVE" || data.effectiveDate !== undefined, {
+    message: "La fecha efectiva es requerida cuando el estado es Activa.",
+    path: ["effectiveDate"],
+  });
+export type RenewPolicyInput = z.infer<typeof renewPolicySchema>;
+
 export const listActiveProductsQuerySchema = z.object({
   policyType: optionalEnumFilter(POLICY_TYPE_VALUES),
   carrierId: optionalUuidFilter(),

@@ -12,6 +12,8 @@ import {
   getPolicyMembersDetailed,
   getHouseholdLinkCandidates,
   linkPolicyToHousehold,
+  renewPolicy,
+  listExpiringPolicies,
 } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -865,5 +867,149 @@ describe("policies.service", () => {
     await expect(linkPolicyToHousehold(admin, policy.id, strangerHousehold.id)).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
     });
+  });
+
+  // ---------------------------------------------------------------------
+  // Renovación de póliza — Fase 019.9 (§3).
+  // ---------------------------------------------------------------------
+
+  it("renewPolicy crea una Policy NUEVA con previousPolicyId apuntando a la anterior, sin modificarla", async () => {
+    const holder = await makePerson();
+    const oldPolicy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        policyNumber: "OLD-001",
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+
+    const renewed = trackPolicy(
+      await renewPolicy(admin, oldPolicy.id, {
+        productId: activeProductId,
+        holderCovered: "true",
+      })
+    );
+
+    expect(renewed.id).not.toBe(oldPolicy.id);
+    const renewedRaw = await prisma.policy.findUnique({ where: { id: renewed.id } });
+    expect(renewedRaw?.previousPolicyId).toBe(oldPolicy.id);
+
+    // La póliza anterior nunca se modifica destructivamente.
+    const stillOld = await getPolicyById(admin, oldPolicy.id);
+    expect(stillOld.policyNumber).toBe("OLD-001");
+    expect(stillOld.status).toBe("PENDING");
+  });
+
+  it("renewPolicy NUNCA copia policyNumber/effectiveDate/terminationDate automáticamente", async () => {
+    const holder = await makePerson();
+    const oldPolicy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        policyNumber: "OLD-002",
+        effectiveDate: new Date("2025-01-01"),
+        terminationDate: new Date("2025-12-31"),
+      })
+    );
+
+    const renewed = trackPolicy(
+      await renewPolicy(admin, oldPolicy.id, { productId: activeProductId, holderCovered: "true" })
+    );
+
+    expect(renewed.policyNumber).toBeNull();
+    expect(renewed.effectiveDate).toBeNull();
+    expect(renewed.terminationDate).toBeNull();
+  });
+
+  it("renewPolicy hereda holder y household de la póliza anterior", async () => {
+    const holder = await makePerson();
+    const household = await makeHouseholdWithMembers(holder.id, []);
+    const oldPolicy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    expect(oldPolicy.householdId).toBe(household.id);
+
+    const renewed = trackPolicy(
+      await renewPolicy(admin, oldPolicy.id, { productId: activeProductId, holderCovered: "true" })
+    );
+    expect(renewed.holder.id).toBe(holder.id);
+    expect(renewed.householdId).toBe(household.id);
+  });
+
+  it("renewPolicy rechaza una segunda renovación de la misma póliza (UNIQUE previousPolicyId)", async () => {
+    const holder = await makePerson();
+    const oldPolicy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    trackPolicy(await renewPolicy(admin, oldPolicy.id, { productId: activeProductId, holderCovered: "true" }));
+
+    await expect(
+      renewPolicy(admin, oldPolicy.id, { productId: activeProductId, holderCovered: "true" })
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  // ---------------------------------------------------------------------
+  // "Vencen en 30 días" — Fase 019.9 (§28-§29).
+  // ---------------------------------------------------------------------
+
+  it("listExpiringPolicies incluye una póliza ACTIVE con terminationDate dentro de 30 días", async () => {
+    const holder = await makePerson();
+    const soon = new Date();
+    soon.setUTCDate(soon.getUTCDate() + 10);
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        status: "ACTIVE",
+        effectiveDate: new Date("2025-01-01"),
+        terminationDate: soon,
+      })
+    );
+
+    const expiring = await listExpiringPolicies(admin, 30);
+    expect(expiring.some((p) => p.id === policy.id)).toBe(true);
+  });
+
+  it("listExpiringPolicies NUNCA incluye pólizas CANCELLED o EXPIRED", async () => {
+    const holder = await makePerson();
+    const soon = new Date();
+    soon.setUTCDate(soon.getUTCDate() + 10);
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        status: "ACTIVE",
+        effectiveDate: new Date("2025-01-01"),
+        terminationDate: soon,
+      })
+    );
+    await updatePolicy(admin, policy.id, { status: "CANCELLED" });
+
+    const expiring = await listExpiringPolicies(admin, 30);
+    expect(expiring.some((p) => p.id === policy.id)).toBe(false);
+  });
+
+  it("listExpiringPolicies excluye pólizas que vencen fuera de la ventana", async () => {
+    const holder = await makePerson();
+    const farAway = new Date();
+    farAway.setUTCDate(farAway.getUTCDate() + 90);
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        status: "ACTIVE",
+        effectiveDate: new Date("2025-01-01"),
+        terminationDate: farAway,
+      })
+    );
+
+    const expiring = await listExpiringPolicies(admin, 30);
+    expect(expiring.some((p) => p.id === policy.id)).toBe(false);
   });
 });
