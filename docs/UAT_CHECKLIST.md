@@ -196,6 +196,52 @@ Si tienes forma de ver la consola del navegador (F12 → pestaña "Console") o l
 - [ ] Buscar por número de una póliza conocida — debe aparecer en "Pólizas".
 - [ ] Como Agente, buscar el número de una póliza que NO está dentro de tu cartera — no debe aparecer en los resultados.
 
+## 27. Conciliación de comisiones — Orange/Oscar (Fase 020)
+
+- [ ] Como ADMIN, ir a `/commissions/reconciliation` y usar "Nuevo reporte" — elegir formato "Orange/Oscar" y subir un archivo CSV/XLSX de prueba con las 7 filas del ejemplo (Viridiana Cabrales, Leonardo Cardoso, Scarlen Luna Sanchez, Erynic Avila-Alvarez, Jaime Rubio Franco, Vanessa Campos, Domingo Duque Vera).
+- [ ] Confirmar que la vista previa se muestra ANTES de aplicar nada — ningún pago debe existir todavía en Comisiones.
+- [ ] Confirmar que el total normalizado del reporte es **$233**, nunca $203 (la diferencia es Asistencia, que no forma parte de la conciliación).
+- [ ] Confirmar en la fila de Viridiana Cabrales que el monto recibido mostrado es **$50** (columna Subtotal), nunca $44 (columna Total).
+- [ ] Confirmar en la fila de Vanessa Campos que el monto recibido es **$75**.
+- [ ] Confirmar que subir el mismo reporte de nuevo (o el mismo contenido con otro nombre de archivo) se detecta como duplicado y no crea un segundo reporte.
+- [ ] Para una fila sin emparejar (UNMATCHED) o ambigua (AMBIGUOUS), usar la resolución manual — buscar y seleccionar la póliza correcta.
+- [ ] Confirmar que la columna Diferencia (Recibido − Esperado) se ve correctamente para al menos una fila con diferencia distinta de cero.
+- [ ] Aplicar el reporte (solo filas emparejadas) y confirmar que se crean los pagos correspondientes en el módulo de Comisiones de cada póliza afectada.
+- [ ] Confirmar que aplicar el mismo reporte una segunda vez no duplica ningún pago.
+- [ ] Revisar el Historial (de una de las pólizas afectadas, o "Ver actividad" del ADMIN) y confirmar que aparecen los eventos de auditoría de la conciliación, sin mostrar montos ni el archivo original.
+- [ ] Como Agente, confirmar que `/commissions/reconciliation` no es accesible (403 o sin el enlace visible).
+- [ ] Como Asistente, confirmar que Comisiones (incluida la conciliación) sigue sin ningún acceso.
+
+## 28. Cancelación guiada de póliza (Fase 020)
+
+- [ ] Desde Policy Detail de una póliza activa, usar "Cancelar póliza" — confirmar que pide fecha de terminación en formato MM/DD/AAAA y un motivo opcional.
+- [ ] Guardar sin fecha — debe rechazarse (campo requerido).
+- [ ] Guardar con una fecha de terminación ANTERIOR a la fecha efectiva — debe rechazarse con un mensaje claro.
+- [ ] Guardar con una fecha válida y un motivo — confirmar que la póliza pasa a estado Cancelada y que miembros/documentos/notas/comisiones siguen visibles sin cambios.
+- [ ] Ir al Historial de la póliza y confirmar que aparece el evento de cancelación.
+- [ ] Intentar cancelar la misma póliza otra vez — debe rechazarse (ya está cancelada).
+
+## 29. Exportación CSV (Fase 020)
+
+- [ ] Como ADMIN, usar "Exportar CSV" en Contactos — confirmar que se descarga un archivo `.csv` legible con las columnas esperadas.
+- [ ] Repetir en Pólizas.
+- [ ] Repetir en Comisiones (solo ADMIN/Agente).
+- [ ] Como Asistente, confirmar que el botón de exportar Comisiones no aparece o que la descarga se rechaza (403) si se intenta la URL directamente.
+- [ ] Abrir el CSV exportado y confirmar que NO contiene SSN, datos bancarios, contraseñas, contenido de notas ni nombres/dosis de medicamentos.
+
+## 30. Actividad de usuario (Fase 020)
+
+- [ ] Como ADMIN, ir a Configuración → Usuarios y usar "Ver actividad" sobre un usuario con cambios recientes — confirmar que se muestra su historial de acciones, más reciente primero.
+- [ ] Confirmar que un usuario con rol Agente no puede acceder a esa pantalla (403 o sin el enlace visible).
+
+## 31. Fecha/hora de tareas en formato EE. UU. (Fase 020)
+
+- [ ] Crear una tarea nueva con fecha de vencimiento MM/DD/AAAA y hora en formato 12h + AM/PM (ej. 09/15/2026, 3:30 PM).
+- [ ] Guardar y confirmar que la tarea muestra la fecha/hora correcta en el listado y en el detalle.
+- [ ] Editar esa misma tarea — confirmar que el formulario de edición precarga exactamente la misma fecha/hora que se guardó (round-trip correcto).
+- [ ] Probar un caso de medianoche (12:00 AM) y uno de mediodía (12:00 PM) — confirmar que ambos se guardan y muestran correctamente, sin confundirse entre sí.
+- [ ] Confirmar que la tarea sigue apareciendo correctamente en los conteos "Tareas de hoy"/"Tareas vencidas" del Dashboard.
+
 ---
 
 **Si algo de esta lista falla o se ve distinto a lo esperado, anótalo con la mayor cantidad de detalle posible (qué se hizo, qué se esperaba, qué pasó) antes de continuar con los siguientes pasos del proyecto** (creación de usuarios reales, resolución de bloqueos de importación, segundo dry run, autorización de `--apply`).

@@ -306,3 +306,32 @@ Fase 019.9. Detalle completo del diseño y uso en [AUDIT_TRAIL.md](./AUDIT_TRAIL
 ### Fuera de alcance de esta migración
 
 Retención/expiración automática de `audit_events` (ver `AUDIT_TRAIL.md`, "Retención"). Generación de eventos durante el import legacy (diferido). Un enum de Postgres para `action` (decisión deliberada de mantenerlo como string libre, ver `AUDIT_TRAIL.md`).
+
+## Migración 012 — Conciliación de comisiones (Fase 020)
+
+Detalle funcional completo en `docs/COMMISSION_RECONCILIATION.md`; aquí solo el schema.
+
+### `commission_payments` — columna nueva
+
+- `statementRowId` (uuid?, `@unique`, FK a `commission_statement_rows`, `onDelete: SetNull`) — un pago que provino de un reporte de conciliación queda vinculado a la fila exacta que lo generó. `@unique` es la protección estructural contra duplicados: `applyCommissionStatement` no puede crear dos pagos desde la misma fila.
+
+### `policy_external_references` (nueva)
+
+`id` (uuid, PK), `policyId` (uuid, FK a `policies`, `onDelete: Cascade`), `source` (string — ej. `"ORANGE_OSCAR"`), `type` (string — ej. `"MEMBER_ID"`), `externalId` (string), `createdAt`. `@@unique([source, type, externalId])` — un identificador externo dado solo puede apuntar a una póliza. `@@index([policyId])`. Nunca se asume que un identificador externo (ej. "Member ID" de un reporte) equivale a `Policy.policyNumber` — ver `COMMISSION_RECONCILIATION.md`.
+
+### Enums nuevos
+
+- `CommissionStatementStatus`: `PREVIEW`, `APPLIED`, `DUPLICATE_BLOCKED`.
+- `CommissionStatementRowMatchStatus`: `MATCHED`, `UNMATCHED`, `AMBIGUOUS`, `IGNORED`, `APPLIED`.
+
+### `commission_statements` (nueva)
+
+`id`, `source` (string, catálogo abierto igual que `AuditEvent.action`), `fileName`, `fingerprint` (string, `@unique` — hash de idempotencia, ver `COMMISSION_RECONCILIATION.md`), `statementPeriod` (date?), `uploadedById` (uuid?, FK a `users`, `onDelete: SetNull`), `uploadedAt`, `status` (default `PREVIEW`), `totalRows`/`matchedRows`/`unmatchedRows`/`ambiguousRows`/`appliedRows` (int, contadores denormalizados recalculados en cada cambio de estado de fila), `receivedTotal` (decimal 12,2), `appliedAt` (timestamp?). `@@index([source, uploadedAt])`.
+
+### `commission_statement_rows` (nueva)
+
+`id`, `statementId` (uuid, FK a `commission_statements`, `onDelete: Cascade`), `rowNumber` (int), `externalId` (string?), `displayName` (string?), `receivedAmount` (decimal 12,2), `effectiveDate` (date?), `paidAt` (date?), `matchStatus` (default `UNMATCHED`), `matchedPolicyId` (uuid?, FK a `policies`, `onDelete: SetNull`), `matchedExpectationId` (uuid?, FK a `commission_expectations`, `onDelete: SetNull`), `errorCode` (string?), `metadata` (jsonb?). Índices en `statementId`, `matchedPolicyId`, `matchedExpectationId`.
+
+### Fuera de alcance de esta migración
+
+Persistencia del archivo binario original del reporte (usaría `FileStorage`, no `Postgres`, si se agrega en el futuro). Un modelo para chargebacks/ajustes (el adaptador actual solo produce pagos).

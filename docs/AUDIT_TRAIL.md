@@ -53,6 +53,8 @@ model AuditEvent {
 | Comisiones | `COMMISSION_RULE_CREATE`, `COMMISSION_RULE_UPDATE`, `COMMISSION_EXPECTATION_CREATE`, `COMMISSION_EXPECTATION_UPDATE`, `COMMISSION_EXPECTATION_OVERRIDE`, `COMMISSION_PAYMENT`, `COMMISSION_CHARGEBACK`, `COMMISSION_ADJUSTMENT` |
 | Documentos (`PolicyDocument`) | `DOCUMENT_UPLOAD`, `DOCUMENT_DELETE` |
 | Usuarios (`User`) | `USER_CREATE`, `USER_ACTIVATE`, `USER_DEACTIVATE` (no existe `ROLE_CHANGE` ni `PASSWORD_RESET` como acciones separadas en V1 — el rol se fija al crear y no hay flujo de reset de password todavía, ver docs/DECISIONS.md) |
+| Exportación CSV (Fase 020) | `EXPORT_CONTACTS`, `EXPORT_POLICIES`, `EXPORT_COMMISSIONS` — `entityId` es un UUID nuevo generado en el momento (nunca `actor.id`: no hay una fila real que identifique, es una acción efímera), `changes` siempre `null`, `metadata` guarda solo filtros seguros y un conteo aproximado — nunca el contenido exportado (ver `docs/COMMISSION_RECONCILIATION.md`/`docs/SECURITY.md`) |
+| Conciliación de comisiones (Fase 020) | `COMMISSION_STATEMENT_UPLOAD`, `COMMISSION_STATEMENT_MATCH`, `COMMISSION_STATEMENT_APPLY`, `COMMISSION_PAYMENT_FROM_STATEMENT` — nunca guardan el archivo original ni montos en texto libre fuera de los campos ya permitidos de `CommissionPayment` (ver `docs/COMMISSION_RECONCILIATION.md`) |
 
 `TASK_REOPEN` es un caso de `updateTask` (reabrir una tarea COMPLETED/CANCELLED) — se detecta comparando `existing.status`/`input.status`, no es una función de servicio separada.
 

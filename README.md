@@ -138,7 +138,7 @@ No existe eliminación de contactos, pólizas, compañías, productos ni tareas 
 - **"Vencida" no es un estado guardado** — se deriva de `dueAt` en el pasado + estado todavía activo (`OPEN`/`IN_PROGRESS`). Una tarea completada o cancelada nunca aparece como vencida, aunque su fecha ya haya pasado.
 - **Responsable (`assignedToId`)**: un AGENT siempre queda asignado a sí mismo al crear una tarea y nunca puede reasignarla — ADMIN y ASSISTANT pueden asignar a cualquier agente activo o dejarla sin asignar.
 - **Reabrir una tarea completada o cancelada requiere ADMIN.**
-- La fecha/hora de vencimiento se interpreta según `APP_TIME_ZONE` (ver arriba), no la zona horaria del proceso — corregido en Fase 015.
+- La fecha/hora de vencimiento se interpreta según `APP_TIME_ZONE` (ver arriba), no la zona horaria del proceso — corregido en Fase 015. La UI captura la fecha en MM/DD/AAAA y la hora en formato 12h + AM/PM (`USDateTimeInput`, Fase 020) — nunca un `<input type="datetime-local">` nativo, cuyo formato visual depende del navegador/SO.
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -189,6 +189,10 @@ Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáti
 
 Desde Policy Detail, botón "Renovar póliza" (`/policies/[id]/renew`) — crea una **póliza nueva** vinculada a la anterior vía `previousPolicyId`, nunca modifica la póliza original. Prefila producto, tipo de cobertura, facturación, autopay, asistencia de pago, agente procesador y miembros cubiertos como *defaults editables*; número de póliza y fechas siempre se capturan de nuevo. Una póliza solo puede renovarse una vez (constraint único en `previousPolicyId`).
 
+### Cancelación guiada de póliza
+
+Desde Policy Detail, botón "Cancelar póliza" abre un diálogo pidiendo fecha de terminación (requerida, MM/DD/AAAA) y motivo (opcional, texto libre) — nunca borra la `Policy` ni sus relaciones (miembros, documentos, detalle de salud, historial de comisiones, pagos, notas, auditoría se conservan intactos). No permite cancelar una póliza ya `CANCELLED`, ni una fecha de terminación anterior a la fecha efectiva. El motivo, si se escribe, se guarda solo en el `AuditEvent.metadata` de `POLICY_CANCEL` — nunca en un campo nuevo del schema ni como una `Note`.
+
 ### Buscador global
 
 Caja de búsqueda en el header (siempre visible) y página `/search` — busca Contactos por nombre/teléfono/email y Pólizas por número de póliza/producto/compañía, resultados agrupados. Ver [docs/DECISIONS.md](docs/DECISIONS.md) sobre por qué Contactos usa la misma visibilidad abierta ya establecida desde Fase 008 (no una restricción nueva por agente), mientras que Pólizas sí respeta el scoping real por agente ya existente.
@@ -237,6 +241,14 @@ Detalle de seguridad: [docs/SECURITY.md](docs/SECURITY.md).
 
 Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md) y [docs/SECURITY.md](docs/SECURITY.md).
 
+### Conciliación de comisiones (`/commissions/reconciliation`)
+
+Compara `CommissionExpectation` (lo esperado) contra pagos reales reportados por agencias/uplines. ADMIN-only: subir un reporte (CSV/XLSX), revisar la vista previa, emparejar filas ambiguas/sin emparejar manualmente, y confirmar la aplicación — nunca se cargan pagos automáticamente al subir el archivo. Único adaptador implementado: **Orange/Oscar** (`RECEIVED = columna Subtotal, nunca Total` — la Asistencia es un proceso separado). Idempotente: subir el mismo reporte dos veces nunca duplica pagos. Detalle completo: [docs/COMMISSION_RECONCILIATION.md](docs/COMMISSION_RECONCILIATION.md).
+
+### Exportación CSV
+
+Botón "Exportar CSV" en Contactos, Pólizas y Comisiones — siempre acotado a lo que el usuario ya puede ver en el listado (ASSISTANT nunca exporta Comisiones). Nunca incluye SSN, datos bancarios, credenciales, contenido de documentos ni texto de notas/medicamentos. Ver [docs/SECURITY.md](docs/SECURITY.md).
+
 ### Primas / Seguimiento de pago
 
 No existe ninguna entidad de pagos: este módulo gestiona directamente 6 campos ya existentes de `Policy` (`premiumAmount`, `billingFrequency`, `nextPaymentDueDate`, `autopay`, `needsPaymentAssistance`, `paymentStatus`). Representa **únicamente el estado actual / próximo pago** — nunca un historial de pagos, recibos, pagos parciales ni conciliación.
@@ -256,6 +268,7 @@ Detalle de diseño y política de acceso: [docs/ARCHITECTURE.md](docs/ARCHITECTU
 
 - **Al crear un usuario, se genera una contraseña temporal que se muestra en pantalla exactamente una vez** — el ADMIN debe copiarla y compartirla por un canal seguro fuera del CRM (envío automático por correo queda pendiente, requiere configurar un proveedor de email). Nunca se vuelve a mostrar ni se guarda en texto plano.
 - **No se puede desactivar al único administrador activo** — evita dejar el CRM sin nadie con acceso administrativo.
+- **"Ver actividad" (por fila de usuario, solo ADMIN)** muestra el historial de `AuditEvent` generados por ESE usuario (`actorUserId`), más reciente primero, paginado — misma redacción/allowlist que el resto del Historial, nunca el JSON crudo.
 
 Detalle de seguridad: [docs/SECURITY.md](docs/SECURITY.md).
 
