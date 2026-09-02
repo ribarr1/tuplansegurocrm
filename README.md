@@ -185,6 +185,18 @@ Idempotente (se puede correr varias veces sin duplicar), no se ejecuta automáti
 
 `seed:dev` es solo para desarrollo. La administración real del catálogo (crear compañías/productos, editarlos, activarlos/desactivarlos) se hace desde **Configuración → Compañías / Productos** (`/settings/carriers`, `/settings/products`), solo ADMIN puede crear/editar/desactivar — AGENT/ASSISTANT pueden consultar el catálogo pero no modificarlo. Un producto que ya fue usado en al menos una póliza no puede cambiar de compañía, tipo de seguro ni año de plan (protege el significado histórico de pólizas ya emitidas); desactivar una compañía vuelve inelegibles todos sus productos para pólizas nuevas, sin afectar las ya emitidas.
 
+### Renovación de póliza
+
+Desde Policy Detail, botón "Renovar póliza" (`/policies/[id]/renew`) — crea una **póliza nueva** vinculada a la anterior vía `previousPolicyId`, nunca modifica la póliza original. Prefila producto, tipo de cobertura, facturación, autopay, asistencia de pago, agente procesador y miembros cubiertos como *defaults editables*; número de póliza y fechas siempre se capturan de nuevo. Una póliza solo puede renovarse una vez (constraint único en `previousPolicyId`).
+
+### Buscador global
+
+Caja de búsqueda en el header (siempre visible) y página `/search` — busca Contactos por nombre/teléfono/email y Pólizas por número de póliza/producto/compañía, resultados agrupados. Ver [docs/DECISIONS.md](docs/DECISIONS.md) sobre por qué Contactos usa la misma visibilidad abierta ya establecida desde Fase 008 (no una restricción nueva por agente), mientras que Pólizas sí respeta el scoping real por agente ya existente.
+
+### Historial y auditoría
+
+Cada contacto y cada póliza tienen una pestaña/sección "Historial" — timeline de eventos generados automáticamente por el sistema (crear/actualizar/cancelar una póliza, agregar un miembro, actualizar el hogar, registrar un pago, etc.), con filtros por categoría y "Ver cambios" (antes/después). Distinto de Notas (texto manual del agente). Detalle completo en [docs/AUDIT_TRAIL.md](docs/AUDIT_TRAIL.md), incluyendo qué se audita, qué nunca se guarda en claro (montos financieros, credenciales, contenido de notas/medicamentos) y las reglas de autorización (ASSISTANT nunca ve eventos de Comisiones).
+
 ### Pólizas de salud
 
 `HealthPolicyDetail` es una extensión 1:1 de `Policy`, solo para pólizas con producto de tipo Salud. No se crea automáticamente al crear la póliza — desde `/policies/[id]` aparece la sección "Información del plan de salud" con un botón para agregarla cuando todavía no existe.

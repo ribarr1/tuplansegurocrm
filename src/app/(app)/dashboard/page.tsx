@@ -227,6 +227,28 @@ export default async function DashboardPage() {
             <span className="text-sm text-muted-foreground">Pólizas pendientes</span>
           </Link>
         </div>
+
+        {/* Fase 019.9 (§28-§29): "Vencen en 30 días" — nunca incluye
+            CANCELLED/EXPIRED (ver listExpiringPolicies). */}
+        {data.policies.expiringSoon.length > 0 && (
+          <Card>
+            <CardContent className="flex flex-col gap-2 pt-4 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Vencen en 30 días</span>
+              {data.policies.expiringSoon.map((p) => (
+                <Link
+                  key={p.id}
+                  href={`/policies/${p.id}`}
+                  className="flex items-center justify-between gap-2 hover:underline"
+                >
+                  <span>
+                    {p.policyNumber ?? "Póliza sin número"} — {p.holderName}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{formatDueDate(p.terminationDate)}</span>
+                </Link>
+              ))}
+            </CardContent>
+          </Card>
+        )}
       </section>
 
       {/* DINERO ------------------------------------------------------- */}

@@ -1,4 +1,4 @@
-# Checklist de prueba funcional manual (UAT) — Fase 019.5 / 019.6 / 019.7 / 019.8
+# Checklist de prueba funcional manual (UAT) — Fase 019.5 / 019.6 / 019.7 / 019.8 / 019.9
 
 Lista de pruebas para que el dueño de TuPlanSeguro USA verifique el CRM de punta a punta, con datos de prueba (nunca el Excel real todavía). Marcar cada punto al probarlo; anotar cualquier problema encontrado para reportarlo antes de continuar con el import real.
 
@@ -162,6 +162,39 @@ Si tienes forma de ver la consola del navegador (F12 → pestaña "Console") o l
 - [ ] Usar "+ Agregar proveedor", elegir un tipo (PCP/Especialista/Otro), completar nombre y teléfono, guardar.
 - [ ] Editar ese proveedor y luego eliminarlo — debe desaparecer de la lista.
 - [ ] Confirmar que un usuario con rol Agente sin acceso a ese contacto no puede ver ni editar sus medicamentos/proveedores.
+
+## 23. Historial del cliente (Fase 019.9)
+
+- [ ] Crear un contacto nuevo — ir a su pestaña "Historial" y confirmar que aparece "Contacto creado" con tu nombre y la fecha/hora.
+- [ ] Cambiar la dirección del hogar (tab Familia) — volver a Historial y confirmar que aparece el evento, con "Ver cambios" mostrando la dirección anterior y la nueva.
+- [ ] Cambiar el ingreso familiar — confirmar que aparece un evento separado con el valor anterior y el nuevo.
+- [ ] Crear una póliza para ese contacto — confirmar que aparece "Póliza ... creada" tanto en el Historial del contacto como en el Historial de la propia póliza (Policy Detail).
+- [ ] Agregar un miembro a esa póliza — confirmar el evento correspondiente, con el nombre de la persona en el resumen.
+- [ ] Editar el seguimiento de pago (prima) de la póliza — confirmar que aparece un evento de "Seguimiento de pago actualizado".
+- [ ] Cancelar la póliza (cambiar estado a Cancelada) — confirmar que aparece "Póliza cancelada" con tu usuario y la fecha exacta.
+- [ ] Probar los filtros de categoría (Contacto/Familia/Pólizas/Salud/Tareas/Notas/Primas/Comisiones/Documentos) y confirmar que cada uno muestra solo los eventos correspondientes.
+
+## 24. Auditoría — quién hizo cada cambio
+
+- [ ] Iniciar sesión como ADMIN, hacer un cambio (ej. actualizar un contacto) y confirmar en su Historial que el evento muestra tu nombre real, no un texto genérico.
+- [ ] Iniciar sesión como Agente (con acceso a un contacto propio), modificar ese contacto y confirmar que el Historial muestra el nombre del Agente, no el del ADMIN.
+- [ ] Iniciar sesión como Asistente y abrir el Historial de un contacto con pólizas/comisiones — confirmar que **no aparece ningún evento de Comisiones** (regla de comisión, expectativa, pago), aunque sí aparezcan los demás eventos (pólizas, tareas, salud, etc.).
+
+## 25. Renovación de póliza (Fase 019.9 — Hallazgo #3)
+
+- [ ] Desde el detalle de una póliza, usar "Renovar póliza".
+- [ ] Confirmar que el formulario ya trae precargado el producto/compañía de la póliza original, pero el número de póliza y las fechas están en blanco.
+- [ ] Guardar — confirmar que te lleva a una póliza **nueva** (URL distinta).
+- [ ] Volver a la póliza original y confirmar que sigue exactamente igual (mismo número, mismo estado, sin cambios).
+- [ ] En el Historial de la póliza nueva, confirmar que aparece el evento de renovación.
+- [ ] Intentar renovar la misma póliza original por segunda vez — debe rechazarse con un mensaje claro (ya tiene una renovación).
+
+## 26. Buscador global (Fase 019.9 — Hallazgo #6)
+
+- [ ] Usar la caja de búsqueda del encabezado (o ir a `/search`) y buscar por nombre de un contacto conocido — debe aparecer en "Contactos".
+- [ ] Buscar por teléfono y por correo del mismo contacto — debe aparecer en ambos casos.
+- [ ] Buscar por número de una póliza conocida — debe aparecer en "Pólizas".
+- [ ] Como Agente, buscar el número de una póliza que NO está dentro de tu cartera — no debe aparecer en los resultados.
 
 ---
 

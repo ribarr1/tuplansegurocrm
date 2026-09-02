@@ -4,7 +4,7 @@ import { getTodayBusinessRange } from "@/lib/business-time";
 import { listTasks, isTaskOverdue } from "@/services/tasks.service";
 import { listPremiumTracking } from "@/services/premiums.service";
 import { listBirthdays } from "@/services/birthdays.service";
-import { listPolicies } from "@/services/policies.service";
+import { listPolicies, listExpiringPolicies } from "@/services/policies.service";
 import { getCommissionTotalsForPeriod } from "@/services/commissions.service";
 import { TASK_CLOSED_STATUSES } from "@/schemas/task.schema";
 
@@ -168,11 +168,23 @@ async function getBirthdaysBlock(actor: AuthorizedUser) {
 }
 
 async function getPoliciesBlock(actor: AuthorizedUser) {
-  const [activeResult, pendingResult] = await Promise.all([
+  const [activeResult, pendingResult, expiringSoon] = await Promise.all([
     listPolicies(actor, { status: "ACTIVE", pageSize: 1 }),
     listPolicies(actor, { status: "PENDING", pageSize: 1 }),
+    // §28-§29: "Vencen en 30 días" — nunca CANCELLED/EXPIRED (ver
+    // listExpiringPolicies en policies.service.ts para el detalle).
+    listExpiringPolicies(actor, 30),
   ]);
-  return { activeCount: activeResult.total, pendingCount: pendingResult.total };
+  return {
+    activeCount: activeResult.total,
+    pendingCount: pendingResult.total,
+    expiringSoon: expiringSoon.map((p) => ({
+      id: p.id,
+      policyNumber: p.policyNumber,
+      terminationDate: p.terminationDate,
+      holderName: `${p.holder.firstName} ${p.holder.lastName}`,
+    })),
+  };
 }
 
 // Comisiones es FINANCIERO/RESTRINGIDO — ASSISTANT nunca llega a esta
