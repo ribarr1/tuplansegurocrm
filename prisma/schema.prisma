@@ -92,16 +92,18 @@ model Person {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  assignedAgent     User?              @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
-  householdMembers  HouseholdMember[]
-  holderPolicies    Policy[]           @relation("PolicyHolder")
-  policyMemberships PolicyMember[]     @relation("PolicyMemberPerson")
-  tasks             Task[]
-  notes             Note[]
-  birthdayGreetings BirthdayGreeting[]
-  providers         PersonProvider[]
-  medications       PersonMedication[]
-  auditEvents       AuditEvent[]
+  assignedAgent        User?                       @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  householdMembers     HouseholdMember[]
+  holderPolicies       Policy[]                    @relation("PolicyHolder")
+  policyMemberships    PolicyMember[]              @relation("PolicyMemberPerson")
+  tasks                Task[]
+  notes                Note[]
+  birthdayGreetings    BirthdayGreeting[]
+  providers            PersonProvider[]
+  medications          PersonMedication[]
+  auditEvents          AuditEvent[]
+  sensitiveIdentity    PersonSensitiveIdentity?
+  immigrationDocuments PersonImmigrationDocument[]
 
   @@index([lastName])
   @@index([phone])
@@ -286,12 +288,12 @@ model Policy {
   createdAt              DateTime              @default(now())
   updatedAt              DateTime              @updatedAt
 
-  holder                 Person                  @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
-  household              Household?              @relation(fields: [householdId], references: [id], onDelete: SetNull)
-  product                Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
-  processedBy            User?                   @relation("PolicyProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
-  previousPolicy         Policy?                 @relation("PolicyRenewal", fields: [previousPolicyId], references: [id], onDelete: Restrict)
-  renewedInto            Policy?                 @relation("PolicyRenewal")
+  holder                 Person                    @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
+  household              Household?                @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  product                Product                   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  processedBy            User?                     @relation("PolicyProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  previousPolicy         Policy?                   @relation("PolicyRenewal", fields: [previousPolicyId], references: [id], onDelete: Restrict)
+  renewedInto            Policy?                   @relation("PolicyRenewal")
   members                PolicyMember[]
   healthDetail           HealthPolicyDetail?
   tasks                  Task[]
@@ -624,10 +626,10 @@ model CommissionExpectation {
   createdAt         DateTime                    @default(now())
   updatedAt         DateTime                    @updatedAt
 
-  policy          Policy              @relation(fields: [policyId], references: [id], onDelete: Restrict)
-  agent           User?               @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  generatedByRule CommissionRule?     @relation(fields: [generatedByRuleId], references: [id], onDelete: SetNull)
-  overriddenBy    User?               @relation("CommissionExpectationOverriddenBy", fields: [overriddenById], references: [id], onDelete: SetNull)
+  policy          Policy                   @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  agent           User?                    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  generatedByRule CommissionRule?          @relation(fields: [generatedByRuleId], references: [id], onDelete: SetNull)
+  overriddenBy    User?                    @relation("CommissionExpectationOverriddenBy", fields: [overriddenById], references: [id], onDelete: SetNull)
   payments        CommissionPayment[]
   statementRows   CommissionStatementRow[]
 
@@ -723,6 +725,87 @@ model PersonMedication {
   @@index([personId])
   @@index([personId, isActive])
   @@map("person_medications")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 021 — Identidad sensible del contacto (SSN, información
+// migratoria)
+// ---------------------------------------------------------------------------
+//
+// Información administrativa proporcionada para operaciones de seguros
+// — el CRM NUNCA intenta determinar jurídicamente el estatus
+// migratorio de una persona (ver docs/DECISIONS.md). SSN y USCIS/
+// A-Number viven en PersonSensitiveIdentity, una extensión 1:1 de
+// Person (mismo patrón que HealthPolicyDetail sobre Policy) —
+// deliberadamente SEPARADA de la tabla Person en vez de columnas
+// directas ahí: así ningún `select` amplio y ya existente sobre Person
+// (personSummarySelect, listSelect, etc.) puede incluir por accidente
+// un valor cifrado solo por seleccionar campos que ya existían antes
+// de esta fase. Los valores en claro NUNCA se guardan — solo
+// "<campo>Encrypted" (ver src/lib/pii-crypto.ts, AES-256-GCM
+// recuperable, nunca hash irreversible) y "<campo>Last4" (en claro,
+// solo para mostrar el valor enmascarado por defecto sin tener que
+// descifrar).
+//
+// A-Number/USCIS Number es UN identificador por persona (asignado por
+// USCIS, el mismo across todos sus documentos) — vive aquí, NUNCA
+// duplicado en cada PersonImmigrationDocument, a diferencia del número
+// físico de cada documento (documentNumberEncrypted), que sí es propio
+// de cada documento. Ver docs/DECISIONS.md para el razonamiento
+// completo de esta separación.
+enum ImmigrationCategory {
+  US_CITIZEN
+  LAWFUL_PERMANENT_RESIDENT
+  EMPLOYMENT_AUTHORIZATION
+  OTHER
+  UNKNOWN
+}
+
+model PersonSensitiveIdentity {
+  id                   String              @id @default(uuid()) @db.Uuid
+  personId             String              @unique @db.Uuid
+  immigrationCategory  ImmigrationCategory @default(UNKNOWN)
+  ssnEncrypted         String?
+  ssnLast4             String?             @db.VarChar(4)
+  uscisNumberEncrypted String?
+  uscisNumberLast4     String?             @db.VarChar(4)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@map("person_sensitive_identities")
+}
+
+// Documento migratorio individual (tarjeta de residente, EAD, etc.) —
+// modelo normalizado en vez de columnas repetidas en Person, porque
+// una persona puede tener más de un documento a lo largo del tiempo
+// (ej. renovó su EAD) y el historial de documentos anteriores importa.
+// isActive permite marcar un documento como vencido/reemplazado sin
+// borrar su fila (mismo patrón que PersonMedication.isActive).
+enum ImmigrationDocumentType {
+  PERMANENT_RESIDENT_CARD
+  EMPLOYMENT_AUTHORIZATION_DOCUMENT
+  OTHER
+}
+
+model PersonImmigrationDocument {
+  id                      String                  @id @default(uuid()) @db.Uuid
+  personId                String                  @db.Uuid
+  documentType            ImmigrationDocumentType
+  documentNumberEncrypted String?
+  documentNumberLast4     String?                 @db.VarChar(4)
+  issuedDate              DateTime?               @db.Date
+  expirationDate          DateTime?               @db.Date
+  isActive                Boolean                 @default(true)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Restrict)
+
+  @@index([personId])
+  @@index([personId, isActive])
+  @@map("person_immigration_documents")
 }
 
 // ---------------------------------------------------------------------------
@@ -906,20 +989,20 @@ enum CommissionStatementStatus {
 // nunca solo el nombre de archivo — subir el mismo reporte dos veces
 // (incluso con otro nombre) se detecta y se bloquea el Apply duplicado.
 model CommissionStatement {
-  id              String                     @id @default(uuid()) @db.Uuid
+  id              String                    @id @default(uuid()) @db.Uuid
   source          String
   fileName        String
-  fingerprint     String                     @unique
+  fingerprint     String                    @unique
   statementPeriod String?
-  uploadedById    String?                    @db.Uuid
-  uploadedAt      DateTime                   @default(now())
-  status          CommissionStatementStatus  @default(PREVIEW)
+  uploadedById    String?                   @db.Uuid
+  uploadedAt      DateTime                  @default(now())
+  status          CommissionStatementStatus @default(PREVIEW)
   totalRows       Int
-  matchedRows     Int                        @default(0)
-  unmatchedRows   Int                        @default(0)
-  ambiguousRows   Int                        @default(0)
-  appliedRows     Int                        @default(0)
-  receivedTotal   Decimal                    @db.Decimal(12, 2)
+  matchedRows     Int                       @default(0)
+  unmatchedRows   Int                       @default(0)
+  ambiguousRows   Int                       @default(0)
+  appliedRows     Int                       @default(0)
+  receivedTotal   Decimal                   @db.Decimal(12, 2)
   appliedAt       DateTime?
 
   uploadedBy User?                    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
@@ -945,24 +1028,24 @@ enum CommissionStatementRowMatchStatus {
 // operativos seguros (state, carrier, saleType, rate, memberCount,
 // agentName) — nunca datos sensibles, nunca la fila cruda completa.
 model CommissionStatementRow {
-  id                 String                             @id @default(uuid()) @db.Uuid
-  statementId        String                             @db.Uuid
-  rowNumber          Int
-  externalId         String?
-  displayName        String?
-  receivedAmount     Decimal                            @db.Decimal(12, 2)
-  effectiveDate      DateTime?                          @db.Date
-  paidAt             DateTime?                          @db.Date
-  matchStatus        CommissionStatementRowMatchStatus  @default(UNMATCHED)
-  matchedPolicyId      String?                          @db.Uuid
-  matchedExpectationId String?                          @db.Uuid
-  errorCode          String?
-  metadata           Json?
+  id                   String                            @id @default(uuid()) @db.Uuid
+  statementId          String                            @db.Uuid
+  rowNumber            Int
+  externalId           String?
+  displayName          String?
+  receivedAmount       Decimal                           @db.Decimal(12, 2)
+  effectiveDate        DateTime?                         @db.Date
+  paidAt               DateTime?                         @db.Date
+  matchStatus          CommissionStatementRowMatchStatus @default(UNMATCHED)
+  matchedPolicyId      String?                           @db.Uuid
+  matchedExpectationId String?                           @db.Uuid
+  errorCode            String?
+  metadata             Json?
 
   statement          CommissionStatement    @relation(fields: [statementId], references: [id], onDelete: Cascade)
-  matchedPolicy       Policy?                @relation(fields: [matchedPolicyId], references: [id], onDelete: SetNull)
-  matchedExpectation  CommissionExpectation? @relation(fields: [matchedExpectationId], references: [id], onDelete: SetNull)
-  payment             CommissionPayment?
+  matchedPolicy      Policy?                @relation(fields: [matchedPolicyId], references: [id], onDelete: SetNull)
+  matchedExpectation CommissionExpectation? @relation(fields: [matchedExpectationId], references: [id], onDelete: SetNull)
+  payment            CommissionPayment?
 
   @@index([statementId])
   @@index([matchedPolicyId])

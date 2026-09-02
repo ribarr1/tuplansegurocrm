@@ -29,6 +29,16 @@ export function formatDateOnlyUS(date: Date | null | undefined): string {
   return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${year}`;
 }
 
+// "YYYY-MM-DD" — para pasar una columna @db.Date de un Server
+// Component a un Client Component (ej. USDateInput.defaultValue) como
+// string, nunca un objeto Date crudo. Mismos getters UTC que
+// getDateOnlyParts, por el mismo motivo.
+export function toDateOnlyIso(date: Date | null | undefined): string | null {
+  if (!date) return null;
+  const { year, month, day } = getDateOnlyParts(date);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 // Hallazgo #16 de UAT (Fase 019.8): el navegador decide el formato
 // visual de <input type="date"> según su propio locale/SO — puede
 // mostrar dd/mm/aaaa aunque la etiqueta diga MM/DD/AAAA. Estas

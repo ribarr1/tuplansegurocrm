@@ -128,6 +128,17 @@ describe("search.service — buscador global", () => {
     await expect(globalSearch(admin, { q: "" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
+  it("P/AG) buscar por un SSN/USCIS/A-Number/número de documento nunca devuelve resultados (no son campos buscables)", async () => {
+    const person = await makePerson({ firstName: uniqueName("SsnSearch") });
+    const { setSsn, setUscisNumber } = await import("@/services/sensitive-identity.service");
+    await setSsn(admin, { personId: person.id, ssn: "123-45-6789" });
+    await setUscisNumber(admin, { personId: person.id, uscisNumber: "A999999999" });
+    const bySsn = await globalSearch(admin, { q: "123-45-6789" });
+    const byUscis = await globalSearch(admin, { q: "A999999999" });
+    expect(bySsn.contacts.find((c) => c.id === person.id)).toBeUndefined();
+    expect(byUscis.contacts.find((c) => c.id === person.id)).toBeUndefined();
+  });
+
   it("nunca revienta con caracteres especiales en la búsqueda", async () => {
     await expect(globalSearch(admin, { q: "%_'\"--" })).resolves.toBeTruthy();
   });

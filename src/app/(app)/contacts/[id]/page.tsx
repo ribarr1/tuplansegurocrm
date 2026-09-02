@@ -19,6 +19,7 @@ import { FamilyTab } from "./family-tab";
 import { PoliciesTab } from "./policies-tab";
 import { TasksTab } from "./tasks-tab";
 import { HealthTab } from "./health-tab";
+import { IdentityTab } from "./identity-tab";
 import { CommissionsTab } from "./commissions-tab";
 import { NotesTab } from "./notes-tab";
 import { HistoryTab } from "./history-tab";
@@ -32,6 +33,7 @@ const PROFILE_TABS = [
   { key: "familia", label: "Familia", enabled: true },
   { key: "polizas", label: "Pólizas", enabled: true },
   { key: "salud", label: "Salud", enabled: true },
+  { key: "identidad", label: "Identidad", enabled: true },
   { key: "tareas", label: "Tareas", enabled: true },
   { key: "comisiones", label: "Comisiones", enabled: true },
   { key: "notas", label: "Notas", enabled: true },
@@ -142,6 +144,8 @@ export default async function ContactDetailPage({
         <TasksTab actor={actor} personId={person.id} />
       ) : activeTab === "salud" ? (
         <HealthTab actor={actor} personId={person.id} />
+      ) : activeTab === "identidad" ? (
+        <IdentityTab actor={actor} personId={person.id} />
       ) : activeTab === "comisiones" ? (
         actor.role === "ASSISTANT" ? null : <CommissionsTab actor={actor} personId={person.id} />
       ) : activeTab === "notas" ? (

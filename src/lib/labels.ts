@@ -20,6 +20,8 @@ import type {
   CommissionBase,
   CommissionPeriodicity,
   ProviderType,
+  ImmigrationCategory,
+  ImmigrationDocumentType,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -279,4 +281,21 @@ export const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
   PCP: "Médico primario (PCP)",
   SPECIALIST: "Especialista",
   OTHER: "Otro",
+};
+
+// Fase 021 — información migratoria. Información ADMINISTRATIVA
+// registrada para operaciones de seguros, nunca una conclusión legal
+// (ver docs/DECISIONS.md).
+export const IMMIGRATION_CATEGORY_LABELS: Record<ImmigrationCategory, string> = {
+  US_CITIZEN: "Ciudadano estadounidense",
+  LAWFUL_PERMANENT_RESIDENT: "Residente permanente",
+  EMPLOYMENT_AUTHORIZATION: "Autorización de empleo",
+  OTHER: "Otra categoría",
+  UNKNOWN: "No especificado",
+};
+
+export const IMMIGRATION_DOCUMENT_TYPE_LABELS: Record<ImmigrationDocumentType, string> = {
+  PERMANENT_RESIDENT_CARD: "Tarjeta de residente permanente",
+  EMPLOYMENT_AUTHORIZATION_DOCUMENT: "Permiso de trabajo / EAD",
+  OTHER: "Otro documento",
 };
