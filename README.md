@@ -1,5 +1,9 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Manual de Usuario
+
+¿Buscas cómo usar el CRM en el día a día (sin conocimientos técnicos)? Ve al [Manual de Usuario](docs/MANUAL_USUARIO.md). El resto de este README es documentación técnica del proyecto.
+
 ## Getting Started
 
 First, run the development server:
