@@ -32,7 +32,9 @@ export function CancelPolicyDialog({ policyId }: { policyId: string }) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="outline" />}>Cancelar póliza</DialogTrigger>
+      {/* Fase 025 (Hallazgo #4 de UAT, Parte D): color = destructive
+          (rojo, token del sistema) — nunca un hex hardcodeado. */}
+      <DialogTrigger render={<Button variant="destructive" />}>Cancelar póliza</DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Cancelar póliza</DialogTitle>

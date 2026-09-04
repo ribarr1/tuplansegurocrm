@@ -19,9 +19,12 @@ import {
   POLICY_STATUS_LABELS,
   POLICY_TYPE_LABELS,
   HEALTH_COVERAGE_SOURCE_LABELS,
+  POLICY_BUSINESS_SOURCE_LABELS,
 } from "@/lib/labels";
 import { formatDateOnlyUS } from "@/lib/date-only";
 import { POLICY_STATUS_VALUES, POLICY_TYPE_VALUES, HEALTH_COVERAGE_SOURCE_VALUES } from "@/schemas/policy.schema";
+
+const BUSINESS_SOURCE_VALUES = ["OWN", "REFERRAL", "UNKNOWN"] as const;
 
 type SearchParams = {
   q?: string;
@@ -30,6 +33,7 @@ type SearchParams = {
   carrierId?: string;
   healthSource?: string;
   agentId?: string;
+  businessSource?: string;
   page?: string;
 };
 
@@ -42,6 +46,7 @@ function buildHref(current: SearchParams, overrides: Partial<SearchParams>): str
   if (merged.carrierId) params.set("carrierId", merged.carrierId);
   if (merged.healthSource) params.set("healthSource", merged.healthSource);
   if (merged.agentId) params.set("agentId", merged.agentId);
+  if (merged.businessSource) params.set("businessSource", merged.businessSource);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
   const qs = params.toString();
   return qs ? `/policies?${qs}` : "/policies";
@@ -73,6 +78,9 @@ export default async function PoliciesPage({
   )
     ? sp.healthSource
     : undefined;
+  const businessSource = (BUSINESS_SOURCE_VALUES as readonly string[]).includes(sp.businessSource ?? "")
+    ? sp.businessSource
+    : undefined;
 
   const [{ items, total, pageSize }, carriers, activeAgents] = await Promise.all([
     listPolicies(actor, {
@@ -82,6 +90,7 @@ export default async function PoliciesPage({
       carrierId: sp.carrierId || undefined,
       healthSource,
       agentId: sp.agentId || undefined,
+      businessSource,
       page,
     }),
     listActiveCarriers(actor),
@@ -89,7 +98,7 @@ export default async function PoliciesPage({
   ]);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasFilters = Boolean(
-    sp.q || sp.status || sp.policyType || sp.carrierId || sp.healthSource || sp.agentId
+    sp.q || sp.status || sp.policyType || sp.carrierId || sp.healthSource || sp.agentId || sp.businessSource
   );
 
   return (
@@ -183,6 +192,22 @@ export default async function PoliciesPage({
             ))}
           </select>
         </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="businessSource">Propia/Referida</Label>
+          <select
+            id="businessSource"
+            name="businessSource"
+            defaultValue={sp.businessSource ?? ""}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Todas</option>
+            {BUSINESS_SOURCE_VALUES.map((source) => (
+              <option key={source} value={source}>
+                {POLICY_BUSINESS_SOURCE_LABELS[source]}
+              </option>
+            ))}
+          </select>
+        </div>
         {activeAgents.length > 0 && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="agentId">Agente</Label>
@@ -228,6 +253,7 @@ export default async function PoliciesPage({
                   <TableHead>Tipo</TableHead>
                   <TableHead>Compañía / producto</TableHead>
                   <TableHead>Estado</TableHead>
+                  <TableHead>Propia/Referida</TableHead>
                   <TableHead>Fecha efectiva</TableHead>
                   <TableHead>Prima</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
@@ -248,6 +274,15 @@ export default async function PoliciesPage({
                       <Badge variant={POLICY_STATUS_BADGE_VARIANT[policy.status]}>
                         {POLICY_STATUS_LABELS[policy.status]}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {policy.businessSource === "UNKNOWN" ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <Badge variant={policy.businessSource === "OWN" ? "secondary" : "outline"}>
+                          {POLICY_BUSINESS_SOURCE_LABELS[policy.businessSource]}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>{formatDate(policy.effectiveDate)}</TableCell>
                     <TableCell>{formatMoney(policy.premiumAmount)}</TableCell>

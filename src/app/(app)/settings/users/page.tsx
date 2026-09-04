@@ -62,6 +62,16 @@ export default async function UsersPage() {
                   <Link href={`/settings/users/${user.id}/activity`} className="text-sm underline">
                     Ver actividad
                   </Link>
+                  {(user.role === "AGENT" || user.role === "ADMIN") && (
+                    <>
+                      <Link href={`/settings/users/${user.id}/licenses`} className="text-sm underline">
+                        Licencias
+                      </Link>
+                      <Link href={`/settings/users/${user.id}/contracts`} className="text-sm underline">
+                        Contratos
+                      </Link>
+                    </>
+                  )}
                   <ResetPasswordDialog userId={user.id} userName={user.name} />
                   <ToggleUserActiveButton
                     userId={user.id}

@@ -20,6 +20,7 @@ import {
 import { Prisma } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
 import { getTodayBusinessRange } from "@/lib/business-time";
+import { resolvePolicyBusinessSourceAtCreation } from "@/services/policy-business-source.service";
 
 const POLICY_AUDIT_FIELDS = [
   "policyNumber",
@@ -267,7 +268,13 @@ async function assertNoOverlappingHealthCoverage(
 async function assertActiveProduct(productId: string) {
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    select: { id: true, isActive: true, policyType: true, carrier: { select: { isActive: true } } },
+    select: {
+      id: true,
+      isActive: true,
+      policyType: true,
+      carrierId: true,
+      carrier: { select: { isActive: true } },
+    },
   });
   if (!product) throw new AppError("NOT_FOUND", "Producto no encontrado.");
   if (!product.isActive) {
@@ -375,10 +382,8 @@ export async function listActiveProducts(actor: AuthorizedUser, rawQuery: unknow
 }
 
 export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
-  const { page, pageSize, search, status, policyType, carrierId, healthSource, agentId } = parseOrThrow(
-    listPoliciesQuerySchema,
-    rawQuery
-  );
+  const { page, pageSize, search, status, policyType, carrierId, healthSource, agentId, businessSource } =
+    parseOrThrow(listPoliciesQuerySchema, rawQuery);
 
   const where: Prisma.PolicyWhereInput = {
     ...(status ? { status } : {}),
@@ -386,6 +391,7 @@ export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
     ...(carrierId ? { product: { carrierId } } : {}),
     ...(healthSource ? { healthCoverageSource: healthSource } : {}),
     ...(agentId ? { holder: { assignedAgentId: agentId } } : {}),
+    ...(businessSource ? { businessSource } : {}),
     ...(search
       ? {
           OR: [
@@ -531,6 +537,16 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
 
   const processedById = await resolveProcessedByIdForCreate(actor, input.processedById);
 
+  // Fase 025 (Hallazgo #7, Parte I): Propia/Referida se calcula UNA
+  // VEZ aquí, en el momento de creación, a partir del estado del
+  // household — nunca se recalcula después (ver
+  // policy-business-source.service.ts y docs/DECISIONS.md).
+  const businessSource = await resolvePolicyBusinessSourceAtCreation({
+    householdId,
+    carrierId: product.carrierId,
+    policyType: product.policyType,
+  });
+
   const membersToCreate: { personId: string; role: "PRIMARY" | "SPOUSE" | "DEPENDENT" | "OTHER" }[] = [
     ...(input.holderCovered ? [{ personId: input.holderId, role: "PRIMARY" as const }] : []),
     ...input.coveredMembers,
@@ -558,6 +574,7 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
           holderId: input.holderId,
           householdId,
           productId: input.productId,
+          businessSource,
           policyNumber: input.policyNumber,
           status: input.status,
           effectiveDate: input.effectiveDate,
@@ -678,6 +695,17 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
   }
 
   const processedById = await resolveProcessedByIdForCreate(actor, input.processedById);
+
+  // Fase 025 (Parte I): la renovación es una póliza NUEVA — su
+  // Propia/Referida se recalcula igual que en createPolicy, nunca se
+  // copia de la póliza anterior (el producto/carrier puede cambiar en
+  // una renovación).
+  const businessSource = await resolvePolicyBusinessSourceAtCreation({
+    householdId: oldPolicy.householdId,
+    carrierId: product.carrierId,
+    policyType: product.policyType,
+  });
+
   const membersToCreate: { personId: string; role: "PRIMARY" | "SPOUSE" | "DEPENDENT" | "OTHER" }[] = [
     ...(input.holderCovered ? [{ personId: oldPolicy.holderId, role: "PRIMARY" as const }] : []),
     ...input.coveredMembers,
@@ -707,6 +735,7 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
           holderId: oldPolicy.holderId,
           householdId: oldPolicy.householdId,
           productId: input.productId,
+          businessSource,
           policyNumber: input.policyNumber,
           status: input.status,
           effectiveDate: input.effectiveDate,

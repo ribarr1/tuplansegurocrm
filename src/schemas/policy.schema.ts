@@ -89,6 +89,8 @@ export const listPoliciesQuerySchema = z.object({
   // (§39, auditoría de reportes): filtro añadido, faltaba en la lista
   // ya existente de filtros (status/tipo/compañía/salud).
   agentId: optionalUuidFilter(),
+  // Fase 025 (Parte I): Propia/Referida.
+  businessSource: optionalEnumFilter(["OWN", "REFERRAL", "UNKNOWN"] as const),
 });
 export type ListPoliciesQuery = z.infer<typeof listPoliciesQuerySchema>;
 

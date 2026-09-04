@@ -11,6 +11,7 @@ import {
   POLICY_STATUS_LABELS,
   POLICY_TYPE_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
+  POLICY_BUSINESS_SOURCE_LABELS,
 } from "@/lib/labels";
 import { PolicyMembersSection } from "./policy-members-section";
 import { HealthPolicySection } from "./health-section";
@@ -71,31 +72,54 @@ export default async function PolicyDetailPage({
           <Badge variant={POLICY_STATUS_BADGE_VARIANT[policy.status]}>
             {POLICY_STATUS_LABELS[policy.status]}
           </Badge>
+          {/* Fase 025 (Parte I): Propia/Referida — UNKNOWN (pólizas
+              históricas sin clasificar todavía) no muestra badge, para
+              no afirmar algo que no se sabe. */}
+          {policy.businessSource !== "UNKNOWN" && (
+            <Badge variant={policy.businessSource === "OWN" ? "secondary" : "outline"}>
+              {POLICY_BUSINESS_SOURCE_LABELS[policy.businessSource]}
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          {/* Hallazgo #2 de UAT (Fase 024): una póliza CANCELLED nunca
-              se renueva — si el cliente vuelve, se crea una póliza
-              nueva desde /policies/new, nunca una "renovación" de una
-              cancelada. El servicio (renewPolicy) rechaza esto también
-              del lado del servidor, este botón es solo la conveniencia
-              de UI que evita el viaje redondo. */}
+          {/* Hallazgo #2 de UAT (Fase 024) + Hallazgo #4 (Fase 025,
+              Parte D): una póliza CANCELLED nunca se renueva — si el
+              cliente vuelve, se crea una póliza nueva desde
+              /policies/new, nunca una "renovación" de una cancelada.
+              EXPIRED SÍ puede renovarse (llegar al fin del año de
+              cobertura es el origen normal de una renovación). El
+              servicio (renewPolicy) rechaza CANCELLED también del lado
+              del servidor, este botón es solo la conveniencia de UI.
+              Color: variant="secondary" = azul de marca (#2541A8,
+              token --secondary) — acción primaria/positiva. */}
           {policy.status !== "CANCELLED" && (
             <Button
-              variant="outline"
+              variant="secondary"
               nativeButton={false}
               render={<Link href={`/policies/${policy.id}/renew`} />}
             >
               Renovar póliza
             </Button>
           )}
-          <Button
-            variant="outline"
-            nativeButton={false}
-            render={<Link href={`/policies/${policy.id}/edit`} />}
-          >
-            Editar
-          </Button>
-          {policy.status !== "CANCELLED" && <CancelPolicyDialog policyId={policy.id} />}
+          {/* Hallazgo #4 de UAT (Fase 025, Parte D): CANCELLED/EXPIRED
+              son de solo lectura — Editar/Cancelar se ocultan para
+              ambos (a diferencia de Renovar, que solo se oculta para
+              CANCELLED). El servicio (updatePolicy/cancelPolicy)
+              también lo rechaza server-side — nunca se depende solo de
+              ocultar el botón. Color: variant="outline" = neutral. */}
+          {policy.status !== "CANCELLED" && policy.status !== "EXPIRED" && (
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/policies/${policy.id}/edit`} />}
+            >
+              Editar
+            </Button>
+          )}
+          {/* Color: variant="destructive" = rojo — acción destructiva. */}
+          {policy.status !== "CANCELLED" && policy.status !== "EXPIRED" && (
+            <CancelPolicyDialog policyId={policy.id} />
+          )}
         </div>
       </div>
 
