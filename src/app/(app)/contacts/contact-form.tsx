@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { USDateInput } from "@/components/ui/us-date-input";
 import { Label } from "@/components/ui/label";
-import { CONTACT_STATUS_VALUES } from "@/schemas/person.schema";
-import { CONTACT_STATUS_LABELS } from "@/lib/labels";
+import { CONTACT_STATUS_VALUES, PERSON_SEX_VALUES } from "@/schemas/person.schema";
+import { CONTACT_STATUS_LABELS, PERSON_SEX_LABELS } from "@/lib/labels";
 import type { PersonFormState } from "./form-helpers";
 
 export type ContactFormDefaultValues = {
@@ -15,6 +15,7 @@ export type ContactFormDefaultValues = {
   phone?: string | null;
   email?: string | null;
   dateOfBirth?: string; // yyyy-mm-dd
+  sex?: string;
   contactStatus?: string;
   assignedAgentId?: string | null;
 };
@@ -97,6 +98,23 @@ export function ContactForm({
         {state?.fieldErrors?.dateOfBirth && (
           <p className="text-sm text-destructive">{state.fieldErrors.dateOfBirth}</p>
         )}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="sex">Sexo</Label>
+        <select
+          id="sex"
+          name="sex"
+          defaultValue={values.sex ?? "UNKNOWN"}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {PERSON_SEX_VALUES.map((sex) => (
+            <option key={sex} value={sex}>
+              {PERSON_SEX_LABELS[sex]}
+            </option>
+          ))}
+        </select>
+        {state?.fieldErrors?.sex && <p className="text-sm text-destructive">{state.fieldErrors.sex}</p>}
       </div>
 
       {isEditing ? (

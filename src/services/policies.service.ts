@@ -15,6 +15,7 @@ import {
   addPolicyMemberSchema,
   renewPolicySchema,
   cancelPolicySchema,
+  policyTypeSchema,
 } from "@/schemas/policy.schema";
 import { Prisma } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
@@ -312,6 +313,24 @@ export async function listActiveCarriers(actor: AuthorizedUser) {
   });
 }
 
+// Hallazgo #5 de UAT (Fase 024): Carrier es genérico (una compañía
+// puede vender HEALTH, DENTAL, SUPPLEMENTAL, etc. bajo distintos
+// Product) — Carrier NUNCA tiene su propio policyType. Qué carriers
+// aparecen disponibles para un tipo de póliza se DERIVA siempre de sus
+// Product activos de ese tipo, nunca de un campo propio en Carrier.
+// Usado por el combo "Compañía" al crear una póliza: si el usuario ya
+// eligió Tipo de seguro, este combo debe mostrar SOLO carriers que
+// realmente puedan venderlo hoy.
+export async function listCarriersForPolicyType(actor: AuthorizedUser, rawPolicyType: unknown) {
+  void actor;
+  const policyType = parseOrThrow(policyTypeSchema, rawPolicyType);
+  return prisma.carrier.findMany({
+    where: { isActive: true, products: { some: { isActive: true, policyType } } },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+}
+
 export async function listActiveProducts(actor: AuthorizedUser, rawQuery: unknown) {
   void actor;
   const { policyType, carrierId } = parseOrThrow(listActiveProductsQuerySchema, rawQuery);
@@ -591,12 +610,27 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
       id: true,
       holderId: true,
       householdId: true,
+      status: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
     },
   });
   if (!oldPolicy) throw new AppError("NOT_FOUND", "Póliza anterior no encontrada.");
   assertCanAccessPolicy(actor, [oldPolicy.holder, ...oldPolicy.members.map((m) => m.person)]);
+
+  // Hallazgo #2 de UAT (Fase 024): una póliza CANCELLED nunca se
+  // renueva — no representa cobertura vigente que continúa, es un
+  // hecho cerrado. Si el cliente vuelve a contratar, el flujo correcto
+  // es crear una póliza nueva (createPolicy) con su propio
+  // operationType, nunca "renovar" una cancelada. Rechazado también
+  // server-side (no solo ocultando el botón) para que una llamada
+  // directa a la action no pueda saltarse la regla.
+  if (oldPolicy.status === "CANCELLED") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Esta póliza está cancelada y no puede renovarse. Crea una póliza nueva si el cliente vuelve a contratar."
+    );
+  }
 
   const product = await assertActiveProduct(input.productId);
   assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);

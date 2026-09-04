@@ -18,6 +18,7 @@ const PERSON_FORM_FIELDS = [
   "secondLastName",
   "preferredName",
   "dateOfBirth",
+  "sex",
   "email",
   "phone",
   "contactStatus",

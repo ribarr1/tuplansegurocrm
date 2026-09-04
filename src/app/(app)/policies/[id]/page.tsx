@@ -73,13 +73,21 @@ export default async function PolicyDetailPage({
           </Badge>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            nativeButton={false}
-            render={<Link href={`/policies/${policy.id}/renew`} />}
-          >
-            Renovar póliza
-          </Button>
+          {/* Hallazgo #2 de UAT (Fase 024): una póliza CANCELLED nunca
+              se renueva — si el cliente vuelve, se crea una póliza
+              nueva desde /policies/new, nunca una "renovación" de una
+              cancelada. El servicio (renewPolicy) rechaza esto también
+              del lado del servidor, este botón es solo la conveniencia
+              de UI que evita el viaje redondo. */}
+          {policy.status !== "CANCELLED" && (
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href={`/policies/${policy.id}/renew`} />}
+            >
+              Renovar póliza
+            </Button>
+          )}
           <Button
             variant="outline"
             nativeButton={false}

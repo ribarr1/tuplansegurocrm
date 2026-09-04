@@ -20,6 +20,15 @@ describe("formDataToPersonInput", () => {
     const result = formDataToPersonInput(fd({ firstName: "Ana", assignedAgentId: "abc-123" }));
     expect(result.assignedAgentId).toBe("abc-123");
   });
+
+  // Fase 024 (Hallazgo #1): bug real encontrado en UAT — "sex" faltaba
+  // en PERSON_FORM_FIELDS, así que el formulario de Editar contacto
+  // guardaba un 200 OK sin error visible pero nunca persistía el
+  // cambio de Sexo (el POST llegaba al servidor sin ese campo).
+  it("incluye sex cuando viene (bug real de Fase 024: faltaba en PERSON_FORM_FIELDS)", () => {
+    const result = formDataToPersonInput(fd({ firstName: "Ana", sex: "FEMALE" }));
+    expect(result.sex).toBe("FEMALE");
+  });
 });
 
 describe("toFormState", () => {

@@ -12,6 +12,9 @@ export const CONTACT_STATUS_VALUES = [
   "OTHER",
 ] as const;
 
+// Valores reales de PersonSex (prisma/schema.prisma) — Fase 024.
+export const PERSON_SEX_VALUES = ["MALE", "FEMALE", "OTHER", "UNKNOWN"] as const;
+
 export const personIdSchema = z.uuid();
 
 export const listPeopleQuerySchema = z.object({
@@ -23,11 +26,11 @@ export const listPeopleQuerySchema = z.object({
 export type ListPeopleQuery = z.infer<typeof listPeopleQuerySchema>;
 
 // Campos reales de Person (prisma/schema.prisma) — sin address ni
-// datos demográficos (sex/preferredLanguage/countryOfOrigin), que
-// deliberadamente no existen todavía en el modelo (ver docs/DECISIONS.md).
-// Mensajes en español y legibles: llegan tal cual hasta la UI (ver
-// services/errors.ts::parseOrThrow), nunca el texto técnico por
-// defecto de Zod.
+// preferredLanguage/countryOfOrigin, que deliberadamente no existen
+// todavía en el modelo (ver docs/DECISIONS.md). `sex` sí existe desde
+// Fase 024. Mensajes en español y legibles: llegan tal cual hasta la
+// UI (ver services/errors.ts::parseOrThrow), nunca el texto técnico
+// por defecto de Zod.
 const personFieldsSchema = {
   firstName: z.string().trim().min(1, "El nombre es requerido.").max(100),
   middleName: z.string().trim().min(1).max(100).optional(),
@@ -38,6 +41,7 @@ const personFieldsSchema = {
   dateOfBirth: dateOnlySchema()
     .refine((d) => d <= new Date(), "La fecha de nacimiento no puede ser en el futuro.")
     .optional(),
+  sex: z.enum(PERSON_SEX_VALUES).default("UNKNOWN"),
   email: z.email("Correo electrónico inválido.").optional(),
   // Validación básica de longitud, sin normalización estricta E.164 —
   // el dato llega en formatos variados desde el proceso actual.
@@ -73,5 +77,11 @@ export type CreatePersonInput = z.infer<typeof createPersonSchema>;
 export const updatePersonSchema = z
   .object(personFieldsSchema)
   .partial()
-  .extend({ contactStatus: z.enum(CONTACT_STATUS_VALUES).optional() });
+  .extend({
+    contactStatus: z.enum(CONTACT_STATUS_VALUES).optional(),
+    // Mismo bug class que contactStatus arriba: .partial() no anula
+    // .default("UNKNOWN") de sex — se sobreescribe sin default para
+    // que "ausente" signifique "no tocar".
+    sex: z.enum(PERSON_SEX_VALUES).optional(),
+  });
 export type UpdatePersonInput = z.infer<typeof updatePersonSchema>;

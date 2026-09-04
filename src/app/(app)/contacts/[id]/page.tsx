@@ -11,6 +11,7 @@ import {
   CONTACT_STATUS_LABELS,
   BIRTHDAY_GREETING_STATUS_LABELS,
   BIRTHDAY_GREETING_STATUS_BADGE_VARIANT,
+  PERSON_SEX_LABELS,
 } from "@/lib/labels";
 import { getBirthdayForPerson } from "@/services/birthdays.service";
 import { getHouseholdsForPerson } from "@/services/households.service";
@@ -151,7 +152,16 @@ export default async function ContactDetailPage({
       ) : activeTab === "notas" ? (
         <NotesTab actor={actor} personId={person.id} />
       ) : activeTab === "historial" ? (
-        <HistoryTab actor={actor} personId={person.id} category={category} />
+        // Hallazgo #4 de UAT (Fase 024): sin key, el cliente de Next
+        // reutilizaba el subárbol de HistoryTab al navegar entre
+        // filtros de categoría (mismo tipo de componente en la misma
+        // posición) y la lista de eventos quedaba visualmente
+        // congelada en la del filtro anterior — el servidor SÍ filtraba
+        // correctamente (confirmado con una navegación completa a la
+        // misma URL), el problema era puramente de reconciliación
+        // cliente-side. Forzar un remount por categoría, mismo patrón
+        // ya establecido para USDateInput/Input en Fase 022 (Hallazgo #7).
+        <HistoryTab key={category ?? "all"} actor={actor} personId={person.id} category={category} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           <Card>
@@ -172,6 +182,10 @@ export default async function ContactDetailPage({
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground">Fecha de nacimiento</span>
                 <span>{formatDate(person.dateOfBirth)}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Sexo</span>
+                <span>{PERSON_SEX_LABELS[person.sex]}</span>
               </div>
               {birthday && (
                 <div className="flex items-center justify-between gap-4">

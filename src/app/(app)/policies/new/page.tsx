@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/authorization";
 import { getPersonById } from "@/services/people.service";
 import { getHouseholdsForPerson } from "@/services/households.service";
-import { listActiveCarriers, listActiveProducts } from "@/services/policies.service";
+import { listActiveCarriers, listCarriersForPolicyType, listActiveProducts } from "@/services/policies.service";
 import { listActiveAgents } from "@/services/users.service";
 import { listPeople } from "@/services/people.service";
 import { AppError } from "@/services/errors";
@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { POLICY_TYPE_VALUES } from "@/schemas/policy.schema";
-import { POLICY_TYPE_LABELS } from "@/lib/labels";
 import { PolicyForm, type CoveredCandidate } from "../policy-form";
+import { PolicyCatalogFilter } from "../policy-catalog-filter";
 import { createPolicyAction } from "../actions";
 
 type SearchParams = {
@@ -33,8 +33,6 @@ export default async function NewPolicyPage({
   const policyType = (POLICY_TYPE_VALUES as readonly string[]).includes(sp.policyType ?? "")
     ? sp.policyType
     : undefined;
-
-  const carriers = await listActiveCarriers(actor);
 
   let holderSearchResults: { id: string; firstName: string; lastName: string; phone: string | null }[] = [];
   if (sp.holderSearch) {
@@ -107,7 +105,6 @@ export default async function NewPolicyPage({
           holderId={sp.holderId}
           policyType={policyType}
           carrierId={sp.carrierId || undefined}
-          carriers={carriers}
         />
       )}
     </div>
@@ -118,12 +115,10 @@ async function HolderPolicyForm({
   holderId,
   policyType,
   carrierId,
-  carriers,
 }: {
   holderId: string;
   policyType: string | undefined;
   carrierId: string | undefined;
-  carriers: { id: string; name: string }[];
 }) {
   const actor = await requireUser();
 
@@ -137,9 +132,15 @@ async function HolderPolicyForm({
     throw error;
   }
 
-  const [households, products] = await Promise.all([
+  // Hallazgo #5 de UAT (Fase 024): sin Tipo de seguro elegido todavía,
+  // no hay forma de saber qué carriers son relevantes — se muestran
+  // todos los activos. En cuanto se elige un Tipo, el combo se acota a
+  // SOLO carriers con al menos un Product activo de ese tipo (Carrier
+  // nunca tiene su propio policyType, se deriva siempre de sus Product).
+  const [households, products, carriers] = await Promise.all([
     getHouseholdsForPerson(actor, holderId),
     listActiveProducts(actor, { policyType, carrierId }),
+    policyType ? listCarriersForPolicyType(actor, policyType) : listActiveCarriers(actor),
   ]);
 
   const candidateMap = new Map<string, CoveredCandidate>();
@@ -161,44 +162,12 @@ async function HolderPolicyForm({
 
   return (
     <>
-      <form method="GET" className="flex flex-wrap items-end gap-3 rounded-md border p-4">
-        <input type="hidden" name="holderId" value={holderId} />
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="policyType">Tipo de seguro</Label>
-          <select
-            id="policyType"
-            name="policyType"
-            defaultValue={policyType ?? ""}
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="">Todos</option>
-            {POLICY_TYPE_VALUES.map((type) => (
-              <option key={type} value={type}>
-                {POLICY_TYPE_LABELS[type]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="carrierId">Compañía</Label>
-          <select
-            id="carrierId"
-            name="carrierId"
-            defaultValue={carrierId ?? ""}
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="">Todas</option>
-            {carriers.map((carrier) => (
-              <option key={carrier.id} value={carrier.id}>
-                {carrier.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <Button type="submit" variant="secondary">
-          Filtrar productos
-        </Button>
-      </form>
+      <PolicyCatalogFilter
+        holderId={holderId}
+        policyType={policyType}
+        carrierId={carrierId}
+        carriers={carriers}
+      />
 
       <PolicyForm
         action={createPolicyAction}

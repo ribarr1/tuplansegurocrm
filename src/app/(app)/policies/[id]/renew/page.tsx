@@ -1,8 +1,10 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/authorization";
 import { getPolicyById, listActiveProducts } from "@/services/policies.service";
 import { AppError } from "@/services/errors";
 import { listActiveAgents } from "@/services/users.service";
+import { Button } from "@/components/ui/button";
 import { PolicyForm, type CoveredCandidate } from "../../policy-form";
 import { renewPolicyAction } from "../../actions";
 
@@ -25,6 +27,24 @@ export default async function RenewPolicyPage({ params }: { params: Promise<{ id
       notFound();
     }
     throw error;
+  }
+
+  // Hallazgo #2 de UAT (Fase 024): defensa en profundidad — el botón
+  // "Renovar póliza" ya está oculto para pólizas CANCELLED y el
+  // servicio (renewPolicy) también lo rechaza, pero si alguien navega
+  // directo a esta URL debe ver un mensaje claro, no un error crudo.
+  if (oldPolicy.status === "CANCELLED") {
+    return (
+      <div className="flex flex-col items-center gap-3 p-16 text-center">
+        <p className="text-sm text-muted-foreground">
+          Esta póliza está cancelada y no puede renovarse. Si el cliente vuelve a contratar, crea una
+          póliza nueva.
+        </p>
+        <Button variant="outline" nativeButton={false} render={<Link href={`/policies/${id}`} />}>
+          Volver a la póliza
+        </Button>
+      </div>
+    );
   }
 
   const products = await listActiveProducts(actor, { policyType: oldPolicy.product.policyType });

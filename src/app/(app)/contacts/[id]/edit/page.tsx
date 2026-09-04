@@ -60,6 +60,7 @@ export default async function EditContactPage({
           dateOfBirth: person.dateOfBirth
             ? person.dateOfBirth.toISOString().slice(0, 10)
             : undefined,
+          sex: person.sex,
           contactStatus: person.contactStatus,
           assignedAgentId: person.assignedAgentId,
         }}

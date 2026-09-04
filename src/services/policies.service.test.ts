@@ -15,6 +15,7 @@ import {
   renewPolicy,
   listExpiringPolicies,
   cancelPolicy,
+  listCarriersForPolicyType,
 } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -22,6 +23,7 @@ const createdUserIds: string[] = [];
 const createdPersonIds: string[] = [];
 const createdPolicyIds: string[] = [];
 const createdHouseholdIds: string[] = [];
+const createdExtraCarrierIds: string[] = [];
 let carrierId: string;
 let activeProductId: string;
 let inactiveProductId: string;
@@ -89,13 +91,83 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
+  // previousPolicyId es auto-referencia @unique con onDelete: Restrict
+  // (ver prisma/schema.prisma) — hay que desvincularla antes de borrar
+  // el lote completo, o un borrado en el "orden equivocado" dentro del
+  // mismo deleteMany viola la FK (mismo fix ya aplicado en
+  // src/import/book-of-business/wipe.ts, Fase 023).
+  // Nulificar por AMBOS lados: filas trackeadas cuyo propio
+  // previousPolicyId apunta a otra trackeada, Y cualquier fila (incluso
+  // no trackeada, ej. un renewPolicy cuyo resultado no se haya
+  // trackeado explícitamente en algún test) cuyo previousPolicyId
+  // apunte HACIA una de las trackeadas.
+  await prisma.policy.updateMany({ where: { id: { in: createdPolicyIds } }, data: { previousPolicyId: null } });
+  await prisma.policy.updateMany({
+    where: { previousPolicyId: { in: createdPolicyIds } },
+    data: { previousPolicyId: null },
+  });
   await prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } });
   await prisma.householdMember.deleteMany({ where: { householdId: { in: createdHouseholdIds } } });
   await prisma.household.deleteMany({ where: { id: { in: createdHouseholdIds } } });
   await prisma.product.deleteMany({ where: { carrierId } });
   await prisma.carrier.deleteMany({ where: { id: carrierId } });
+  await prisma.product.deleteMany({ where: { carrierId: { in: createdExtraCarrierIds } } });
+  await prisma.carrier.deleteMany({ where: { id: { in: createdExtraCarrierIds } } });
   await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+});
+
+// Hallazgo #5 de UAT (Fase 024): Carrier es genérico, nunca tiene su
+// propio policyType — la disponibilidad de un carrier para un tipo de
+// póliza se deriva SIEMPRE de sus Product activos de ese tipo.
+describe("policies.service — listCarriersForPolicyType (Hallazgo #5)", () => {
+  it("solo devuelve carriers con al menos un Product ACTIVE del tipo pedido", async () => {
+    // El carrier del fixture principal (carrierId) solo tiene productos HEALTH.
+    const healthCarriers = await listCarriersForPolicyType(admin, "HEALTH");
+    expect(healthCarriers.map((c) => c.id)).toContain(carrierId);
+
+    const dentalCarriers = await listCarriersForPolicyType(admin, "DENTAL");
+    expect(dentalCarriers.map((c) => c.id)).not.toContain(carrierId);
+  });
+
+  it("un carrier que vende varios tipos aparece SOLO en los tipos que realmente vende", async () => {
+    const carrier = await prisma.carrier.create({ data: { name: `Multi-tipo ${Date.now()}`, isActive: true } });
+    createdExtraCarrierIds.push(carrier.id);
+    await prisma.product.create({
+      data: { carrierId: carrier.id, name: "Plan Dental Multi", policyType: "DENTAL", isActive: true },
+    });
+    await prisma.product.create({
+      data: { carrierId: carrier.id, name: "Plan Supplemental Multi", policyType: "SUPPLEMENTAL", isActive: true },
+    });
+
+    const dental = await listCarriersForPolicyType(admin, "DENTAL");
+    const supplemental = await listCarriersForPolicyType(admin, "SUPPLEMENTAL");
+    const health = await listCarriersForPolicyType(admin, "HEALTH");
+    expect(dental.map((c) => c.id)).toContain(carrier.id);
+    expect(supplemental.map((c) => c.id)).toContain(carrier.id);
+    expect(health.map((c) => c.id)).not.toContain(carrier.id);
+  });
+
+  it("un Product inactivo no cuenta para que su carrier aparezca en el filtro", async () => {
+    const carrier = await prisma.carrier.create({ data: { name: `Solo inactivo ${Date.now()}`, isActive: true } });
+    createdExtraCarrierIds.push(carrier.id);
+    await prisma.product.create({
+      data: { carrierId: carrier.id, name: "Plan Inactivo Multi", policyType: "LIFE", isActive: false },
+    });
+
+    const life = await listCarriersForPolicyType(admin, "LIFE");
+    expect(life.map((c) => c.id)).not.toContain(carrier.id);
+  });
+
+  it("la metadata de origen de carriers.json (ACA/DENTAL/etc.) nunca fabrica Products — un carrier sin Products reales no aparece en ningún tipo", async () => {
+    const carrier = await prisma.carrier.create({ data: { name: `Sin productos ${Date.now()}`, isActive: true } });
+    createdExtraCarrierIds.push(carrier.id);
+
+    for (const type of ["HEALTH", "LIFE", "SUPPLEMENTAL", "DENTAL", "FINAL_EXPENSE"] as const) {
+      const carriers = await listCarriersForPolicyType(admin, type);
+      expect(carriers.map((c) => c.id)).not.toContain(carrier.id);
+    }
+  });
 });
 
 describe("policies.service", () => {
@@ -967,6 +1039,62 @@ describe("policies.service", () => {
     await expect(
       renewPolicy(admin, oldPolicy.id, { productId: activeProductId, holderCovered: "true" })
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  // Hallazgo #2 de UAT (Fase 024): una póliza CANCELLED nunca se renueva.
+  it("renewPolicy rechaza renovar una póliza CANCELLED (rechazo real del servidor, no solo UI)", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+    await expect(
+      renewPolicy(admin, policy.id, { productId: activeProductId, holderCovered: "true" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("renewPolicy sigue permitiendo renovar pólizas ACTIVE/PENDING (lifecycle no afectado)", async () => {
+    const holder = await makePerson();
+    const activePolicy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-01-01"),
+      })
+    );
+    trackPolicy(
+      await renewPolicy(admin, activePolicy.id, { productId: activeProductId, holderCovered: "true" })
+    );
+
+    const holder2 = await makePerson();
+    const pendingPolicy = trackPolicy(
+      await createPolicy(admin, { holderId: holder2.id, productId: activeProductId, holderCovered: "true" })
+    );
+    trackPolicy(
+      await renewPolicy(admin, pendingPolicy.id, { productId: activeProductId, holderCovered: "true" })
+    );
+  });
+
+  it("después de cancelar una póliza, sigue siendo posible crear una póliza NUEVA para el mismo titular (no una renovación)", async () => {
+    const holder = await makePerson();
+    const cancelledPolicy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "true" })
+    );
+    await cancelPolicy(admin, cancelledPolicy.id, { terminationDate: "2026-06-15" });
+
+    const freshPolicy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        operationType: "NEW_ENROLLMENT",
+      })
+    );
+    const raw = await prisma.policy.findUnique({ where: { id: freshPolicy.id } });
+    expect(raw?.previousPolicyId).toBeNull();
   });
 
   // ---------------------------------------------------------------------

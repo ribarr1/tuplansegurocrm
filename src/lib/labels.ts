@@ -22,6 +22,7 @@ import type {
   ProviderType,
   ImmigrationCategory,
   ImmigrationDocumentType,
+  PersonSex,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -44,6 +45,14 @@ export const CONTACT_STATUS_LABELS: Record<ContactStatus, string> = {
   CLIENT: "Cliente",
   FORMER_CLIENT: "Ex cliente",
   OTHER: "Otro",
+};
+
+// Fase 024 — nunca mostrar el enum técnico al usuario.
+export const PERSON_SEX_LABELS: Record<PersonSex, string> = {
+  MALE: "Masculino",
+  FEMALE: "Femenino",
+  OTHER: "Otro",
+  UNKNOWN: "No especificado",
 };
 
 export const CONTACT_STATUS_BADGE_VARIANT: Record<

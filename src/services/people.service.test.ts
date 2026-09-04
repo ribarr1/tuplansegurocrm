@@ -59,6 +59,30 @@ describe("people.service", () => {
     expect(p.assignedAgent).toBeNull();
   });
 
+  // Fase 024 (Hallazgo #1 de UAT): Person.sex.
+  it("crea Person con sex explícito", async () => {
+    const p = track(await createPerson(admin, { firstName: "SexF", lastName: "Test", sex: "FEMALE" }));
+    expect(p.sex).toBe("FEMALE");
+  });
+
+  it("crea Person sin sex -> UNKNOWN por default (nunca se infiere del nombre)", async () => {
+    const p = track(await createPerson(admin, { firstName: "SinSexo", lastName: "Test" }));
+    expect(p.sex).toBe("UNKNOWN");
+  });
+
+  it("edita el sexo de una Person existente", async () => {
+    const p = track(await createPerson(admin, { firstName: "EditSex", lastName: "Test" }));
+    expect(p.sex).toBe("UNKNOWN");
+    const updated = await updatePerson(admin, p.id, { sex: "MALE" });
+    expect(updated.sex).toBe("MALE");
+  });
+
+  it("actualizar sin enviar sex nunca lo resetea a UNKNOWN (mismo bug class que contactStatus)", async () => {
+    const p = track(await createPerson(admin, { firstName: "KeepSex", lastName: "Test", sex: "OTHER" }));
+    const updated = await updatePerson(admin, p.id, { phone: "5551234567" });
+    expect(updated.sex).toBe("OTHER");
+  });
+
   it("B) AGENT crea Person y queda asignada a sí mismo (ignora assignedAgentId enviado)", async () => {
     const p = track(
       await createPerson(agent, { firstName: "Bob", lastName: "Perez", assignedAgentId: admin.id })

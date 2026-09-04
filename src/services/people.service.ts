@@ -18,6 +18,7 @@ const PERSON_AUDIT_FIELDS = [
   "secondLastName",
   "preferredName",
   "dateOfBirth",
+  "sex",
   "email",
   "phone",
   "contactStatus",
@@ -69,6 +70,7 @@ const listSelect = {
 const detailSelect = {
   ...listSelect,
   dateOfBirth: true,
+  sex: true,
   source: true,
   updatedAt: true,
   _count: {
@@ -243,6 +245,7 @@ export async function updatePerson(
       secondLastName: true,
       preferredName: true,
       dateOfBirth: true,
+      sex: true,
       email: true,
       phone: true,
       contactStatus: true,

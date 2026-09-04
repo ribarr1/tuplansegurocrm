@@ -13,6 +13,8 @@ export const POLICY_TYPE_VALUES = [
   "FINAL_EXPENSE",
 ] as const;
 
+export const policyTypeSchema = z.enum(POLICY_TYPE_VALUES, "Selecciona un tipo de seguro válido.");
+
 export const POLICY_STATUS_VALUES = ["PENDING", "ACTIVE", "CANCELLED", "EXPIRED"] as const;
 
 export const POLICY_OPERATION_TYPE_VALUES = [

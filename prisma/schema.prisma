@@ -27,6 +27,17 @@ enum ContactStatus {
   OTHER
 }
 
+// Fase 024 (Hallazgo #1 de UAT): dato administrativo simple, no una
+// determinación clínica/legal. UNKNOWN es el default explícito — nunca
+// se infiere por nombre, ni al crear a mano ni al importar; una
+// persona existente sin este dato queda en UNKNOWN, nunca rompe.
+enum PersonSex {
+  MALE
+  FEMALE
+  OTHER
+  UNKNOWN
+}
+
 enum HouseholdMemberRole {
   HEAD
   SPOUSE
@@ -84,6 +95,7 @@ model Person {
   secondLastName  String?
   preferredName   String?
   dateOfBirth     DateTime?     @db.Date
+  sex             PersonSex     @default(UNKNOWN)
   email           String?
   phone           String?
   contactStatus   ContactStatus @default(PROSPECT)
