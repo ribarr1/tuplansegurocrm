@@ -287,6 +287,21 @@ Si tienes forma de ver la consola del navegador (F12 → pestaña "Console") o l
 - [ ] Abrir el CSV descargado y confirmar la ausencia de: SSN, A-Number, número USCIS, número de documento (buscar tanto el valor completo como fragmentos).
 - [ ] Repetir la misma verificación con la exportación de Contactos (`/contacts`, botón "Exportar CSV").
 
+## 37. Cierre de hallazgos de UAT y redisño corporativo (Fase 022)
+
+Base de datos LOCAL/DEV reiniciada por completo antes de esta ronda — usar datos ficticios nuevos, nunca reutilizar PII real.
+
+- [ ] Crear un contacto nuevo — confirmar que nace como "Prospecto" (sin selector de Estado en el formulario de creación).
+- [ ] Intentar una fecha de nacimiento imposible (ej. 02/30/2026) — confirmar que no se guarda ninguna fecha inválida.
+- [ ] Crear una póliza de Salud ACTIVA cubriendo a ese contacto como titular — confirmar que el contacto pasa automáticamente a "Cliente" y que la póliza muestra "Titular cubierto" (sin el mensaje de error de titular no cubierto).
+- [ ] Cancelar esa póliza (o quitar al titular como miembro) — confirmar que el contacto vuelve automáticamente a "Prospecto".
+- [ ] Intentar crear una segunda póliza de Salud ACTIVA para la misma persona con fechas que se solapan con una vigente — confirmar que se bloquea con un mensaje claro.
+- [ ] Crear un producto duplicado (mismo carrier/nombre/tipo/año, con mayúsculas o espacios distintos) — confirmar que se rechaza.
+- [ ] En Configuración → Usuarios, usar "Restablecer contraseña" sobre otro usuario — confirmar que el login con la contraseña anterior deja de funcionar y con la nueva sí.
+- [ ] Como ADMIN, confirmar que no existe forma de desactivar la propia cuenta (ni el botón aparece, ni funciona si se manipula la petición).
+- [ ] Revisar visualmente: sidebar azul marino con el logo existente, tipografía Playfair Display en los títulos principales, acento dorado solo en alertas/vencimientos — confirmar que ninguna funcionalidad, ruta ni permiso cambió respecto a antes del rediseño.
+- [ ] Revisar la consola del navegador en las páginas con filtros (Tareas, Pólizas, Comisiones, Primas, Contactos, Cumpleaños, Reportes) — confirmar ausencia de advertencias de Base UI sobre "uncontrolled FieldControl".
+
 ---
 
 **Si algo de esta lista falla o se ve distinto a lo esperado, anótalo con la mayor cantidad de detalle posible (qué se hizo, qué se esperaba, qué pasó) antes de continuar con los siguientes pasos del proyecto** (creación de usuarios reales, resolución de bloqueos de importación, segundo dry run, autorización de `--apply`).

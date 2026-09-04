@@ -359,3 +359,19 @@ Detalle funcional completo en `docs/SENSITIVE_PII.md`; aquí solo el schema. Nin
 ### Fuera de alcance de esta migración
 
 Persistencia de un escaneo/foto del documento físico (solo se registra el número, cifrado). Rotación de `PII_ENCRYPTION_KEY`/KMS (el formato versionado lo permite después). Import real de los valores del Excel legacy (`src/import/sensitive.ts` sigue excluyendo esas columnas).
+
+## Migración 014 — UAT integrity fixes (Fase 022)
+
+Detalle funcional/decisiones completas en `docs/DECISIONS.md` ("UAT final, ciclo Prospecto/Cliente e identidad corporativa"); aquí solo el schema.
+
+### `products.nameNormalized` + índice único compuesto
+
+Columna nueva `nameNormalized` (`String`, `@default("")` a nivel Prisma — solo para que el tipo generado marque el campo opcional en `create()`, el valor real siempre lo decide el trigger de abajo). Backfill con `lower(regexp_replace(trim(name), '\s+', ' ', 'g'))` para las filas existentes; los duplicados detectados en ese backfill se desambiguan agregando un sufijo `-dup-<8charid>` al `nameNormalized` de las filas más nuevas (por `createdAt`), **nunca se borra ninguna fila**. Índice único: `@@unique([carrierId, nameNormalized, policyType, planYear])`.
+
+### Trigger `products_set_name_normalized()` / `products_name_normalized_trigger`
+
+`BEFORE INSERT OR UPDATE OF name ON products` — recalcula `nameNormalized` a partir de `name` en cada insert/update, sin importar qué valor (si alguno) haya mandado el caller para esa columna. Elegido en vez de exigir que cada `prisma.product.create({...})` del proyecto (20+ call sites: tests, `scripts/seed-dev.ts`, `src/import/apply.ts`) calculara `nameNormalized` explícitamente — ningún call site existente necesitó cambiar.
+
+### Sin cambios de columnas para las demás correcciones de esta fase
+
+La validación de fechas reales (`dateOnlySchema`), el ciclo Prospecto↔Cliente (`recomputePersonContactStatus`), el bug de titular-cubierto, el solapamiento de cobertura de salud, y el reset de contraseña de usuario son todos cambios de lógica de aplicación (schemas Zod / servicios) — no requirieron ninguna migración adicional.

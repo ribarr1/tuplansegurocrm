@@ -122,17 +122,16 @@ En **Contactos** ves el listado completo de clientes y prospectos.
 - **Exportar CSV**: descarga el listado (ver [Exportar CSV](#22-exportar-csv)).
 - **Ver**: abre la ficha completa del contacto.
 
-**Prospecto** es alguien que todavía no es cliente activo; **Cliente** es alguien con quien ya tienes una relación comercial activa. Un mismo contacto puede pasar de Prospecto a Cliente sin perder su historial — nunca se crea un registro duplicado.
+**Prospecto** es alguien que todavía no es cliente activo; **Cliente** es alguien con quien ya tienes una relación comercial activa. **Todo contacto nuevo nace como Prospecto** y el sistema lo cambia automáticamente a **Cliente** en cuanto queda cubierto por al menos una póliza activa — y de vuelta a Prospecto si deja de estarlo (por ejemplo, si esa póliza se cancela). Un mismo contacto puede pasar de Prospecto a Cliente sin perder su historial — nunca se crea un registro duplicado, y nunca necesitas cambiar el Estado a mano. Los estados **Ex cliente** y **Otro** sí son decisiones manuales tuyas (se editan desde **Editar**) y el sistema nunca los sobrescribe automáticamente.
 
 ### Crear un contacto
 
 1. Presiona **+ Nuevo contacto**.
 2. Completa Nombre, Apellido y los datos que tengas disponibles (teléfono, correo, fecha de nacimiento).
-3. Elige el Estado (Prospecto/Cliente/Ex cliente/Otro).
-4. Si corresponde, elige el Agente asignado.
-5. Presiona **Crear contacto**.
+3. Si corresponde, elige el Agente asignado.
+4. Presiona **Crear contacto**. El contacto queda como Prospecto — el Estado se vuelve Cliente solo, automáticamente, cuando le agregues una póliza activa.
 
-Para editar un contacto ya existente, ábrelo y presiona **Editar**.
+Para editar un contacto ya existente (incluyendo marcarlo como Ex cliente/Otro), ábrelo y presiona **Editar**.
 
 ---
 
@@ -502,6 +501,17 @@ Desde **Configuración** (según tu rol) puedes administrar:
 2. Completa Nombre completo, Correo electrónico y Rol.
 3. Presiona **Crear usuario**.
 4. El sistema te muestra una **contraseña temporal una sola vez** — cópiala y compártela con esa persona por un medio seguro (no queda guardada en ningún otro lugar del CRM).
+
+### Restablecer la contraseña de un usuario
+
+Solo un Administrador puede hacerlo, y nunca puede ver la contraseña actual de nadie — solo establecer una nueva.
+
+1. Ve a **Configuración → Usuarios**.
+2. En la fila del usuario, presiona **Restablecer contraseña**.
+3. Escribe la nueva contraseña (mínimo 10 caracteres) y confírmala.
+4. Comparte la nueva contraseña con esa persona por un medio seguro. La contraseña anterior deja de funcionar de inmediato y esa persona deberá volver a iniciar sesión.
+
+Un Administrador nunca puede desactivar su propia cuenta (ni la del último Administrador activo del sistema) — evita quedar todos bloqueados por error.
 
 ---
 
