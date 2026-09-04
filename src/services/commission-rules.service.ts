@@ -87,6 +87,18 @@ export async function createCommissionRule(actor: AuthorizedUser, rawInput: unkn
   }
 
   return prisma.$transaction(async (tx) => {
+    // Fase 025 (Hallazgo #6 de UAT, Parte F): máximo una regla ACTIVE
+    // por scope (nivel producto si policyId es null, o el override de
+    // ESTA póliza si no) — forzado también a nivel de DB con un índice
+    // único parcial (ver migración 016), pero aquí se resuelve de forma
+    // explícita ("esto reemplazará la regla activa actual") en vez de
+    // dejar que la creación simplemente falle con un error de
+    // constraint poco claro para el usuario. Atómico: desactivar +
+    // crear ocurren en la misma transacción.
+    const { count: replacedCount } = await tx.commissionRule.updateMany({
+      where: { productId: input.productId, policyId: input.policyId ?? null, isActive: true },
+      data: { isActive: false },
+    });
     const created = await tx.commissionRule.create({
       data: {
         productId: input.productId,
@@ -113,7 +125,10 @@ export async function createCommissionRule(actor: AuthorizedUser, rawInput: unkn
       policyId: input.policyId ?? null,
       householdId: policyHouseholdId,
       contactPersonId: policyHolderId,
-      summary: "Regla de comisión creada",
+      summary:
+        replacedCount > 0
+          ? "Regla de comisión creada (reemplaza la regla activa anterior de este scope)"
+          : "Regla de comisión creada",
     });
     return created;
   });

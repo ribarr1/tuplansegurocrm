@@ -301,12 +301,35 @@ async function assertAccessForGreeting(actor: AuthorizedUser, personId: string) 
 // upsert sobre la unique (personId, year): marcar SENT/SKIPPED sobre un
 // año que ya tiene registro actualiza ese registro en vez de violar la
 // constraint o duplicar — nunca se expone un P2002 al llamador.
+//
+// Fase 025 (Hallazgo #2 de UAT, Parte B): máquina de estados real —
+// PENDING -> SENT/SKIPPED es la única transición válida desde estos dos
+// endpoints; una vez SENT o SKIPPED, la única forma de volver a
+// PENDING es resetBirthdayGreeting (ADMIN). Antes de esta fase, ambos
+// endpoints hacían upsert incondicional — un doble clic o una llamada
+// directa a la action podía "reenviar" (duplicar el envío del mismo
+// año) o saltar de SKIPPED a SENT sin pasar por Restablecer. Validado
+// aquí server-side, nunca solo ocultando los botones en la UI.
+async function assertGreetingIsPending(personId: string, year: number) {
+  const existing = await prisma.birthdayGreeting.findUnique({
+    where: { personId_year: { personId, year } },
+    select: { status: true },
+  });
+  if (existing && existing.status !== "PENDING") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      `La felicitación de este año ya está marcada como ${existing.status === "SENT" ? "enviada" : "omitida"} — usa Restablecer antes de volver a marcarla.`
+    );
+  }
+}
+
 export async function markBirthdayGreetingSent(actor: AuthorizedUser, rawInput: unknown) {
   const input = parseOrThrow(markBirthdaySentSchema, rawInput);
   await assertAccessForGreeting(actor, input.personId);
 
   const { year: todayYear } = getTodayBusinessRange();
   const year = input.year ?? todayYear;
+  await assertGreetingIsPending(input.personId, year);
 
   return prisma.birthdayGreeting.upsert({
     where: { personId_year: { personId: input.personId, year } },
@@ -322,6 +345,7 @@ export async function markBirthdayGreetingSkipped(actor: AuthorizedUser, rawInpu
 
   const { year: todayYear } = getTodayBusinessRange();
   const year = input.year ?? todayYear;
+  await assertGreetingIsPending(input.personId, year);
 
   return prisma.birthdayGreeting.upsert({
     where: { personId_year: { personId: input.personId, year } },

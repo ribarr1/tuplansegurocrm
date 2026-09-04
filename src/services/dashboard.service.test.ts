@@ -231,8 +231,7 @@ describe("dashboard.service", () => {
     await updatePremiumTracking(admin, policy.id, {
       nextPaymentDueDate: dateOnlyString(-5),
       paymentStatus: "PAST_DUE",
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     const after = await getDashboard(admin);
     expect(after.premiums.overdueCount).toBe(before.premiums.overdueCount + 1);
@@ -245,8 +244,7 @@ describe("dashboard.service", () => {
     await updatePremiumTracking(admin, policy.id, {
       nextPaymentDueDate: dateOnlyString(-5),
       paymentStatus: "CURRENT",
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     const after = await getDashboard(admin);
     expect(after.premiums.overdueCount).toBe(before.premiums.overdueCount);
@@ -257,8 +255,7 @@ describe("dashboard.service", () => {
     const holder = await makePerson();
     const policy = await makePolicyFor(admin, holder);
     await updatePremiumTracking(admin, policy.id, {
-      autopay: "false",
-      needsPaymentAssistance: "true",
+      paymentManagementMode: "ASSISTED",
     });
     const after = await getDashboard(admin);
     expect(after.premiums.assistanceCount).toBe(before.premiums.assistanceCount + 1);
@@ -270,8 +267,7 @@ describe("dashboard.service", () => {
     const policy = await makePolicyFor(admin, holder);
     await updatePremiumTracking(admin, policy.id, {
       nextPaymentDueDate: dateOnlyString(3),
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     const after = await getDashboard(admin);
     expect(after.premiums.dueSoonCount).toBe(before.premiums.dueSoonCount + 1);

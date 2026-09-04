@@ -11,9 +11,8 @@ export type PremiumFormState =
 // premiumAmount/billingFrequency/nextPaymentDueDate/paymentStatus son
 // nullable — usan formData.has (no formData.get) para distinguir "no
 // tocar" de "borrar explícitamente" (mismo patrón de 3 estados que
-// health/form-helpers.ts). autopay/needsPaymentAssistance no son
-// nullable: siempre se envían como "true"/"false" según el checkbox,
-// nunca se omiten.
+// health/form-helpers.ts). paymentManagementMode no es nullable: es un
+// <select> que siempre envía un valor.
 const NULLABLE_FIELDS = [
   "premiumAmount",
   "billingFrequency",
@@ -28,8 +27,7 @@ export function formDataToUpdatePremiumInput(formData: FormData): Record<string,
       raw[field] = String(formData.get(field) ?? "");
     }
   }
-  raw.autopay = formData.get("autopay") === "on" ? "true" : "false";
-  raw.needsPaymentAssistance = formData.get("needsPaymentAssistance") === "on" ? "true" : "false";
+  raw.paymentManagementMode = String(formData.get("paymentManagementMode") ?? "CLIENT_MANAGED");
   return raw;
 }
 

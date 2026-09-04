@@ -334,7 +334,13 @@ export async function applyImportPlan(
               terminationDate: pol.terminationDate,
               previousPolicyId,
               premiumAmount: amount(pol.premiumAmount),
-              needsPaymentAssistance: pol.needsPaymentAssistance,
+              paymentManagementMode: pol.paymentManagementMode,
+              // Espejo derivado (nunca fuente de escritura nueva) —
+              // mismo criterio que policies.service.ts, duplicado aquí
+              // porque ese módulo es "server-only" y este archivo corre
+              // también vía tsx (ver docs/DECISIONS.md, Fase 023).
+              autopay: pol.paymentManagementMode === "AUTOPAY",
+              needsPaymentAssistance: pol.paymentManagementMode === "ASSISTED",
               operationType: pol.operationType,
               healthCoverageSource: pol.healthCoverageSource,
             },

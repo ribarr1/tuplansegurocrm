@@ -25,13 +25,12 @@ const POLICY_SCALAR_FIELDS = [
   "premiumAmount",
   "billingFrequency",
   "nextPaymentDueDate",
+  "paymentManagementMode",
   "paymentStatus",
   "operationType",
   "processedById",
   "healthCoverageSource",
 ] as const;
-
-const CHECKBOX_FIELDS = ["autopay", "needsPaymentAssistance"] as const;
 
 // Convierte FormData del formulario de creación a un objeto plano que
 // createPolicySchema (policy.schema.ts) puede validar. Los miembros
@@ -46,9 +45,6 @@ export function formDataToCreatePolicyInput(formData: FormData): Record<string, 
     if (typeof value === "string" && value.trim() !== "") {
       raw[key] = value;
     }
-  }
-  for (const key of CHECKBOX_FIELDS) {
-    raw[key] = formData.get(key) === "on" ? "true" : "false";
   }
 
   const candidateIds = String(formData.get("candidatePersonIds") ?? "")
@@ -73,6 +69,7 @@ const POLICY_UPDATE_FIELDS = [
   "premiumAmount",
   "billingFrequency",
   "nextPaymentDueDate",
+  "paymentManagementMode",
   "paymentStatus",
   "operationType",
   "processedById",
@@ -86,9 +83,6 @@ export function formDataToUpdatePolicyInput(formData: FormData): Record<string, 
     if (typeof value === "string" && value.trim() !== "") {
       raw[key] = value;
     }
-  }
-  for (const key of CHECKBOX_FIELDS) {
-    raw[key] = formData.get(key) === "on" ? "true" : "false";
   }
   return raw;
 }

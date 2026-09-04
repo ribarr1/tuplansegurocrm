@@ -23,6 +23,8 @@ import type {
   ImmigrationCategory,
   ImmigrationDocumentType,
   PersonSex,
+  PaymentManagementMode,
+  PolicyBusinessSource,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -170,6 +172,18 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   CURRENT: "Al día",
   DUE: "Por vencer",
   PAST_DUE: "Vencido",
+};
+
+export const PAYMENT_MANAGEMENT_MODE_LABELS: Record<PaymentManagementMode, string> = {
+  AUTOPAY: "Autopay",
+  ASSISTED: "Necesita asistencia para pagar",
+  CLIENT_MANAGED: "El cliente lo gestiona",
+};
+
+export const POLICY_BUSINESS_SOURCE_LABELS: Record<PolicyBusinessSource, string> = {
+  OWN: "Propia",
+  REFERRAL: "Referida",
+  UNKNOWN: "Sin clasificar",
 };
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {

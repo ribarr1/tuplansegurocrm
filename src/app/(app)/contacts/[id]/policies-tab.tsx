@@ -60,9 +60,15 @@ export async function PoliciesTab({ actor, personId }: { actor: AuthorizedUser; 
                   {policy.nextPaymentDueDate && (
                     <span>Próximo pago: {formatDate(policy.nextPaymentDueDate)}</span>
                   )}
-                  {policy.needsPaymentAssistance && (
-                    <Badge variant="secondary">Requiere asistencia</Badge>
-                  )}
+                  {/* Hallazgo #1 de UAT (Fase 025): CANCELLED/EXPIRED
+                      son puramente históricas — nunca muestran la
+                      alerta de asistencia, aunque el valor guardado
+                      siga siendo true. */}
+                  {policy.needsPaymentAssistance &&
+                    policy.status !== "CANCELLED" &&
+                    policy.status !== "EXPIRED" && (
+                      <Badge variant="secondary">Requiere asistencia</Badge>
+                    )}
                 </div>
               </Link>
             );

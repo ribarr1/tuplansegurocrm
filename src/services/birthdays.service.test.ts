@@ -232,11 +232,50 @@ describe("birthdays.service", () => {
     expect(greeting.channel).toBeNull();
   });
 
-  it("Q) actualizar greeting existente no duplica", async () => {
+  // Fase 025 (Hallazgo #2 de UAT, Parte B): la máquina de estados
+  // real — nunca se puede volver a marcar SENT/SKIPPED sobre un año que
+  // ya está SENT o SKIPPED, previene el "reenvío" del mismo año.
+  it("O2) mark SENT rechaza una fila ya SENT (previene reenvío/duplicado)", async () => {
     const person = await makePerson(dobFor(1990, today.month, today.day));
-    const first = await markBirthdayGreetingSkipped(admin, { personId: person.id });
+    await markBirthdayGreetingSent(admin, { personId: person.id, channel: "EMAIL" });
+    await expect(
+      markBirthdayGreetingSent(admin, { personId: person.id, channel: "SMS" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("O3) mark SKIPPED rechaza una fila ya SKIPPED", async () => {
+    const person = await makePerson(dobFor(1990, today.month, today.day));
+    await markBirthdayGreetingSkipped(admin, { personId: person.id });
+    await expect(
+      markBirthdayGreetingSkipped(admin, { personId: person.id })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("O4) mark SKIPPED rechaza una fila ya SENT (debe pasar por Restablecer)", async () => {
+    const person = await makePerson(dobFor(1990, today.month, today.day));
+    await markBirthdayGreetingSent(admin, { personId: person.id, channel: "EMAIL" });
+    await expect(
+      markBirthdayGreetingSkipped(admin, { personId: person.id })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  // Fase 025 (Hallazgo #2 de UAT, Parte B): SKIPPED -> SENT directo ya
+  // no es una transición válida — la máquina de estados exige pasar por
+  // Restablecer (PENDING) primero. resetBirthdayGreeting hace hard
+  // delete de la fila (Fase 015 §20), así que el ciclo correcto
+  // SKIPPED -> reset -> SENT crea una fila NUEVA (id distinto) — lo que
+  // "no duplica" es que solo queda 1 fila para (personId, year) al
+  // final, nunca 2 simultáneas.
+  it("Q) el ciclo SKIPPED -> Restablecer -> SENT nunca deja 2 filas para el mismo (personId, year)", async () => {
+    const person = await makePerson(dobFor(1990, today.month, today.day));
+    await markBirthdayGreetingSkipped(admin, { personId: person.id });
+
+    await expect(
+      markBirthdayGreetingSent(admin, { personId: person.id, channel: "SMS" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    await resetBirthdayGreeting(admin, { personId: person.id });
     const second = await markBirthdayGreetingSent(admin, { personId: person.id, channel: "SMS" });
-    expect(second.id).toBe(first.id);
     expect(second.status).toBe("SENT");
 
     const count = await prisma.birthdayGreeting.count({

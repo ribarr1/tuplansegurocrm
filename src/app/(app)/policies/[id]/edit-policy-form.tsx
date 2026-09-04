@@ -10,6 +10,7 @@ import {
   POLICY_STATUS_VALUES,
   BILLING_FREQUENCY_VALUES,
   PAYMENT_STATUS_VALUES,
+  PAYMENT_MANAGEMENT_MODE_VALUES,
   POLICY_OPERATION_TYPE_VALUES,
   HEALTH_COVERAGE_SOURCE_VALUES,
 } from "@/schemas/policy.schema";
@@ -17,6 +18,7 @@ import {
   POLICY_STATUS_LABELS,
   BILLING_FREQUENCY_LABELS,
   PAYMENT_STATUS_LABELS,
+  PAYMENT_MANAGEMENT_MODE_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
   HEALTH_COVERAGE_SOURCE_LABELS,
 } from "@/lib/labels";
@@ -32,8 +34,7 @@ export type EditPolicyDefaultValues = {
   premiumAmount?: string;
   billingFrequency?: string;
   nextPaymentDueDate?: string;
-  autopay: boolean;
-  needsPaymentAssistance: boolean;
+  paymentManagementMode: string;
   paymentStatus?: string;
   operationType?: string;
   processedById?: string;
@@ -58,18 +59,7 @@ export function EditPolicyForm({
   isHealthPolicy: boolean;
 }) {
   const [state, formAction, isPending] = useActionState(action, undefined);
-  // Los checkboxes viajan en state.values como string "true"/"false"
-  // (formDataToUpdatePolicyInput) tras un error — un simple spread los
-  // dejaría siempre truthy ("false" es una string no vacía). Se
-  // resuelven aparte para no perder el valor real.
-  const autopay = state?.values?.autopay !== undefined
-    ? state.values.autopay === "true"
-    : defaultValues.autopay;
-  const needsPaymentAssistance =
-    state?.values?.needsPaymentAssistance !== undefined
-      ? state.values.needsPaymentAssistance === "true"
-      : defaultValues.needsPaymentAssistance;
-  const values = { ...defaultValues, ...(state?.values ?? {}), autopay, needsPaymentAssistance };
+  const values = { ...defaultValues, ...(state?.values ?? {}) };
   const formKey = state ? "retry" : "initial";
 
   return (
@@ -217,19 +207,20 @@ export function EditPolicyForm({
         </div>
       </div>
 
-      <div className="flex gap-6 text-sm">
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" name="autopay" defaultChecked={values.autopay} />
-          Autopay
-        </label>
-        <label className="flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            name="needsPaymentAssistance"
-            defaultChecked={values.needsPaymentAssistance}
-          />
-          Necesita asistencia para pagar
-        </label>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="paymentManagementMode">Modalidad de gestión de pago</Label>
+        <select
+          id="paymentManagementMode"
+          name="paymentManagementMode"
+          defaultValue={values.paymentManagementMode}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {PAYMENT_MANAGEMENT_MODE_VALUES.map((mode) => (
+            <option key={mode} value={mode}>
+              {PAYMENT_MANAGEMENT_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </select>
       </div>
 
       {isHealthPolicy && (

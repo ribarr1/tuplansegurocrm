@@ -54,6 +54,7 @@ const FIELD_LABELS: Record<string, string> = {
   premiumAmount: "Prima",
   billingFrequency: "Frecuencia de pago",
   nextPaymentDueDate: "Próximo pago",
+  paymentManagementMode: "Modalidad de gestión de pago",
   autopay: "Autopay",
   needsPaymentAssistance: "Necesita asistencia para pagar",
   paymentStatus: "Estado de pago",

@@ -1223,6 +1223,95 @@ describe("policies.service", () => {
     });
   });
 
+  // Fase 025 (Hallazgo #4 de UAT, Parte D): CANCELLED/EXPIRED son de
+  // solo lectura — rechazado server-side, nunca solo ocultando botones.
+  it("cancelPolicy rechaza cancelar una póliza ya EXPIRED", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+    await prisma.policy.update({ where: { id: policy.id }, data: { status: "EXPIRED" } });
+
+    await expect(cancelPolicy(admin, policy.id, { terminationDate: "2026-07-01" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("updatePolicy rechaza cualquier modificación a una póliza CANCELLED", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+    await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+    await expect(updatePolicy(admin, policy.id, { policyNumber: "NEW-NUM" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("updatePolicy rechaza cualquier modificación a una póliza EXPIRED", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        effectiveDate: new Date("2025-01-01"),
+      })
+    );
+    await prisma.policy.update({ where: { id: policy.id }, data: { status: "EXPIRED" } });
+
+    await expect(updatePolicy(admin, policy.id, { policyNumber: "NEW-NUM" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  // Fase 025 (Hallazgo #3 de UAT, Parte C): paymentManagementMode es la
+  // única fuente de escritura; autopay/needsPaymentAssistance quedan
+  // como espejo derivado, siempre en sincronía.
+  it("createPolicy deriva autopay/needsPaymentAssistance a partir de paymentManagementMode", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        paymentManagementMode: "AUTOPAY",
+      })
+    );
+    const row = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
+    expect(row.paymentManagementMode).toBe("AUTOPAY");
+    expect(row.autopay).toBe(true);
+    expect(row.needsPaymentAssistance).toBe(false);
+  });
+
+  it("updatePolicy cambiar paymentManagementMode a ASSISTED sincroniza needsPaymentAssistance=true y autopay=false", async () => {
+    const holder = await makePerson();
+    const policy = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        paymentManagementMode: "AUTOPAY",
+      })
+    );
+    await updatePolicy(admin, policy.id, { paymentManagementMode: "ASSISTED" });
+    const row = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
+    expect(row.paymentManagementMode).toBe("ASSISTED");
+    expect(row.autopay).toBe(false);
+    expect(row.needsPaymentAssistance).toBe(true);
+  });
+
   it("cancelPolicy rechaza terminationDate anterior a effectiveDate", async () => {
     const holder = await makePerson();
     const policy = trackPolicy(

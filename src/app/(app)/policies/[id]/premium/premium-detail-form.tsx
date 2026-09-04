@@ -5,8 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { USDateInput } from "@/components/ui/us-date-input";
 import { Label } from "@/components/ui/label";
-import { BILLING_FREQUENCY_VALUES, PAYMENT_STATUS_VALUES } from "@/schemas/policy.schema";
-import { BILLING_FREQUENCY_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/labels";
+import {
+  BILLING_FREQUENCY_VALUES,
+  PAYMENT_STATUS_VALUES,
+  PAYMENT_MANAGEMENT_MODE_VALUES,
+} from "@/schemas/policy.schema";
+import {
+  BILLING_FREQUENCY_LABELS,
+  PAYMENT_STATUS_LABELS,
+  PAYMENT_MANAGEMENT_MODE_LABELS,
+} from "@/lib/labels";
 import type { PremiumFormState } from "./form-helpers";
 
 export type PremiumFormDefaultValues = {
@@ -14,8 +22,7 @@ export type PremiumFormDefaultValues = {
   billingFrequency?: string;
   nextPaymentDueDate?: string;
   paymentStatus?: string;
-  autopay?: boolean;
-  needsPaymentAssistance?: boolean;
+  paymentManagementMode?: string;
 };
 
 // Solo estos 6 campos — nunca policyNumber/status/producto/etc. (ver
@@ -30,11 +37,6 @@ export function PremiumDetailForm({
   const [state, formAction, isPending] = useActionState(action, undefined);
   const values = state?.values ?? {};
   const formKey = state ? "retry" : "initial";
-
-  const autopayChecked = state ? values.autopay === "true" : (defaultValues.autopay ?? false);
-  const assistanceChecked = state
-    ? values.needsPaymentAssistance === "true"
-    : (defaultValues.needsPaymentAssistance ?? false);
 
   return (
     <form key={formKey} action={formAction} className="flex max-w-xl flex-col gap-4">
@@ -114,15 +116,21 @@ export function PremiumDetailForm({
         </div>
       </div>
 
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="autopay" defaultChecked={autopayChecked} />
-        Autopay activo
-      </label>
-
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="needsPaymentAssistance" defaultChecked={assistanceChecked} />
-        Requiere asistencia de pago
-      </label>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="paymentManagementMode">Modalidad de gestión de pago</Label>
+        <select
+          id="paymentManagementMode"
+          name="paymentManagementMode"
+          defaultValue={values.paymentManagementMode ?? defaultValues.paymentManagementMode ?? "CLIENT_MANAGED"}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {PAYMENT_MANAGEMENT_MODE_VALUES.map((mode) => (
+            <option key={mode} value={mode}>
+              {PAYMENT_MANAGEMENT_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </div>
 
       <Button type="submit" disabled={isPending} className="w-fit">
         {isPending ? "Guardando…" : "Guardar seguimiento de pago"}

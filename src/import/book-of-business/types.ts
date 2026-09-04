@@ -102,12 +102,18 @@ export type PolicyPlanEntry = {
   carrierName: string;
   planName: string;
   planYear: number;
-  status: "PENDING" | "ACTIVE" | "CANCELLED";
+  status: "PENDING" | "ACTIVE" | "CANCELLED" | "EXPIRED";
   operationType: "NEW_ENROLLMENT" | "RENEWAL" | "REPLACEMENT" | null;
   effectiveDate: Date;
   terminationDate: Date | null;
   premiumAmount: number | null;
-  needsPaymentAssistance: boolean;
+  // Fase 025, Parte K: reemplaza needsPaymentAssistance como campo del
+  // plan — el source solo trae ASISTENCIA (columna booleana), nunca una
+  // columna AUTOPAY explícita, así que el mapeo real solo produce
+  // ASSISTED/CLIENT_MANAGED desde este importador (nunca AUTOPAY, que
+  // requeriría evidencia explícita que este dataset no tiene — ver
+  // docs/DECISIONS.md).
+  paymentManagementMode: "AUTOPAY" | "ASSISTED" | "CLIENT_MANAGED";
   healthCoverageSource: "MARKETPLACE";
   marketplaceState: string | null;
   deductible: number | null;
@@ -118,10 +124,12 @@ export type PolicyPlanEntry = {
   coveredMembers: { matchKey: string; role: "SPOUSE" | "DEPENDENT" }[];
   note: string | null;
   previousPolicySourceIndex: string | null; // heurística de renovación, resuelto en build-plan
-  // Fase 024, Parte C: true si esta póliza HEALTH planYear=2025 fue
-  // normalizada a CANCELLED por la regla de este import (no una
-  // decisión real del negocio) — solo para trazabilidad en el reporte,
-  // nunca cambia el comportamiento del resto de la app.
+  // Fase 024, Parte C (corregido en Fase 025, Parte A): true si esta
+  // póliza HEALTH planYear=2025 fue normalizada a EXPIRED por la regla
+  // de este import (no una decisión real del negocio) — solo para
+  // trazabilidad en el reporte, nunca cambia el comportamiento del
+  // resto de la app. EXPIRED, no CANCELLED: llegar al fin natural del
+  // año de cobertura no es una cancelación genuina (ver docs/DECISIONS.md).
   normalizedHealth2025: boolean;
 };
 
@@ -147,7 +155,7 @@ export type ImportPlan = {
     uscisToImport: number;
     notesToImport: number;
     sex: { MALE: number; FEMALE: number; OTHER: number; UNKNOWN: number };
-    healthPolicies2025NormalizedToCancelled: number;
+    healthPolicies2025NormalizedToExpired: number;
     productsByPolicyType: Record<string, number>;
   };
 };

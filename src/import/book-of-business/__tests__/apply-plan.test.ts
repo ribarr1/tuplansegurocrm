@@ -162,7 +162,7 @@ describe("book-of-business apply-plan (integración)", () => {
     expect(person?.sex).toBe("FEMALE");
   });
 
-  it("Fase 024, Parte C: una póliza HEALTH 2025 normalizada a CANCELLED nunca convierte al titular en CLIENT", async () => {
+  it("Fase 024, Parte C (corregido en Fase 025, Parte A): una póliza HEALTH 2025 normalizada a EXPIRED nunca convierte al titular en CLIENT", async () => {
     const row: FixtureRow = {
       ...HOLDER_ROW,
       INDEX: "50004",
@@ -189,7 +189,7 @@ describe("book-of-business apply-plan (integración)", () => {
       where: { holder: { firstName: "Applyfixture", lastName: "Historico2025" } },
       select: { status: true, terminationDate: true },
     });
-    expect(policy?.status).toBe("CANCELLED");
+    expect(policy?.status).toBe("EXPIRED");
     expect(policy?.terminationDate?.toISOString().slice(0, 10)).toBe("2025-12-31");
   });
 });

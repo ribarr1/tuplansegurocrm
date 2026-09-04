@@ -42,6 +42,24 @@ export default async function EditPremiumTrackingPage({
     throw error;
   }
 
+  // Hallazgo #1 de UAT (Fase 025): una póliza CANCELLED/EXPIRED es de
+  // solo lectura — el CTA "Gestionar pago" ya no aparece en el detalle
+  // de la póliza para llegar aquí, pero si alguien navega directo a
+  // esta URL debe ver un mensaje claro, no un error crudo.
+  if (premium.status === "CANCELLED" || premium.status === "EXPIRED") {
+    return (
+      <div className="flex flex-col items-center gap-3 p-16 text-center">
+        <p className="text-sm text-muted-foreground">
+          Esta póliza está {premium.status === "CANCELLED" ? "cancelada" : "expirada"} — su
+          seguimiento de pago es de solo lectura.
+        </p>
+        <Button variant="outline" nativeButton={false} render={<Link href={`/policies/${id}`} />}>
+          Volver a la póliza
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <h2 className="font-heading text-lg font-semibold">
@@ -54,8 +72,7 @@ export default async function EditPremiumTrackingPage({
           billingFrequency: premium.billingFrequency ?? undefined,
           nextPaymentDueDate: toDateInputValue(premium.nextPaymentDueDate),
           paymentStatus: premium.paymentStatus ?? undefined,
-          autopay: premium.autopay,
-          needsPaymentAssistance: premium.needsPaymentAssistance,
+          paymentManagementMode: premium.paymentManagementMode,
         }}
       />
     </div>

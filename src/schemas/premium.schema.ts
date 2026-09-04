@@ -6,7 +6,11 @@ import {
   optionalBooleanFilter,
   isValidDateOnlyString,
 } from "@/schemas/common";
-import { BILLING_FREQUENCY_VALUES, PAYMENT_STATUS_VALUES } from "@/schemas/policy.schema";
+import {
+  BILLING_FREQUENCY_VALUES,
+  PAYMENT_STATUS_VALUES,
+  paymentManagementModeSchema,
+} from "@/schemas/policy.schema";
 
 export const listPremiumTrackingQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -79,24 +83,18 @@ function nullableDateOnly() {
     .optional();
 }
 
-// autopay/needsPaymentAssistance no son nullable en Policy (Boolean
-// @default(false)) — el formulario siempre envía "true"/"false"
-// explícito (mismo truco que PolicyForm: checkbox desmarcado no viaja
-// en FormData, form-helpers.ts lo normaliza antes de llegar aquí), así
-// que no necesitan el patrón de 3 estados.
-const booleanFieldSchema = z.enum(["true", "false"]).transform((v) => v === "true");
-
 // Solo los 6 campos de seguimiento de pago — nunca policyNumber,
 // status, effectiveDate, productId, etc. Este schema es la única
 // puerta de entrada de "Editar seguimiento de pago"; no reutiliza
 // updatePolicySchema a propósito, para que sea imposible colar un
-// campo fuera de alcance por accidente.
+// campo fuera de alcance por accidente. Fase 025 (Hallazgo #3):
+// paymentManagementMode reemplaza autopay/needsPaymentAssistance como
+// campo editable — el servicio deriva ambos booleanos a partir de él.
 export const updatePremiumTrackingSchema = z.object({
   premiumAmount: nullableDecimal(),
   billingFrequency: nullableEnum(BILLING_FREQUENCY_VALUES),
   nextPaymentDueDate: nullableDateOnly(),
   paymentStatus: nullableEnum(PAYMENT_STATUS_VALUES),
-  autopay: booleanFieldSchema,
-  needsPaymentAssistance: booleanFieldSchema,
+  paymentManagementMode: paymentManagementModeSchema,
 });
 export type UpdatePremiumTrackingInput = z.infer<typeof updatePremiumTrackingSchema>;

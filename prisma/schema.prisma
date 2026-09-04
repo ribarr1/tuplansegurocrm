@@ -81,8 +81,137 @@ model User {
   sessions                         Session[]
   accounts                         Account[]
   auditEvents                      AuditEvent[]
+  licenses                         AgentLicense[]
+  carrierContracts                 AgentCarrierContract[]
+  portalCredentials                AgentPortalCredential[]
 
   @@map("users")
+}
+
+// Fase 025 (Parte G): estados donde un agente está legalmente
+// habilitado para vender. NO almacena documentos físicos en V1 — solo
+// el hecho administrativo. `state` usa el mismo código de 2 letras ya
+// establecido en Household.state (nunca un string libre). Unique
+// simple (userId, state): para V1 se prefiere simpleza sobre
+// versionar historia de licencias — una licencia inactiva se
+// desactiva in place (status), nunca se duplica la fila.
+enum AgentLicenseStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+model AgentLicense {
+  id             String             @id @default(uuid()) @db.Uuid
+  userId         String             @db.Uuid
+  state          String             @db.VarChar(2)
+  status         AgentLicenseStatus @default(ACTIVE)
+  licenseNumber  String?
+  effectiveDate  DateTime?          @db.Date
+  expirationDate DateTime?          @db.Date
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, state])
+  @@index([userId])
+  @@map("agent_licenses")
+}
+
+// Fase 025 (Parte H): una licencia NO implica contrato — un agente
+// puede estar habilitado legalmente en un estado sin tener convenio
+// comercial vigente con un carrier específico ahí. policyType importa
+// porque el mismo carrier puede tener contrato para HEALTH pero no
+// para DENTAL en el mismo estado (Carrier es genérico, ver Fase 024).
+// Unique (userId, carrierId, state, policyType): para V1 una fila por
+// combinación real, se desactiva in place igual que AgentLicense.
+enum AgentContractStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model AgentCarrierContract {
+  id              String              @id @default(uuid()) @db.Uuid
+  userId          String              @db.Uuid
+  carrierId       String              @db.Uuid
+  state           String              @db.VarChar(2)
+  policyType      PolicyType
+  status          AgentContractStatus @default(ACTIVE)
+  effectiveDate   DateTime?           @db.Date
+  terminationDate DateTime?           @db.Date
+  notes           String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, carrierId, state, policyType])
+  @@index([userId])
+  @@index([carrierId, state, policyType])
+  @@map("agent_carrier_contracts")
+}
+
+// Fase 025 (Parte J): vault de credenciales de portal — SEPARADO por
+// dominio (agente vs. cliente) porque tienen dueños/reglas de
+// autorización distintas, no por limitación técnica. Cifrado
+// reversible AES-256-GCM idéntico al de Fase 021 (SSN/USCIS) — nunca
+// hash, el negocio necesita poder revelar el valor real para entrar al
+// portal. Ver src/lib/pii-crypto.ts (el mismo núcleo, reutilizado tal
+// cual). username también cifrado (a menudo es el mismo email/SSN del
+// agente/cliente, PII por derecho propio).
+model AgentPortalCredential {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @db.Uuid
+  carrierId         String?  @db.Uuid
+  portalName        String
+  portalUrl         String
+  usernameEncrypted String
+  passwordEncrypted String
+  notesEncrypted    String?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  carrier Carrier? @relation(fields: [carrierId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("agent_portal_credentials")
+}
+
+// portalType distingue portales que NO son un Carrier real (Marketplace
+// federal, un state exchange como "Get Covered Illinois" o "Georgia
+// Access") — carrierId es deliberadamente opcional, NUNCA se crea un
+// Carrier falso solo para representar un exchange estatal.
+enum ClientPortalType {
+  CARRIER
+  MARKETPLACE
+  STATE_EXCHANGE
+  OTHER
+}
+
+model ClientPortalCredential {
+  id                String           @id @default(uuid()) @db.Uuid
+  personId          String           @db.Uuid
+  carrierId         String?          @db.Uuid
+  policyId          String?          @db.Uuid
+  portalType        ClientPortalType
+  portalName        String
+  portalUrl         String
+  usernameEncrypted String
+  passwordEncrypted String
+  isActive          Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  person Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+  carrier Carrier? @relation(fields: [carrierId], references: [id], onDelete: SetNull)
+  policy  Policy?  @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  @@index([personId])
+  @@map("client_portal_credentials")
 }
 
 // Identidad central. Nunca se duplica al pasar de prospecto a cliente:
@@ -116,6 +245,7 @@ model Person {
   auditEvents          AuditEvent[]
   sensitiveIdentity    PersonSensitiveIdentity?
   immigrationDocuments PersonImmigrationDocument[]
+  portalCredentials    ClientPortalCredential[]
 
   @@index([lastName])
   @@index([phone])
@@ -184,7 +314,10 @@ model Carrier {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  products Product[]
+  products                 Product[]
+  agentContracts           AgentCarrierContract[]
+  agentPortalCredentials   AgentPortalCredential[]
+  clientPortalCredentials  ClientPortalCredential[]
 
   @@map("carriers")
 }
@@ -280,6 +413,32 @@ enum PaymentStatus {
   PAST_DUE
 }
 
+// Fase 025 (Hallazgo #3 de UAT): reemplaza los dos booleanos
+// autopay/needsPaymentAssistance, que podían quedar ambos true al
+// mismo tiempo sin representar ningún estado real del negocio. Una
+// póliza tiene EXACTAMENTE una modalidad de gestión de pago — ver
+// docs/DECISIONS.md para el mapeo de migración y por qué los booleanos
+// se conservan como estado derivado (nunca una segunda fuente de
+// verdad para escritura nueva).
+enum PaymentManagementMode {
+  AUTOPAY
+  ASSISTED
+  CLIENT_MANAGED
+}
+
+// Fase 025 (Parte I): a quién pertenece comercialmente una póliza.
+// Enum en vez de boolean isReferral — expresa mejor el dominio y deja
+// espacio para valores futuros sin otra migración. UNKNOWN existe
+// solo como default seguro de migración/import; una póliza nueva
+// creada por el flujo normal de la app SIEMPRE se calcula a OWN o
+// REFERRAL en el momento de creación (ver policies.service.ts), nunca
+// queda en UNKNOWN a propósito.
+enum PolicyBusinessSource {
+  OWN
+  REFERRAL
+  UNKNOWN
+}
+
 // Póliza emitida y su historial. No duplica carrier ni policyType: se
 // derivan siempre vía product -> carrier. Las renovaciones crean una
 // nueva Policy encadenada mediante previousPolicyId; nunca se sobrescribe
@@ -303,10 +462,18 @@ model Policy {
   premiumAmount          Decimal?              @db.Decimal(12, 2)
   billingFrequency       BillingFrequency?
   nextPaymentDueDate     DateTime?             @db.Date
+  // autopay/needsPaymentAssistance: conservados como estado DERIVADO,
+  // siempre escritos junto con paymentManagementMode por el servicio
+  // (nunca una segunda fuente de verdad independiente) — permite que
+  // las consultas ya existentes (Dashboard, Primas, Reportes, CSV) que
+  // filtran por estos booleanos sigan funcionando sin reescribirlas
+  // todas en esta fase. Ver docs/DECISIONS.md.
   autopay                Boolean               @default(false)
   needsPaymentAssistance Boolean               @default(false)
+  paymentManagementMode  PaymentManagementMode @default(CLIENT_MANAGED)
   paymentStatus          PaymentStatus?
   operationType          PolicyOperationType?
+  businessSource         PolicyBusinessSource  @default(UNKNOWN)
   // Solo tiene sentido para policyType HEALTH (vía product.policyType) —
   // regla de aplicación, no constraint de DB, mismo patrón que el resto
   // de reglas cruzadas de Policy. Null en pólizas no-HEALTH o cuando
@@ -331,6 +498,7 @@ model Policy {
   auditEvents            AuditEvent[]
   externalReferences     PolicyExternalReference[]
   statementRows          CommissionStatementRow[]
+  clientPortalCredentials ClientPortalCredential[]
 
   @@index([holderId])
   @@index([productId])

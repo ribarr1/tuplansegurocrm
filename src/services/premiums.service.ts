@@ -19,9 +19,22 @@ const PREMIUM_AUDIT_FIELDS = [
   "billingFrequency",
   "nextPaymentDueDate",
   "paymentStatus",
+  "paymentManagementMode",
   "autopay",
   "needsPaymentAssistance",
 ] as const;
+
+// Fase 025 (Hallazgo #3): paymentManagementMode es la fuente de
+// escritura; autopay/needsPaymentAssistance se conservan como espejo
+// derivado — ver deriveLegacyPaymentFlags en policies.service.ts. Se
+// duplica aquí (nunca se importa desde policies.service.ts, que no
+// exporta funciones internas) para mantener este módulo independiente.
+function deriveLegacyPaymentFlags(mode: "AUTOPAY" | "ASSISTED" | "CLIENT_MANAGED") {
+  return {
+    autopay: mode === "AUTOPAY",
+    needsPaymentAssistance: mode === "ASSISTED",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Seguimiento de primas y pagos — Fase 017
@@ -52,9 +65,11 @@ const PREMIUM_AUDIT_FIELDS = [
 const policySummarySelect = {
   id: true,
   policyNumber: true,
+  status: true,
   premiumAmount: true,
   billingFrequency: true,
   nextPaymentDueDate: true,
+  paymentManagementMode: true,
   autopay: true,
   needsPaymentAssistance: true,
   paymentStatus: true,
@@ -96,11 +111,14 @@ function dateOnlyTimestamp(parts: { year: number; month: number; day: number }):
 // para poder probarla con fechas de referencia fijas. Regla conservadora
 // pedida explícitamente: un paymentStatus = CURRENT ("al día") nunca se
 // marca vencido, aunque la fecha ya haya pasado — CURRENT es un hecho de
-// negocio más fuerte que la comparación de fechas.
+// negocio más fuerte que la comparación de fechas. Fase 025 (Hallazgo
+// #1 de UAT): CANCELLED/EXPIRED son puramente históricas — nunca
+// generan una alerta de "vencida", sea cual sea la fecha guardada.
 export function isPaymentOverdue(
-  policy: { nextPaymentDueDate: Date | null; paymentStatus: PaymentStatus | null },
+  policy: { status: string; nextPaymentDueDate: Date | null; paymentStatus: PaymentStatus | null },
   today: { year: number; month: number; day: number }
 ): boolean {
+  if (policy.status === "CANCELLED" || policy.status === "EXPIRED") return false;
   if (!policy.nextPaymentDueDate) return false;
   if (policy.paymentStatus === "CURRENT") return false;
   const dueTs = dateOnlyTimestamp(getDateOnlyParts(policy.nextPaymentDueDate));
@@ -152,6 +170,12 @@ export async function listPremiumTracking(actor: AuthorizedUser, rawQuery: unkno
   }
 
   const where: Prisma.PolicyWhereInput = {
+    // Hallazgo #1 de UAT (Fase 025): esta lista es la superficie
+    // OPERACIONAL de seguimiento de pago — una póliza CANCELLED/EXPIRED
+    // nunca debe aparecer aquí, sea cual sea su fecha/estado de pago
+    // guardado (que se conserva como historial, visible en el detalle
+    // de la póliza, nunca en esta lista de "qué necesita atención").
+    status: { notIn: ["CANCELLED", "EXPIRED"] },
     ...(needsAssistance !== undefined ? { needsPaymentAssistance: needsAssistance } : {}),
     ...(autopay !== undefined ? { autopay } : {}),
     ...(paymentStatus ? { paymentStatus } : {}),
@@ -217,10 +241,12 @@ export async function updatePremiumTracking(actor: AuthorizedUser, rawPolicyId: 
       id: true,
       holderId: true,
       householdId: true,
+      status: true,
       premiumAmount: true,
       billingFrequency: true,
       nextPaymentDueDate: true,
       paymentStatus: true,
+      paymentManagementMode: true,
       autopay: true,
       needsPaymentAssistance: true,
       effectiveDate: true,
@@ -231,6 +257,16 @@ export async function updatePremiumTracking(actor: AuthorizedUser, rawPolicyId: 
   if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [existing.holder, ...existing.members.map((m) => m.person)]);
 
+  // Hallazgo #1 de UAT (Fase 025): una póliza CANCELLED/EXPIRED es
+  // puramente histórica — su seguimiento de pago no puede seguir
+  // editándose, aunque los valores guardados se conserven visibles.
+  if (existing.status === "CANCELLED" || existing.status === "EXPIRED") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Esta póliza está cancelada o expirada — su seguimiento de pago es de solo lectura."
+    );
+  }
+
   // Hallazgo #6A de UAT (Fase 022): este formulario nunca toca
   // effectiveDate, pero sí puede fijar un nextPaymentDueDate anterior a
   // ella si no se valida contra el valor ya existente.
@@ -239,8 +275,8 @@ export async function updatePremiumTracking(actor: AuthorizedUser, rawPolicyId: 
   assertNextPaymentNotBeforeEffective(existing.effectiveDate, finalNextPaymentDueDate);
 
   const data: Prisma.PolicyUncheckedUpdateInput = {
-    autopay: input.autopay,
-    needsPaymentAssistance: input.needsPaymentAssistance,
+    paymentManagementMode: input.paymentManagementMode,
+    ...deriveLegacyPaymentFlags(input.paymentManagementMode),
   };
   if (input.premiumAmount !== undefined) data.premiumAmount = input.premiumAmount;
   if (input.billingFrequency !== undefined) data.billingFrequency = input.billingFrequency;
@@ -282,6 +318,7 @@ async function setPaymentStatus(actor: AuthorizedUser, rawPolicyId: unknown, sta
       id: true,
       holderId: true,
       householdId: true,
+      status: true,
       paymentStatus: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
@@ -289,6 +326,13 @@ async function setPaymentStatus(actor: AuthorizedUser, rawPolicyId: unknown, sta
   });
   if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [existing.holder, ...existing.members.map((m) => m.person)]);
+
+  if (existing.status === "CANCELLED" || existing.status === "EXPIRED") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Esta póliza está cancelada o expirada — su seguimiento de pago es de solo lectura."
+    );
+  }
 
   const changes = buildDiff(existing, { paymentStatus: status }, ["paymentStatus"]);
 

@@ -29,6 +29,7 @@ const POLICY_AUDIT_FIELDS = [
   "premiumAmount",
   "billingFrequency",
   "nextPaymentDueDate",
+  "paymentManagementMode",
   "autopay",
   "needsPaymentAssistance",
   "paymentStatus",
@@ -36,6 +37,31 @@ const POLICY_AUDIT_FIELDS = [
   "healthCoverageSource",
   "productId",
 ] as const;
+
+// Fase 025 (Hallazgo #3 de UAT): paymentManagementMode es la única
+// fuente de escritura; autopay/needsPaymentAssistance se conservan como
+// espejo DERIVADO (nunca se leen para decidir lógica nueva) para que el
+// código existente que aún filtra por esos booleanos (Dashboard,
+// Primas, Reportes, CSV) siga funcionando sin reescribirse — ver
+// docs/DECISIONS.md.
+function deriveLegacyPaymentFlags(mode: "AUTOPAY" | "ASSISTED" | "CLIENT_MANAGED") {
+  return {
+    autopay: mode === "AUTOPAY",
+    needsPaymentAssistance: mode === "ASSISTED",
+  };
+}
+
+// Fase 025 (Hallazgo #4 de UAT, Parte D): CANCELLED/EXPIRED son estados
+// puramente históricos — nunca se puede confiar solo en ocultar
+// Editar/Cancelar en la UI, se rechaza también aquí server-side.
+function assertPolicyIsMutable(status: string) {
+  if (status === "CANCELLED" || status === "EXPIRED") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Esta póliza está cancelada o expirada y es de solo lectura — no puede editarse ni volver a cancelarse."
+    );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Política de acceso — Policy (V1)
@@ -93,10 +119,12 @@ const policySelect = {
   premiumAmount: true,
   billingFrequency: true,
   nextPaymentDueDate: true,
+  paymentManagementMode: true,
   autopay: true,
   needsPaymentAssistance: true,
   paymentStatus: true,
   operationType: true,
+  businessSource: true,
   healthCoverageSource: true,
   createdAt: true,
   updatedAt: true,
@@ -537,8 +565,8 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
           premiumAmount: input.premiumAmount,
           billingFrequency: input.billingFrequency,
           nextPaymentDueDate: input.nextPaymentDueDate,
-          autopay: input.autopay,
-          needsPaymentAssistance: input.needsPaymentAssistance,
+          paymentManagementMode: input.paymentManagementMode,
+          ...deriveLegacyPaymentFlags(input.paymentManagementMode),
           paymentStatus: input.paymentStatus,
           operationType: input.operationType,
           processedById,
@@ -687,8 +715,8 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
           premiumAmount: input.premiumAmount,
           billingFrequency: input.billingFrequency,
           nextPaymentDueDate: input.nextPaymentDueDate,
-          autopay: input.autopay,
-          needsPaymentAssistance: input.needsPaymentAssistance,
+          paymentManagementMode: input.paymentManagementMode,
+          ...deriveLegacyPaymentFlags(input.paymentManagementMode),
           paymentStatus: input.paymentStatus,
           operationType: input.operationType,
           processedById,
@@ -753,6 +781,7 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       premiumAmount: true,
       billingFrequency: true,
       nextPaymentDueDate: true,
+      paymentManagementMode: true,
       autopay: true,
       needsPaymentAssistance: true,
       paymentStatus: true,
@@ -765,6 +794,12 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   });
   if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [existing.holder, ...existing.members.map((m) => m.person)]);
+
+  // Hallazgo #4 de UAT (Parte D): una póliza CANCELLED/EXPIRED es de
+  // solo lectura — a diferencia de cancelPolicy, updatePolicy nunca
+  // transiciona HACIA ese estado desde otro, así que aquí siempre se
+  // rechaza de plano si ya está en uno de esos dos.
+  assertPolicyIsMutable(existing.status);
 
   const data: Prisma.PolicyUncheckedUpdateInput = {};
 
@@ -786,9 +821,9 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   if (input.premiumAmount !== undefined) data.premiumAmount = input.premiumAmount;
   if (input.billingFrequency !== undefined) data.billingFrequency = input.billingFrequency;
   if (input.nextPaymentDueDate !== undefined) data.nextPaymentDueDate = input.nextPaymentDueDate;
-  if (input.autopay !== undefined) data.autopay = input.autopay;
-  if (input.needsPaymentAssistance !== undefined) {
-    data.needsPaymentAssistance = input.needsPaymentAssistance;
+  if (input.paymentManagementMode !== undefined) {
+    data.paymentManagementMode = input.paymentManagementMode;
+    Object.assign(data, deriveLegacyPaymentFlags(input.paymentManagementMode));
   }
   if (input.paymentStatus !== undefined) data.paymentStatus = input.paymentStatus;
   if (input.operationType !== undefined) data.operationType = input.operationType;
@@ -896,6 +931,11 @@ export async function cancelPolicy(actor: AuthorizedUser, rawId: unknown, rawInp
 
   if (existing.status === "CANCELLED") {
     throw new AppError("VALIDATION_ERROR", "Esta póliza ya está cancelada.");
+  }
+  // Hallazgo #4 de UAT (Parte D): EXPIRED es un hecho histórico cerrado,
+  // igual que CANCELLED — no se puede "cancelar" algo que ya terminó.
+  if (existing.status === "EXPIRED") {
+    throw new AppError("VALIDATION_ERROR", "Esta póliza ya expiró y es de solo lectura.");
   }
   assertTerminationNotBeforeEffective(existing.effectiveDate, input.terminationDate);
 

@@ -183,14 +183,22 @@ export default async function BirthdaysPage({
                       : ""}
                   </TableCell>
                   <TableCell className="text-right">
+                    {/* Hallazgo #2 de UAT (Fase 025): máquina de estados
+                        real — PENDING muestra "Marcar enviada"/"Omitir
+                        este año"; SENT/SKIPPED muestran únicamente
+                        "Restablecer" (nunca "Marcar enviada" de nuevo,
+                        que duplicaría el envío del mismo año). */}
                     <div className="flex flex-wrap justify-end gap-2">
-                      <MarkSentDialog
-                        personId={r.person.id}
-                        personName={`${r.person.firstName} ${r.person.lastName}`}
-                      />
-                      <SkipGreetingButton personId={r.person.id} />
-                      {isAdmin && r.greeting.status !== "PENDING" && (
-                        <ResetGreetingButton personId={r.person.id} />
+                      {r.greeting.status === "PENDING" ? (
+                        <>
+                          <MarkSentDialog
+                            personId={r.person.id}
+                            personName={`${r.person.firstName} ${r.person.lastName}`}
+                          />
+                          <SkipGreetingButton personId={r.person.id} />
+                        </>
+                      ) : (
+                        isAdmin && <ResetGreetingButton personId={r.person.id} />
                       )}
                     </div>
                   </TableCell>

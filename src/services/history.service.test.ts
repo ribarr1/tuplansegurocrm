@@ -323,8 +323,7 @@ describe("history.service — eventos generados por cada módulo", () => {
     const { policy } = await makePolicyFor(admin, holder);
     await updatePremiumTracking(admin, policy.id, {
       premiumAmount: "150.00",
-      autopay: "true",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "AUTOPAY",
     });
 
     const page = await getPolicyTimeline(admin, policy.id);

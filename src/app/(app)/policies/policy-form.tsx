@@ -9,6 +9,7 @@ import {
   POLICY_STATUS_VALUES,
   BILLING_FREQUENCY_VALUES,
   PAYMENT_STATUS_VALUES,
+  PAYMENT_MANAGEMENT_MODE_VALUES,
   POLICY_OPERATION_TYPE_VALUES,
   COVERED_MEMBER_ROLE_VALUES,
   HEALTH_COVERAGE_SOURCE_VALUES,
@@ -17,6 +18,7 @@ import {
   POLICY_STATUS_LABELS,
   BILLING_FREQUENCY_LABELS,
   PAYMENT_STATUS_LABELS,
+  PAYMENT_MANAGEMENT_MODE_LABELS,
   POLICY_OPERATION_TYPE_LABELS,
   POLICY_MEMBER_ROLE_LABELS,
   HOUSEHOLD_MEMBER_ROLE_LABELS,
@@ -322,23 +324,20 @@ export function PolicyForm({
           </div>
         </div>
 
-        <div className="flex gap-6 text-sm">
-          <label className="flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              name="autopay"
-              defaultChecked={(values.autopay ?? dv.autopay) === "true"}
-            />
-            Autopay
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              name="needsPaymentAssistance"
-              defaultChecked={(values.needsPaymentAssistance ?? dv.needsPaymentAssistance) === "true"}
-            />
-            Necesita asistencia para pagar
-          </label>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="paymentManagementMode">Modalidad de gestión de pago</Label>
+          <select
+            id="paymentManagementMode"
+            name="paymentManagementMode"
+            defaultValue={values.paymentManagementMode ?? dv.paymentManagementMode ?? "CLIENT_MANAGED"}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {PAYMENT_MANAGEMENT_MODE_VALUES.map((mode) => (
+              <option key={mode} value={mode}>
+                {PAYMENT_MANAGEMENT_MODE_LABELS[mode]}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="flex flex-col gap-1">

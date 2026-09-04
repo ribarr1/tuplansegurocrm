@@ -122,6 +122,7 @@ describe("premiums.service", () => {
     expect(found.billingFrequency).toBeNull();
     expect(found.nextPaymentDueDate).toBeNull();
     expect(found.paymentStatus).toBeNull();
+    expect(found.paymentManagementMode).toBe("CLIENT_MANAGED");
     expect(found.autopay).toBe(false);
     expect(found.needsPaymentAssistance).toBe(false);
     expect(found.isOverdue).toBe(false);
@@ -132,8 +133,7 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder);
     const updated = await updatePremiumTracking(admin, policy.id, {
       nextPaymentDueDate: "2026-12-25",
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     expect(updated.nextPaymentDueDate?.getUTCFullYear()).toBe(2026);
     expect(updated.nextPaymentDueDate?.getUTCMonth()).toBe(11);
@@ -143,7 +143,7 @@ describe("premiums.service", () => {
   it("D) vencimiento hoy se marca correctamente (no overdue, pero es 'hoy')", () => {
     const today = { year: 2026, month: 8, day: 31 };
     const overdue = isPaymentOverdue(
-      { nextPaymentDueDate: new Date(Date.UTC(2026, 7, 31)), paymentStatus: "DUE" },
+      { status: "ACTIVE", nextPaymentDueDate: new Date(Date.UTC(2026, 7, 31)), paymentStatus: "DUE" },
       today
     );
     expect(overdue).toBe(false);
@@ -152,7 +152,7 @@ describe("premiums.service", () => {
   it("E) vencido (fecha pasada, no CURRENT) se marca overdue", () => {
     const today = { year: 2026, month: 8, day: 31 };
     const overdue = isPaymentOverdue(
-      { nextPaymentDueDate: new Date(Date.UTC(2026, 7, 30)), paymentStatus: "PAST_DUE" },
+      { status: "ACTIVE", nextPaymentDueDate: new Date(Date.UTC(2026, 7, 30)), paymentStatus: "PAST_DUE" },
       today
     );
     expect(overdue).toBe(true);
@@ -161,7 +161,7 @@ describe("premiums.service", () => {
   it("F) futuro no se marca overdue", () => {
     const today = { year: 2026, month: 8, day: 31 };
     const overdue = isPaymentOverdue(
-      { nextPaymentDueDate: new Date(Date.UTC(2026, 8, 1)), paymentStatus: "DUE" },
+      { status: "ACTIVE", nextPaymentDueDate: new Date(Date.UTC(2026, 8, 1)), paymentStatus: "DUE" },
       today
     );
     expect(overdue).toBe(false);
@@ -170,7 +170,25 @@ describe("premiums.service", () => {
   it("G) paymentStatus CURRENT nunca se marca overdue aunque la fecha ya pasó", () => {
     const today = { year: 2026, month: 8, day: 31 };
     const overdue = isPaymentOverdue(
-      { nextPaymentDueDate: new Date(Date.UTC(2026, 7, 1)), paymentStatus: "CURRENT" },
+      { status: "ACTIVE", nextPaymentDueDate: new Date(Date.UTC(2026, 7, 1)), paymentStatus: "CURRENT" },
+      today
+    );
+    expect(overdue).toBe(false);
+  });
+
+  it("G2) CANCELLED nunca se marca overdue aunque la fecha ya pasó y paymentStatus sea PAST_DUE (Fase 025, Hallazgo #1)", () => {
+    const today = { year: 2026, month: 8, day: 31 };
+    const overdue = isPaymentOverdue(
+      { status: "CANCELLED", nextPaymentDueDate: new Date(Date.UTC(2026, 7, 1)), paymentStatus: "PAST_DUE" },
+      today
+    );
+    expect(overdue).toBe(false);
+  });
+
+  it("G3) EXPIRED nunca se marca overdue aunque la fecha ya pasó y paymentStatus sea PAST_DUE (Fase 025, Hallazgo #1)", () => {
+    const today = { year: 2026, month: 8, day: 31 };
+    const overdue = isPaymentOverdue(
+      { status: "EXPIRED", nextPaymentDueDate: new Date(Date.UTC(2026, 7, 1)), paymentStatus: "PAST_DUE" },
       today
     );
     expect(overdue).toBe(false);
@@ -180,8 +198,7 @@ describe("premiums.service", () => {
     const holder = await makePerson();
     const { policy } = await makePolicyFor(admin, holder);
     await updatePremiumTracking(admin, policy.id, {
-      autopay: "false",
-      needsPaymentAssistance: "true",
+      paymentManagementMode: "ASSISTED",
     });
     const { items } = await listPremiumTracking(admin, { needsAssistance: "true", pageSize: 100 });
     expect(items.some((i) => i.id === policy.id)).toBe(true);
@@ -191,7 +208,7 @@ describe("premiums.service", () => {
   it("I) filtro autopay", async () => {
     const holder = await makePerson();
     const { policy } = await makePolicyFor(admin, holder);
-    await updatePremiumTracking(admin, policy.id, { autopay: "true", needsPaymentAssistance: "false" });
+    await updatePremiumTracking(admin, policy.id, { paymentManagementMode: "AUTOPAY" });
     const { items } = await listPremiumTracking(admin, { autopay: "true", pageSize: 100 });
     expect(items.some((i) => i.id === policy.id)).toBe(true);
     expect(items.every((i) => i.autopay)).toBe(true);
@@ -219,8 +236,7 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder);
     await updatePremiumTracking(admin, policy.id, {
       nextPaymentDueDate: dateOnlyString(3),
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     const { items } = await listPremiumTracking(admin, { next7Days: "true", pageSize: 100 });
     expect(items.some((i) => i.id === policy.id)).toBe(true);
@@ -231,8 +247,7 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder);
     await updatePremiumTracking(admin, policy.id, {
       nextPaymentDueDate: dateOnlyString(20),
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     const { items: items7 } = await listPremiumTracking(admin, { next7Days: "true", pageSize: 100 });
     expect(items7.some((i) => i.id === policy.id)).toBe(false);
@@ -243,12 +258,12 @@ describe("premiums.service", () => {
   it("N) borde diciembre/enero: overdue se calcula correctamente cruzando el año", () => {
     const today = { year: 2027, month: 1, day: 2 };
     const overdue = isPaymentOverdue(
-      { nextPaymentDueDate: new Date(Date.UTC(2026, 11, 30)), paymentStatus: "DUE" },
+      { status: "ACTIVE", nextPaymentDueDate: new Date(Date.UTC(2026, 11, 30)), paymentStatus: "DUE" },
       today
     );
     expect(overdue).toBe(true);
     const notOverdue = isPaymentOverdue(
-      { nextPaymentDueDate: new Date(Date.UTC(2027, 0, 5)), paymentStatus: "DUE" },
+      { status: "ACTIVE", nextPaymentDueDate: new Date(Date.UTC(2027, 0, 5)), paymentStatus: "DUE" },
       today
     );
     expect(notOverdue).toBe(false);
@@ -283,8 +298,7 @@ describe("premiums.service", () => {
     expect(found.id).toBe(policy.id);
     const updated = await updatePremiumTracking(assistant, policy.id, {
       premiumAmount: "99.99",
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     expect(updated.premiumAmount?.toString()).toBe("99.99");
   });
@@ -295,8 +309,7 @@ describe("premiums.service", () => {
     const updated = await updatePremiumTracking(admin, policy.id, {
       premiumAmount: "200.00",
       billingFrequency: "MONTHLY",
-      autopay: "true",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "AUTOPAY",
       paymentStatus: "DUE",
     });
     expect(updated.billingFrequency).toBe("MONTHLY");
@@ -309,8 +322,7 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder);
     const updated = await updatePremiumTracking(admin, policy.id, {
       premiumAmount: "100.10",
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     expect(updated.premiumAmount?.toString()).toBe("100.1");
   });
@@ -328,8 +340,7 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder);
     const withDate = await updatePremiumTracking(admin, policy.id, {
       nextPaymentDueDate: "2026-09-15",
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     const marked = await markPaymentCurrent(admin, policy.id);
     expect(marked.nextPaymentDueDate?.getTime()).toBe(withDate.nextPaymentDueDate?.getTime());
@@ -340,8 +351,7 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder, { policyNumber: "PN-PREMIUM-TEST" });
     await updatePremiumTracking(admin, policy.id, {
       premiumAmount: "50.00",
-      autopay: "false",
-      needsPaymentAssistance: "false",
+      paymentManagementMode: "CLIENT_MANAGED",
     });
     const reloaded = await getPolicyById(admin, policy.id);
     expect(reloaded.policyNumber).toBe("PN-PREMIUM-TEST");
@@ -369,9 +379,11 @@ describe("premiums.service", () => {
       expect.arrayContaining([
         "id",
         "policyNumber",
+        "status",
         "premiumAmount",
         "billingFrequency",
         "nextPaymentDueDate",
+        "paymentManagementMode",
         "autopay",
         "needsPaymentAssistance",
         "paymentStatus",
@@ -404,7 +416,7 @@ describe("premiums.service", () => {
   it("AC) autopay=true filtra correctamente", async () => {
     const holder = await makePerson();
     const { policy } = await makePolicyFor(admin, holder);
-    await updatePremiumTracking(admin, policy.id, { autopay: "true", needsPaymentAssistance: "false" });
+    await updatePremiumTracking(admin, policy.id, { paymentManagementMode: "AUTOPAY" });
     const { items } = await listPremiumTracking(admin, { autopay: "true", pageSize: 100 });
     expect(items.some((i) => i.id === policy.id)).toBe(true);
   });
@@ -412,7 +424,7 @@ describe("premiums.service", () => {
   it("AD) autopay=false filtra correctamente", async () => {
     const holder = await makePerson();
     const { policy } = await makePolicyFor(admin, holder);
-    await updatePremiumTracking(admin, policy.id, { autopay: "false", needsPaymentAssistance: "false" });
+    await updatePremiumTracking(admin, policy.id, { paymentManagementMode: "CLIENT_MANAGED" });
     const { items } = await listPremiumTracking(admin, { autopay: "false", pageSize: 100 });
     expect(items.some((i) => i.id === policy.id)).toBe(true);
     expect(items.every((i) => !i.autopay)).toBe(true);
@@ -424,8 +436,7 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder, { effectiveDate: "2026-10-01" });
     await expect(
       updatePremiumTracking(admin, policy.id, {
-        autopay: "false",
-        needsPaymentAssistance: "false",
+        paymentManagementMode: "CLIENT_MANAGED",
         nextPaymentDueDate: "2025-10-01",
       })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -436,10 +447,47 @@ describe("premiums.service", () => {
     const { policy } = await makePolicyFor(admin, holder, { effectiveDate: "2026-10-01" });
     await expect(
       updatePremiumTracking(admin, policy.id, {
-        autopay: "false",
-        needsPaymentAssistance: "false",
+        paymentManagementMode: "CLIENT_MANAGED",
         nextPaymentDueDate: "2026-11-01",
       })
     ).resolves.toBeDefined();
+  });
+
+  // Fase 025 (Hallazgo #1 de UAT): CANCELLED/EXPIRED son de solo
+  // lectura para el seguimiento de pago — updatePremiumTracking y los
+  // atajos setPaymentStatus* deben rechazarlo server-side.
+  it("AE) updatePremiumTracking rechaza una póliza CANCELLED", async () => {
+    const holder = await makePerson();
+    const { policy } = await makePolicyFor(admin, holder, {
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+    });
+    await prisma.policy.update({ where: { id: policy.id }, data: { status: "CANCELLED" } });
+    await expect(
+      updatePremiumTracking(admin, policy.id, { paymentManagementMode: "ASSISTED" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("AF) markPaymentCurrent rechaza una póliza EXPIRED", async () => {
+    const holder = await makePerson();
+    const { policy } = await makePolicyFor(admin, holder, {
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+    });
+    await prisma.policy.update({ where: { id: policy.id }, data: { status: "EXPIRED" } });
+    await expect(markPaymentCurrent(admin, policy.id)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("AG) listPremiumTracking nunca incluye pólizas CANCELLED/EXPIRED", async () => {
+    const holder = await makePerson();
+    const { policy: cancelled } = await makePolicyFor(admin, holder, {
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+    });
+    await prisma.policy.update({ where: { id: cancelled.id }, data: { status: "CANCELLED" } });
+    const { items } = await listPremiumTracking(admin, { pageSize: 100 });
+    expect(items.some((i) => i.id === cancelled.id)).toBe(false);
   });
 });

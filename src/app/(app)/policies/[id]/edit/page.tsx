@@ -36,6 +36,24 @@ export default async function EditPolicyPage({
     throw error;
   }
 
+  // Hallazgo #4 de UAT (Parte D): CANCELLED/EXPIRED son de solo lectura
+  // — el botón "Editar" ya está oculto en la vista de detalle y el
+  // servicio (updatePolicy) también lo rechaza, pero si alguien navega
+  // directo a esta URL debe ver un mensaje claro, no un error crudo.
+  if (policy.status === "CANCELLED" || policy.status === "EXPIRED") {
+    return (
+      <div className="flex flex-col items-center gap-3 p-16 text-center">
+        <p className="text-sm text-muted-foreground">
+          Esta póliza está {policy.status === "CANCELLED" ? "cancelada" : "expirada"} y es de solo
+          lectura — sus datos se conservan como historial pero no pueden modificarse.
+        </p>
+        <Button variant="outline" nativeButton={false} render={<Link href={`/policies/${id}`} />}>
+          Volver a la póliza
+        </Button>
+      </div>
+    );
+  }
+
   // Regla de edición (docs/DECISIONS.md): el producto solo puede
   // cambiar mientras la póliza está PENDING.
   const canChangeProduct = policy.status === "PENDING";
@@ -66,8 +84,7 @@ export default async function EditPolicyPage({
           nextPaymentDueDate: policy.nextPaymentDueDate
             ? policy.nextPaymentDueDate.toISOString().slice(0, 10)
             : undefined,
-          autopay: policy.autopay,
-          needsPaymentAssistance: policy.needsPaymentAssistance,
+          paymentManagementMode: policy.paymentManagementMode,
           paymentStatus: policy.paymentStatus ?? undefined,
           operationType: policy.operationType ?? undefined,
           healthCoverageSource: policy.healthCoverageSource ?? undefined,

@@ -150,19 +150,25 @@ describe("book-of-business build-plan", () => {
     expect(result.persons[0].data.sex).toBe("UNKNOWN");
   });
 
-  // Fase 024, Parte C: normalización de pólizas HEALTH 2025.
-  it("una póliza HEALTH 2025 PROCESADA se normaliza a CANCELLED con terminationDate 2025-12-31", async () => {
+  // Fase 024, Parte C — corregida en Fase 025, Parte A (Hallazgo #1 de
+  // UAT): la normalización es EXPIRED, no CANCELLED (llegar al fin
+  // natural del año de cobertura no es una cancelación genuina).
+  it("una póliza HEALTH 2025 PROCESADA se normaliza a EXPIRED con terminationDate 2025-12-31", async () => {
     const result = await plan([{ ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2025", ESTATUS: "PROCESADA" }]);
-    expect(result.policies[0].status).toBe("CANCELLED");
+    expect(result.policies[0].status).toBe("EXPIRED");
     expect(result.policies[0].terminationDate).toEqual(new Date(Date.UTC(2025, 11, 31)));
     expect(result.policies[0].normalizedHealth2025).toBe(true);
-    expect(result.issues.some((i) => i.code === "HEALTH_2025_NORMALIZED_TO_CANCELLED")).toBe(true);
+    expect(result.issues.some((i) => i.code === "HEALTH_2025_NORMALIZED_TO_EXPIRED")).toBe(true);
   });
 
-  it("una póliza 2025 ya CANCELADA en el source no genera warning de normalización (no cambió nada)", async () => {
+  // El source nunca declara "EXPIRED" como estatus (no existe ese
+  // valor en el CSV legacy) — incluso una fila ya "CANCELADA" en el
+  // source SIEMPRE se reclasifica a EXPIRED para 2025, y por lo tanto
+  // siempre genera el warning de normalización (es un cambio real).
+  it("una póliza 2025 ya CANCELADA en el source también se normaliza a EXPIRED (con warning)", async () => {
     const result = await plan([{ ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2025", ESTATUS: "CANCELADA" }]);
-    expect(result.policies[0].status).toBe("CANCELLED");
-    expect(result.issues.some((i) => i.code === "HEALTH_2025_NORMALIZED_TO_CANCELLED")).toBe(false);
+    expect(result.policies[0].status).toBe("EXPIRED");
+    expect(result.issues.some((i) => i.code === "HEALTH_2025_NORMALIZED_TO_EXPIRED")).toBe(true);
   });
 
   it("una póliza 2026 nunca se normaliza (la regla es exclusiva de 2025)", async () => {
@@ -172,7 +178,7 @@ describe("book-of-business build-plan", () => {
     expect(result.policies[0].normalizedHealth2025).toBe(false);
   });
 
-  it("counts.healthPolicies2025NormalizedToCancelled cuenta solo las filas realmente normalizadas", async () => {
+  it("counts.healthPolicies2025NormalizedToExpired cuenta solo las filas realmente normalizadas", async () => {
     const result = await plan([
       { ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2025", ESTATUS: "PROCESADA" },
       {
@@ -186,6 +192,6 @@ describe("book-of-business build-plan", () => {
         ESTATUS: "PROCESADA",
       },
     ]);
-    expect(result.counts.healthPolicies2025NormalizedToCancelled).toBe(1);
+    expect(result.counts.healthPolicies2025NormalizedToExpired).toBe(1);
   });
 });

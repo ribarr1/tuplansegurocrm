@@ -4,7 +4,7 @@ import type { AuthorizedUser } from "@/lib/authorization";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BILLING_FREQUENCY_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/labels";
+import { BILLING_FREQUENCY_LABELS, PAYMENT_STATUS_LABELS, PAYMENT_MANAGEMENT_MODE_LABELS } from "@/lib/labels";
 import { formatDateOnlyUS } from "@/lib/date-only";
 import { QuickPaymentStatusButtons } from "./quick-payment-status-buttons";
 
@@ -33,22 +33,32 @@ export async function PremiumSection({
 }) {
   const premium = await getPremiumTrackingForPolicy(actor, policyId);
 
+  // Hallazgo #1 de UAT (Fase 025): CANCELLED/EXPIRED son puramente
+  // históricas — nunca generan alertas de asistencia ni el CTA
+  // "Gestionar pago", sea cual sea su paymentManagementMode guardado.
+  // Los valores se conservan visibles abajo, solo se apaga la
+  // superficie operacional.
+  const isHistorical = premium.status === "CANCELLED" || premium.status === "EXPIRED";
+  const showAssistanceCta = !isHistorical && premium.paymentManagementMode === "ASSISTED";
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <div className="flex items-center gap-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">Prima y pagos</CardTitle>
           {premium.isOverdue && <Badge variant="destructive">Vencida</Badge>}
-          {premium.needsPaymentAssistance && <Badge variant="secondary">Requiere asistencia</Badge>}
+          {showAssistanceCta && <Badge variant="secondary">Requiere asistencia</Badge>}
         </div>
-        <Button
-          size="sm"
-          variant={premium.needsPaymentAssistance ? "default" : "outline"}
-          nativeButton={false}
-          render={<Link href={`/policies/${policyId}/premium`} />}
-        >
-          {premium.needsPaymentAssistance ? "Gestionar pago" : "Editar seguimiento de pago"}
-        </Button>
+        {!isHistorical && (
+          <Button
+            size="sm"
+            variant={showAssistanceCta ? "default" : "outline"}
+            nativeButton={false}
+            render={<Link href={`/policies/${policyId}/premium`} />}
+          >
+            {showAssistanceCta ? "Gestionar pago" : "Editar seguimiento de pago"}
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
         <div className="grid gap-2 sm:grid-cols-2">
@@ -67,8 +77,8 @@ export async function PremiumSection({
             <span>{formatDueDate(premium.nextPaymentDueDate)}</span>
           </div>
           <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Autopay</span>
-            <span>{premium.autopay ? "Sí" : "No"}</span>
+            <span className="text-muted-foreground">Modalidad de pago</span>
+            <span>{PAYMENT_MANAGEMENT_MODE_LABELS[premium.paymentManagementMode]}</span>
           </div>
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">Estado de pago</span>
@@ -76,7 +86,9 @@ export async function PremiumSection({
           </div>
         </div>
 
-        <QuickPaymentStatusButtons policyId={policyId} currentStatus={premium.paymentStatus} />
+        {!isHistorical && (
+          <QuickPaymentStatusButtons policyId={policyId} currentStatus={premium.paymentStatus} />
+        )}
       </CardContent>
     </Card>
   );

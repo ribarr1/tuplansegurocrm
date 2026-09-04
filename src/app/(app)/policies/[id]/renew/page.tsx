@@ -89,8 +89,7 @@ export default async function RenewPolicyPage({ params }: { params: Promise<{ id
           healthCoverageSource: oldPolicy.healthCoverageSource ?? "",
           holderCovered: holderWasCovered ? "true" : "false",
           billingFrequency: oldPolicy.billingFrequency ?? "",
-          autopay: oldPolicy.autopay ? "true" : "false",
-          needsPaymentAssistance: oldPolicy.needsPaymentAssistance ? "true" : "false",
+          paymentManagementMode: oldPolicy.paymentManagementMode ?? "CLIENT_MANAGED",
           processedById: oldPolicy.processedBy?.id ?? "",
           operationType: "RENEWAL",
         }}

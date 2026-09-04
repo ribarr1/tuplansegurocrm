@@ -225,27 +225,40 @@ export async function buildImportPlan(
 
     const planYear = row.effectiveDate.getUTCFullYear();
 
-    // Parte C de la ficha (Fase 024): regla de NORMALIZACIÓN DE ESTE
-    // DATASET/IMPORT específico, no una regla de lifecycle general del
-    // CRM (esa sigue viviendo en policies.service.ts sin tocarse). Este
-    // book es enteramente HEALTH (Parte G) y trae pólizas 2025 que ya
-    // no deben quedar ACTIVE tras la reimportación — se normalizan a
-    // CANCELLED, con terminationDate = 2025-12-31 SOLO cuando el source
-    // no trae una explícita (única excepción documentada a "nunca
-    // inferir terminationDate" — acotada a este caso concreto). Nunca
-    // toca pólizas 2026.
+    // Parte C de la ficha (Fase 024), corregida en Fase 025 (Parte A,
+    // Hallazgo #1 de UAT): regla de NORMALIZACIÓN DE ESTE DATASET/IMPORT
+    // específico, no una regla de lifecycle general del CRM (esa sigue
+    // viviendo en policies.service.ts sin tocarse). Este book es
+    // enteramente HEALTH (Parte G) y trae pólizas 2025 que ya no deben
+    // quedar ACTIVE tras la reimportación — se normalizan a EXPIRED (NO
+    // CANCELLED: llegar al fin natural del año de cobertura no es una
+    // cancelación genuina), con terminationDate = 2025-12-31 SOLO cuando
+    // el source no trae una explícita (única excepción documentada a
+    // "nunca inferir terminationDate" — acotada a este caso concreto).
+    // Nunca toca pólizas 2026.
     const isHealth2025 = planYear === 2025;
-    const normalizedStatus = isHealth2025 ? "CANCELLED" : status;
+    const normalizedStatus = isHealth2025 ? "EXPIRED" : status;
     const normalizedTerminationDate = isHealth2025 ? new Date(Date.UTC(2025, 11, 31)) : null;
-    if (isHealth2025 && status !== "CANCELLED") {
+    // mapPolicyStatus nunca produce "EXPIRED" desde el source (no existe
+    // ese estatus en el CSV legacy) — la normalización siempre es un
+    // cambio real cuando isHealth2025, así que la condición es
+    // simplemente "siempre reportar" en ese caso.
+    if (isHealth2025) {
       issues.push({
         rowIndex: row.rowIndex,
         sourceIndex: row.sourceIndex,
-        code: "HEALTH_2025_NORMALIZED_TO_CANCELLED",
-        message: `Póliza de salud del plan year 2025 (estatus fuente "${row.status}") normalizada a CANCELLED con terminationDate 12/31/2025 para esta reimportación.`,
+        code: "HEALTH_2025_NORMALIZED_TO_EXPIRED",
+        message: `Póliza de salud del plan year 2025 (estatus fuente "${row.status}") normalizada a EXPIRED con terminationDate 12/31/2025 para esta reimportación.`,
         severity: "WARNING",
       });
     }
+
+    // Fase 025, Parte K: mapeo de paymentManagementMode desde el
+    // source. ASISTENCIA == SI -> ASSISTED; el dataset nunca trae
+    // evidencia explícita de AUTOPAY (no existe esa columna), así que
+    // ese valor nunca se asume por defecto — sin asistencia, el mapeo
+    // resulta siempre CLIENT_MANAGED (ver docs/DECISIONS.md).
+    const paymentManagementMode = row.assistance ? "ASSISTED" : "CLIENT_MANAGED";
 
     policies.push({
       rowIndex: row.rowIndex,
@@ -260,7 +273,7 @@ export async function buildImportPlan(
       terminationDate: normalizedTerminationDate, // nunca se infiere salvo la excepción 2025 de arriba — ver Hallazgo §37/§38 de la ficha
       normalizedHealth2025: isHealth2025,
       premiumAmount: row.premium,
-      needsPaymentAssistance: row.assistance,
+      paymentManagementMode,
       healthCoverageSource: "MARKETPLACE",
       marketplaceState: household.state,
       deductible: row.deductible,
@@ -368,7 +381,7 @@ export async function buildImportPlan(
       uscisToImport: persons.filter((p) => p.sensitive.uscisNumber).length,
       notesToImport: policies.filter((p) => p.note).length,
       sex: sexCounts,
-      healthPolicies2025NormalizedToCancelled: policies.filter((p) => p.normalizedHealth2025).length,
+      healthPolicies2025NormalizedToExpired: policies.filter((p) => p.normalizedHealth2025).length,
       productsByPolicyType,
     },
   };

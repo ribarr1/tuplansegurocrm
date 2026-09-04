@@ -39,6 +39,15 @@ export const BILLING_FREQUENCY_VALUES = [
 
 export const PAYMENT_STATUS_VALUES = ["CURRENT", "DUE", "PAST_DUE"] as const;
 
+// Fase 025 (Hallazgo #3 de UAT): reemplaza los dos booleanos autopay/
+// needsPaymentAssistance como fuente de escritura — una póliza tiene
+// EXACTAMENTE una modalidad de gestión de pago (ver docs/DECISIONS.md).
+export const PAYMENT_MANAGEMENT_MODE_VALUES = ["AUTOPAY", "ASSISTED", "CLIENT_MANAGED"] as const;
+export const paymentManagementModeSchema = z.enum(
+  PAYMENT_MANAGEMENT_MODE_VALUES,
+  "Selecciona una modalidad de gestión de pago válida."
+);
+
 // Fase 019.5 — solo aplica a pólizas HEALTH, regla de aplicación (ver
 // docs/DECISIONS.md).
 export const HEALTH_COVERAGE_SOURCE_VALUES = ["MARKETPLACE", "PRIVATE"] as const;
@@ -96,11 +105,7 @@ export const createPolicySchema = z
     premiumAmount: decimalAmountSchema.optional(),
     billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
     nextPaymentDueDate: dateOnlySchema().optional(),
-    autopay: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
-    needsPaymentAssistance: z
-      .enum(["true", "false"])
-      .default("false")
-      .transform((v) => v === "true"),
+    paymentManagementMode: paymentManagementModeSchema.default("CLIENT_MANAGED"),
     paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
     operationType: z.enum(POLICY_OPERATION_TYPE_VALUES).default("NEW_ENROLLMENT"),
     // Solo ADMIN puede enviar un valor distinto de sí mismo — la
@@ -131,11 +136,7 @@ export const updatePolicySchema = z
     premiumAmount: decimalAmountSchema.optional(),
     billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
     nextPaymentDueDate: dateOnlySchema().optional(),
-    autopay: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
-    needsPaymentAssistance: z
-      .enum(["true", "false"])
-      .transform((v) => v === "true")
-      .optional(),
+    paymentManagementMode: paymentManagementModeSchema.optional(),
     paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
     operationType: z.enum(POLICY_OPERATION_TYPE_VALUES).optional(),
     processedById: z.uuid("Selecciona un usuario válido.").optional(),
@@ -171,11 +172,7 @@ export const renewPolicySchema = z
     premiumAmount: decimalAmountSchema.optional(),
     billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
     nextPaymentDueDate: dateOnlySchema().optional(),
-    autopay: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
-    needsPaymentAssistance: z
-      .enum(["true", "false"])
-      .default("false")
-      .transform((v) => v === "true"),
+    paymentManagementMode: paymentManagementModeSchema.default("CLIENT_MANAGED"),
     paymentStatus: z.enum(PAYMENT_STATUS_VALUES).optional(),
     operationType: z.enum(POLICY_OPERATION_TYPE_VALUES).default("RENEWAL"),
     processedById: z.uuid("Selecciona un usuario válido.").optional(),

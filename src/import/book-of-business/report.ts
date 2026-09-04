@@ -28,7 +28,7 @@ export type ImportReport = {
   statusCounts: Record<string, number>;
   carrierCounts: Record<string, number>;
   sexCounts: { MALE: number; FEMALE: number; OTHER: number; UNKNOWN: number };
-  healthPolicies2025NormalizedToCancelled: number;
+  healthPolicies2025NormalizedToExpired: number;
   productsByPolicyType: Record<string, number>;
 };
 
@@ -76,7 +76,7 @@ export function buildImportReport(plan: ImportPlan, applyResult: ApplyResult | n
     statusCounts,
     carrierCounts,
     sexCounts: plan.counts.sex,
-    healthPolicies2025NormalizedToCancelled: plan.counts.healthPolicies2025NormalizedToCancelled,
+    healthPolicies2025NormalizedToExpired: plan.counts.healthPolicies2025NormalizedToExpired,
     productsByPolicyType: plan.counts.productsByPolicyType,
   };
 }
