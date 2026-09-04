@@ -70,6 +70,9 @@ export default async function UsersPage() {
                       <Link href={`/settings/users/${user.id}/contracts`} className="text-sm underline">
                         Contratos
                       </Link>
+                      <Link href={`/settings/users/${user.id}/credentials`} className="text-sm underline">
+                        Accesos
+                      </Link>
                     </>
                   )}
                   <ResetPasswordDialog userId={user.id} userName={user.name} />

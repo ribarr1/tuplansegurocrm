@@ -65,6 +65,18 @@ export default async function EditPremiumTrackingPage({
       <h2 className="font-heading text-lg font-semibold">
         Seguimiento de pago — {premium.policyNumber ?? "Póliza sin número"}
       </h2>
+      {/* Fase 025 (Parte J): ASSISTED puede necesitar iniciar sesión en
+          el portal del cliente para gestionar el pago — solo un enlace
+          a la pestaña "Accesos" (metadata + revelar/copiar ahí, nunca
+          se revela nada automáticamente en esta página). */}
+      {premium.paymentManagementMode === "ASSISTED" && (
+        <Link
+          href={`/contacts/${premium.holder.id}?tab=accesos`}
+          className="w-fit text-sm underline text-muted-foreground"
+        >
+          Ver accesos a portales del cliente
+        </Link>
+      )}
       <PremiumDetailForm
         action={updatePremiumTrackingAction.bind(null, id)}
         defaultValues={{

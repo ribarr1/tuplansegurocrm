@@ -25,6 +25,7 @@ import type {
   PersonSex,
   PaymentManagementMode,
   PolicyBusinessSource,
+  ClientPortalType,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -184,6 +185,13 @@ export const POLICY_BUSINESS_SOURCE_LABELS: Record<PolicyBusinessSource, string>
   OWN: "Propia",
   REFERRAL: "Referida",
   UNKNOWN: "Sin clasificar",
+};
+
+export const CLIENT_PORTAL_TYPE_LABELS: Record<ClientPortalType, string> = {
+  CARRIER: "Compañía",
+  MARKETPLACE: "Marketplace",
+  STATE_EXCHANGE: "Exchange estatal",
+  OTHER: "Otro",
 };
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {

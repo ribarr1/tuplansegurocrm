@@ -24,6 +24,7 @@ import { IdentityTab } from "./identity-tab";
 import { CommissionsTab } from "./commissions-tab";
 import { NotesTab } from "./notes-tab";
 import { HistoryTab } from "./history-tab";
+import { CredentialsTab } from "./credentials-tab";
 import { formatDateTimeUS } from "@/lib/business-time";
 import { MarkSentDialog } from "../../birthdays/mark-sent-dialog";
 import { SkipGreetingButton } from "../../birthdays/greeting-quick-buttons";
@@ -35,6 +36,7 @@ const PROFILE_TABS = [
   { key: "polizas", label: "Pólizas", enabled: true },
   { key: "salud", label: "Salud", enabled: true },
   { key: "identidad", label: "Identidad", enabled: true },
+  { key: "accesos", label: "Accesos", enabled: true },
   { key: "tareas", label: "Tareas", enabled: true },
   { key: "comisiones", label: "Comisiones", enabled: true },
   { key: "notas", label: "Notas", enabled: true },
@@ -147,6 +149,8 @@ export default async function ContactDetailPage({
         <HealthTab actor={actor} personId={person.id} />
       ) : activeTab === "identidad" ? (
         <IdentityTab actor={actor} personId={person.id} />
+      ) : activeTab === "accesos" ? (
+        <CredentialsTab actor={actor} personId={person.id} />
       ) : activeTab === "comisiones" ? (
         actor.role === "ASSISTANT" ? null : <CommissionsTab actor={actor} personId={person.id} />
       ) : activeTab === "notas" ? (
