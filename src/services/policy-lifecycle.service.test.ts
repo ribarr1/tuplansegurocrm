@@ -7,7 +7,20 @@ import { reconcilePolicyLifecycle } from "@/services/policy-lifecycle.service";
 // directamente vía prisma (no createPolicy) porque necesitamos fechas
 // PENDING/ACTIVE arbitrarias en el pasado que el flujo normal de
 // creación no necesariamente permitiría sin pasos intermedios.
-
+//
+// CRÍTICO (Fase 025.2 — incidente de datos real): este archivo corre
+// contra la base de datos REAL de DEV, no una aislada — igual que el
+// resto de la suite de integración. reconcilePolicyLifecycleCore
+// reconcilia POR DEFECTO la tabla `Policy` COMPLETA (es su
+// comportamiento correcto en producción). Un test que llama
+// reconcilePolicyLifecycle(businessDate) SIN el segundo argumento
+// `{ policyIds: [...] }` reconcilia TODAS las pólizas reales de la
+// base de datos, no solo las que crea el test — esto expiró
+// prematuramente ~40 pólizas HEALTH 2026 genuinas en DEV la primera
+// vez que se corrió la suite completa con esta prueba (ver
+// docs/DECISIONS.md, Fase 025.2). TODA llamada en este archivo debe
+// pasar SIEMPRE `{ policyIds: [...] }` acotado a las filas creadas por
+// ese test — nunca omitirlo, aunque "debería" no afectar nada más.
 const createdPersonIds: string[] = [];
 const createdCarrierIds: string[] = [];
 const createdProductIds: string[] = [];
@@ -86,8 +99,8 @@ describe("policy-lifecycle.service", () => {
       holderCovered: true,
     });
 
-    const result = await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
-    expect(result.activatedCount).toBeGreaterThanOrEqual(1);
+    const result = await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 }, { policyIds: [policy.id] });
+    expect(result.activatedCount).toBe(1);
 
     const reloaded = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
     expect(reloaded.status).toBe("ACTIVE");
@@ -103,7 +116,7 @@ describe("policy-lifecycle.service", () => {
       effectiveDate: new Date(Date.UTC(2027, 0, 1)),
     });
 
-    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
+    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 }, { policyIds: [policy.id] });
     const reloaded = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
     expect(reloaded.status).toBe("PENDING");
   });
@@ -120,13 +133,13 @@ describe("policy-lifecycle.service", () => {
     });
 
     // El 31/12 mismo sigue ACTIVE.
-    await reconcilePolicyLifecycle({ year: 2026, month: 11, day: 31 });
+    await reconcilePolicyLifecycle({ year: 2026, month: 11, day: 31 }, { policyIds: [policy.id] });
     let reloaded = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
     expect(reloaded.status).toBe("ACTIVE");
 
     // A partir del 1/1 siguiente, EXPIRED.
-    const result = await reconcilePolicyLifecycle({ year: 2027, month: 1, day: 1 });
-    expect(result.expiredCount).toBeGreaterThanOrEqual(1);
+    const result = await reconcilePolicyLifecycle({ year: 2027, month: 1, day: 1 }, { policyIds: [policy.id] });
+    expect(result.expiredCount).toBe(1);
     reloaded = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
     expect(reloaded.status).toBe("EXPIRED");
   });
@@ -142,7 +155,7 @@ describe("policy-lifecycle.service", () => {
       terminationDate: new Date(Date.UTC(2025, 5, 1)),
     });
 
-    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
+    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 }, { policyIds: [policy.id] });
     const reloaded = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
     expect(reloaded.status).toBe("CANCELLED");
   });
@@ -158,7 +171,7 @@ describe("policy-lifecycle.service", () => {
       terminationDate: new Date(Date.UTC(2025, 11, 31)),
     });
 
-    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
+    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 }, { policyIds: [policy.id] });
     const reloaded = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
     expect(reloaded.status).toBe("EXPIRED");
   });
@@ -173,7 +186,7 @@ describe("policy-lifecycle.service", () => {
       effectiveDate: new Date(Date.UTC(2026, 5, 1)),
     });
 
-    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
+    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 }, { policyIds: [policy.id] });
     const events = await prisma.auditEvent.findMany({
       where: { policyId: policy.id, action: "POLICY_AUTO_ACTIVATED" },
     });
@@ -192,8 +205,11 @@ describe("policy-lifecycle.service", () => {
       effectiveDate: new Date(Date.UTC(2026, 5, 1)),
     });
 
-    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
-    const secondRun = await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
+    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 }, { policyIds: [policy.id] });
+    const secondRun = await reconcilePolicyLifecycle(
+      { year: 2026, month: 6, day: 1 },
+      { policyIds: [policy.id] }
+    );
     expect(secondRun.activatedCount).toBe(0);
 
     const events = await prisma.auditEvent.findMany({
@@ -205,7 +221,7 @@ describe("policy-lifecycle.service", () => {
   it("H) activar una póliza recomputa Prospecto/Cliente del titular cubierto", async () => {
     const holder = await makePerson();
     const product = await makeProduct();
-    await makeRawPolicy({
+    const policy = await makeRawPolicy({
       holderId: holder.id,
       productId: product.id,
       status: "PENDING",
@@ -216,8 +232,37 @@ describe("policy-lifecycle.service", () => {
       "PROSPECT"
     );
 
-    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 });
+    await reconcilePolicyLifecycle({ year: 2026, month: 6, day: 1 }, { policyIds: [policy.id] });
     const reloaded = await prisma.person.findUniqueOrThrow({ where: { id: holder.id } });
     expect(reloaded.contactStatus).toBe("CLIENT");
+  });
+
+  // Fase 025.2: prueba explícita de que el scope realmente aísla —
+  // reconciliar con un businessDate que calificaría a pólizas reales
+  // pero pasando policyIds acotado a una fila irrelevante no debe
+  // tocar ninguna póliza fuera de ese scope.
+  it("I) policyIds acota la reconciliación — nunca toca pólizas fuera del scope", async () => {
+    const holder = await makePerson();
+    const product = await makeProduct();
+    const unrelated = await makeRawPolicy({
+      holderId: holder.id,
+      productId: product.id,
+      status: "ACTIVE",
+      effectiveDate: new Date(Date.UTC(2026, 0, 1)),
+      terminationDate: new Date(Date.UTC(2026, 5, 1)),
+    });
+
+    // businessDate muy futuro (calificaría a `unrelated` para EXPIRED),
+    // pero el scope apunta a un id que no existe — `unrelated` debe
+    // seguir intacta.
+    const result = await reconcilePolicyLifecycle(
+      { year: 2030, month: 1, day: 1 },
+      { policyIds: ["00000000-0000-0000-0000-000000000000"] }
+    );
+    expect(result.expiredCount).toBe(0);
+    expect(result.activatedCount).toBe(0);
+
+    const reloaded = await prisma.policy.findUniqueOrThrow({ where: { id: unrelated.id } });
+    expect(reloaded.status).toBe("ACTIVE");
   });
 });

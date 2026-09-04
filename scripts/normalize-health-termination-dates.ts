@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
+import { healthDefaultTerminationDate } from "../src/lib/health-coverage-year";
 
 // Fase 025.1 (Hallazgo #2 de UAT): normaliza terminationDate para
 // pólizas HEALTH existentes en DEV que la tienen NULL — 31/12 del
@@ -18,12 +19,6 @@ import { prisma } from "../src/lib/prisma";
 //
 // Reporta SOLO conteos, nunca nombres de clientes (CLAUDE.md §32).
 
-function healthDefaultTerminationDate(planYear: number | null, effectiveDate: Date | null): Date | null {
-  const year = planYear ?? (effectiveDate ? effectiveDate.getUTCFullYear() : null);
-  if (year == null) return null;
-  return new Date(Date.UTC(year, 11, 31));
-}
-
 async function main() {
   const candidates = await prisma.policy.findMany({
     where: { product: { policyType: "HEALTH" }, status: "ACTIVE", terminationDate: null },
@@ -35,7 +30,7 @@ async function main() {
   let normalized = 0;
   let skippedAmbiguous = 0;
   for (const policy of candidates) {
-    const defaultDate = healthDefaultTerminationDate(policy.product.planYear, policy.effectiveDate);
+    const defaultDate = healthDefaultTerminationDate("HEALTH", policy.product.planYear, policy.effectiveDate);
     if (!defaultDate) {
       skippedAmbiguous++;
       continue;

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { normalizeCarrierName, normalizePlanName, normalizeForMatch, normalizeNameForMatch, normalizeUsState, mapImmigrationSource, mapPolicyStatus, mapOperationType, comparePolicyChronology } from "./normalize";
+import { healthDefaultTerminationDate } from "@/lib/health-coverage-year";
 import type {
   SourceRow,
   PersonSourceData,
@@ -238,7 +239,16 @@ export async function buildImportPlan(
     // Nunca toca pólizas 2026.
     const isHealth2025 = planYear === 2025;
     const normalizedStatus = isHealth2025 ? "EXPIRED" : status;
-    const normalizedTerminationDate = isHealth2025 ? new Date(Date.UTC(2025, 11, 31)) : null;
+    // Fase 025.2: fuera del caso especial 2025, el default general de
+    // terminationDate para HEALTH usa el mismo helper central que
+    // create/update/renew (healthDefaultTerminationDate) — planYear
+    // aquí SIEMPRE se deriva de row.effectiveDate (línea de arriba),
+    // así que nunca puede haber conflicto planYear/effectiveDate en
+    // este flujo (a diferencia de una renovación en la app, que puede
+    // reutilizar un Product de catálogo con planYear desalineado).
+    const normalizedTerminationDate = isHealth2025
+      ? new Date(Date.UTC(2025, 11, 31))
+      : healthDefaultTerminationDate("HEALTH", planYear, row.effectiveDate);
     // mapPolicyStatus nunca produce "EXPIRED" desde el source (no existe
     // ese estatus en el CSV legacy) — la normalización siempre es un
     // cambio real cuando isHealth2025, así que la condición es

@@ -1953,7 +1953,40 @@ describe("policies.service — Hallazgo #2 de UAT (Fase 025.1): terminationDate 
     expect(renewal.terminationDate?.toISOString().slice(0, 10)).toBe("2027-12-31");
   });
 
-  it("updatePolicy: cambiar de producto (planYear distinto) mientras PENDING recalcula la fecha sugerida no personalizada", async () => {
+  // Fase 025.2 (incidente de datos real): reproduce EXACTAMENTE el
+  // escenario real que produjo terminationDate=12/31/2026 sobre una
+  // póliza con effectiveDate=01/01/2027 — una renovación que REUTILIZA
+  // el mismo Product que su predecesora (planYear del producto sigue
+  // siendo 2026, desalineado de la effectiveDate real de esta póliza).
+  it("renewPolicy NUNCA hereda el planYear de un Product reutilizado de la predecesora — prioriza su propia effectiveDate", async () => {
+    const productId = await makeHealthProduct(2026); // MISMO producto para ambas
+    const person = await makePersonHT();
+    const original = await createPolicy(admin, {
+      holderId: person.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+      terminationDate: "2026-12-31",
+    });
+    createdPolicyIds.push(original.id);
+
+    const renewal = await renewPolicy(admin, original.id, {
+      productId, // reutiliza el mismo Product (planYear=2026) a propósito
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2027-01-01",
+    });
+    createdPolicyIds.push(renewal.id);
+
+    // NUNCA 2026-12-31 (heredado del producto) — debe ser 2027-12-31,
+    // derivado de la effectiveDate propia de esta póliza.
+    expect(renewal.terminationDate?.toISOString().slice(0, 10)).toBe("2027-12-31");
+    // Invariante de seguridad: terminación nunca antes que el inicio.
+    expect(renewal.terminationDate!.getTime()).toBeGreaterThan(renewal.effectiveDate!.getTime());
+  });
+
+  it("updatePolicy: cambiar de producto (planYear distinto) mientras PENDING NUNCA adelanta la fecha sugerida por encima de la effectiveDate real de la póliza", async () => {
     const productA = await makeHealthProduct(2026);
     const productB = await makeHealthProduct(2027);
     const person = await makePersonHT();
@@ -1967,7 +2000,33 @@ describe("policies.service — Hallazgo #2 de UAT (Fase 025.1): terminationDate 
     createdPolicyIds.push(policy.id);
     expect(policy.terminationDate?.toISOString().slice(0, 10)).toBe("2026-12-31");
 
+    // Fase 025.2: cambiar SOLO el producto (sin tocar effectiveDate,
+    // que sigue siendo 2026-06-01) a uno de planYear=2027 crea un
+    // conflicto planYear/effectiveDate — el helper central nunca
+    // "adelanta" la fecha sugerida a ciegas por el nuevo producto, se
+    // queda alineado con la effectiveDate real de ESTA póliza. Esto es
+    // exactamente lo que evita el incidente real (terminación
+    // desalineada de la effectiveDate de la póliza).
     const updated = await updatePolicy(admin, policy.id, { productId: productB });
+    expect(updated.terminationDate?.toISOString().slice(0, 10)).toBe("2026-12-31");
+  });
+
+  it("updatePolicy: cambiar producto Y effectiveDate juntos (sin conflicto) sí recalcula la fecha sugerida al nuevo año", async () => {
+    const productA = await makeHealthProduct(2026);
+    const productB = await makeHealthProduct(2027);
+    const person = await makePersonHT();
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId: productA,
+      holderCovered: "true",
+      effectiveDate: "2026-06-01",
+    });
+    createdPolicyIds.push(policy.id);
+
+    const updated = await updatePolicy(admin, policy.id, {
+      productId: productB,
+      effectiveDate: "2027-06-01",
+    });
     expect(updated.terminationDate?.toISOString().slice(0, 10)).toBe("2027-12-31");
   });
 

@@ -21,6 +21,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
 import { getTodayBusinessRange } from "@/lib/business-time";
 import { resolvePolicyBusinessSourceAtCreation } from "@/services/policy-business-source.service";
+import { healthDefaultTerminationDate } from "@/lib/health-coverage-year";
 
 const POLICY_AUDIT_FIELDS = [
   "policyNumber",
@@ -217,25 +218,6 @@ export function assertNextPaymentNotBeforeEffective(
       "nextPaymentDueDate: El próximo pago no puede ser anterior a la fecha efectiva de la póliza."
     );
   }
-}
-
-// Fase 025.1 (Hallazgo #2 de UAT): las pólizas HEALTH normalmente
-// terminan el 31 de diciembre de su plan year, salvo cancelación real
-// anticipada — sin este default, terminationDate quedaba en null
-// indefinidamente para pólizas que nunca la reciben explícitamente.
-// Usa Product.planYear (el año real del plan) y NUNCA el año del
-// servidor/reloj; si el producto no tiene planYear capturado (algunos
-// productos no anuales, ver docs/DECISIONS.md), cae de vuelta al año
-// de effectiveDate — todavía el "año real de la póliza", nunca "hoy".
-function healthDefaultTerminationDate(
-  policyType: string,
-  planYear: number | null,
-  effectiveDate: Date | null
-): Date | null {
-  if (policyType !== "HEALTH") return null;
-  const year = planYear ?? (effectiveDate ? effectiveDate.getUTCFullYear() : null);
-  if (year == null) return null;
-  return new Date(Date.UTC(year, 11, 31));
 }
 
 // Fase 022 (Hallazgo #6B de UAT): una PERSONA (nunca "el hogar") no

@@ -171,10 +171,14 @@ describe("book-of-business build-plan", () => {
     expect(result.issues.some((i) => i.code === "HEALTH_2025_NORMALIZED_TO_EXPIRED")).toBe(true);
   });
 
-  it("una póliza 2026 nunca se normaliza (la regla es exclusiva de 2025)", async () => {
+  it("una póliza 2026 nunca se normaliza a EXPIRED (la regla especial es exclusiva de 2025) — pero sí recibe el default general de terminationDate = 31/12/planYear", async () => {
     const result = await plan([{ ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2026", ESTATUS: "PROCESADA" }]);
     expect(result.policies[0].status).toBe("ACTIVE");
-    expect(result.policies[0].terminationDate).toBeNull();
+    // Fase 025.2: el default general (healthDefaultTerminationDate) sí
+    // aplica aquí — nunca null indefinidamente para una póliza HEALTH
+    // nueva. planYear se deriva de effectiveDate en este flujo, así que
+    // nunca hay conflicto (ver health-coverage-year.ts).
+    expect(result.policies[0].terminationDate?.toISOString().slice(0, 10)).toBe("2026-12-31");
     expect(result.policies[0].normalizedHealth2025).toBe(false);
   });
 

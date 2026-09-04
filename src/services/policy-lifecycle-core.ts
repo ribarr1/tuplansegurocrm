@@ -117,11 +117,25 @@ export type PolicyLifecycleResult = {
 };
 
 export async function reconcilePolicyLifecycleCore(
-  businessDate?: { year: number; month: number; day: number }
+  businessDate?: { year: number; month: number; day: number },
+  // Fase 025.2 (URGENTE — incidente de datos): `policyIds` NUNCA debe
+  // usarse desde el job real (production/CLI) — omitido, se reconcilia
+  // la tabla COMPLETA, que es el comportamiento correcto en producción.
+  // Existe EXCLUSIVAMENTE para que los tests de integración (que corren
+  // contra la base de datos real de DEV, no una aislada) puedan acotar
+  // la consulta a sus propias filas de fixture. Sin este parámetro, un
+  // test que pase un businessDate futuro (ej. para probar la expiración)
+  // ejecuta la reconciliación SIN ACOTAR contra TODA la tabla real —
+  // esto fue exactamente el incidente real que expiró prematuramente
+  // ~40 pólizas HEALTH 2026 genuinas en DEV cuando la suite completa
+  // corrió con un test que llamaba reconcilePolicyLifecycle({year:2027,...})
+  // sin este scope (ver docs/DECISIONS.md, Fase 025.2).
+  options?: { policyIds?: string[] }
 ): Promise<PolicyLifecycleResult> {
   const today = businessDate ?? getTodayBusinessRange();
   const todayUtc = dateOnlyTimestamp(today);
   const businessDateStr = `${today.year}-${String(today.month).padStart(2, "0")}-${String(today.day).padStart(2, "0")}`;
+  const scopeFilter = options?.policyIds ? { id: { in: options.policyIds } } : {};
 
   // --- PENDING -> ACTIVE ---
   // effectiveDate NOT NULL es parte del filtro: una PENDING sin
@@ -129,7 +143,7 @@ export async function reconcilePolicyLifecycleCore(
   // ACTIVE (ver assertActiveHasEffectiveDate, policies.service.ts) —
   // se deja tal cual, sin loguear ningún dato personal, solo se omite.
   const toActivate = await prisma.policy.findMany({
-    where: { status: "PENDING", effectiveDate: { lte: todayUtc } },
+    where: { ...scopeFilter, status: "PENDING", effectiveDate: { lte: todayUtc } },
     select: {
       id: true,
       holderId: true,
@@ -160,7 +174,7 @@ export async function reconcilePolicyLifecycleCore(
 
   // --- ACTIVE -> EXPIRED ---
   const toExpire = await prisma.policy.findMany({
-    where: { status: "ACTIVE", terminationDate: { lt: todayUtc } },
+    where: { ...scopeFilter, status: "ACTIVE", terminationDate: { lt: todayUtc } },
     select: {
       id: true,
       holderId: true,
