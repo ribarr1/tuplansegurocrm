@@ -88,7 +88,7 @@ export default async function CommissionsPage({
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Comisiones</h2>
+        <h2 className="font-heading text-lg font-semibold">Comisiones</h2>
         <div className="flex items-center gap-2">
           <Button variant="outline" nativeButton={false} render={<a href="/api/export/commissions" />}>
             Exportar CSV
@@ -104,7 +104,11 @@ export default async function CommissionsPage({
       <form className="flex flex-wrap items-end gap-3" method="GET">
         <div className="flex flex-col gap-1">
           <Label htmlFor="q">Buscar</Label>
+          {/* Fase 022 (Hallazgo #7 de UAT): key evita mutar defaultValue
+              sobre una instancia ya inicializada cuando sp.q/sp.period
+              cambian por otra navegación de la misma ruta. */}
           <Input
+            key={sp.q ?? ""}
             id="q"
             name="q"
             placeholder="Póliza o titular"
@@ -114,7 +118,7 @@ export default async function CommissionsPage({
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="period">Período</Label>
-          <Input id="period" name="period" type="month" defaultValue={sp.period ?? ""} />
+          <Input key={sp.period ?? ""} id="period" name="period" type="month" defaultValue={sp.period ?? ""} />
         </div>
         {actor.role === "ADMIN" && (
           <div className="flex flex-col gap-1">

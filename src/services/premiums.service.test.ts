@@ -417,4 +417,29 @@ describe("premiums.service", () => {
     expect(items.some((i) => i.id === policy.id)).toBe(true);
     expect(items.every((i) => !i.autopay)).toBe(true);
   });
+
+  // Fase 022 (Hallazgo #6A de UAT): coherencia de fechas de póliza/pago.
+  it("rechaza nextPaymentDueDate anterior a effectiveDate", async () => {
+    const holder = await makePerson();
+    const { policy } = await makePolicyFor(admin, holder, { effectiveDate: "2026-10-01" });
+    await expect(
+      updatePremiumTracking(admin, policy.id, {
+        autopay: "false",
+        needsPaymentAssistance: "false",
+        nextPaymentDueDate: "2025-10-01",
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("acepta nextPaymentDueDate igual o posterior a effectiveDate", async () => {
+    const holder = await makePerson();
+    const { policy } = await makePolicyFor(admin, holder, { effectiveDate: "2026-10-01" });
+    await expect(
+      updatePremiumTracking(admin, policy.id, {
+        autopay: "false",
+        needsPaymentAssistance: "false",
+        nextPaymentDueDate: "2026-11-01",
+      })
+    ).resolves.toBeDefined();
+  });
 });

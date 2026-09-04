@@ -133,9 +133,11 @@ describe("people.service", () => {
 
   it("K) contactStatus filter funciona", async () => {
     const marker = `CSFilter${Date.now()}`;
-    const client = track(
-      await createPerson(admin, { firstName: marker, lastName: "C", contactStatus: "CLIENT" })
-    );
+    // createPerson siempre fuerza PROSPECT (Fase 022, Hallazgo #2) — el
+    // estado CLIENT de este fixture se fija con un update directo,
+    // fuera de la regla normal (no es lo que este test cubre).
+    const client = track(await createPerson(admin, { firstName: marker, lastName: "C" }));
+    await prisma.person.update({ where: { id: client.id }, data: { contactStatus: "CLIENT" } });
     const prospect = track(
       await createPerson(admin, { firstName: marker, lastName: "P", contactStatus: "PROSPECT" })
     );

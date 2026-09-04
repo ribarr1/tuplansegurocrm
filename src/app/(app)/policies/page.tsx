@@ -95,7 +95,7 @@ export default async function PoliciesPage({
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Pólizas</h2>
+        <h2 className="font-heading text-lg font-semibold">Pólizas</h2>
         <div className="flex items-center gap-2">
           <Button variant="outline" nativeButton={false} render={<a href="/api/export/policies" />}>
             Exportar CSV
@@ -109,7 +109,9 @@ export default async function PoliciesPage({
       <form className="flex flex-wrap items-end gap-3" method="GET">
         <div className="flex flex-col gap-1">
           <Label htmlFor="q">Buscar</Label>
+          {/* Fase 022 (Hallazgo #7 de UAT): ver policies/new/page.tsx. */}
           <Input
+            key={sp.q ?? ""}
             id="q"
             name="q"
             placeholder="Número de póliza o titular"

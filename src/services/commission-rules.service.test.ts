@@ -5,6 +5,7 @@ import {
   generateExpectationForPeriod,
   computeExpectedAmount,
   autoGenerateCurrentPeriodExpectation,
+  listCommissionRulesForProduct,
 } from "@/services/commission-rules.service";
 import { createPolicy, addPolicyMember } from "@/services/policies.service";
 import { getTodayBusinessRange } from "@/lib/business-time";
@@ -387,5 +388,78 @@ describe("commission-rules.service", () => {
       where: { id: (future as { expectationId: string }).expectationId },
     });
     expect(futureExp?.expectedAmount.toString()).toBe("50");
+  });
+
+  // Fase 022 (Hallazgo #8 de UAT): regla de comisión PER_MEMBER. Se
+  // investigó el flujo completo (form -> FormData -> action -> Zod ->
+  // servicio -> Prisma -> DTO -> UI) y una reproducción manual en
+  // navegador — la base se persiste y se recupera correctamente en el
+  // estado actual del código; estos tests fijan ese comportamiento
+  // como regresión explícita, exactamente con el caso obligatorio de
+  // la ficha (FIXED_AMOUNT + PER_MEMBER + $25 + MONTHLY).
+  describe("Hallazgo #8 — CommissionRule PER_MEMBER persiste y se calcula correctamente", () => {
+    it("PER_MEMBER persiste tal cual tras guardar (nunca se pierde ni cae a FIXED)", async () => {
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "PER_MEMBER",
+        initialAmount: "25.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+      expect(rule.base).toBe("PER_MEMBER");
+      expect(rule.method).toBe("FIXED_AMOUNT");
+    });
+
+    it("PER_MEMBER sigue persistiendo tras 'recargar' (releer desde una consulta nueva, nunca el objeto en memoria)", async () => {
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "PER_MEMBER",
+        initialAmount: "25.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+
+      // "Volver a abrir producto" — misma consulta que usa la página
+      // de edición del producto, nunca el objeto ya en memoria.
+      const reloaded = await listCommissionRulesForProduct(admin, productId);
+      const found = reloaded.find((r) => r.id === rule.id);
+      expect(found?.base).toBe("PER_MEMBER");
+    });
+
+    it("3 PolicyMembers cubiertos x $25 (PER_MEMBER) = $75, nunca $25", async () => {
+      const holder = await makePerson();
+      const spouse = await makePerson();
+      const child = await makePerson();
+      const policy = await createPolicy(admin, {
+        holderId: holder.id,
+        productId,
+        holderCovered: "true",
+        coveredMembers: [
+          { personId: spouse.id, role: "SPOUSE" },
+          { personId: child.id, role: "DEPENDENT" },
+        ],
+        effectiveDate: new Date("2026-01-15"),
+      });
+      createdPolicyIds.push(policy.id);
+
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "PER_MEMBER",
+        initialAmount: "25.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+
+      const result = await generateExpectationForPeriod(admin, { policyId: policy.id, period: "2026-01" });
+      expect(result.status).toBe("CREATED");
+      if (result.status === "CREATED") {
+        createdExpectationIds.push(result.expectationId);
+        const exp = await prisma.commissionExpectation.findUnique({ where: { id: result.expectationId } });
+        expect(exp?.expectedAmount.toString()).toBe("75");
+      }
+    });
   });
 });

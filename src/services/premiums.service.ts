@@ -2,7 +2,11 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
-import { assertCanAccessPolicy, type PolicyAccessPersons } from "@/services/policies.service";
+import {
+  assertCanAccessPolicy,
+  assertNextPaymentNotBeforeEffective,
+  type PolicyAccessPersons,
+} from "@/services/policies.service";
 import { policyIdSchema } from "@/schemas/policy.schema";
 import { listPremiumTrackingQuerySchema, updatePremiumTrackingSchema } from "@/schemas/premium.schema";
 import { getDateOnlyParts } from "@/lib/date-only";
@@ -219,12 +223,20 @@ export async function updatePremiumTracking(actor: AuthorizedUser, rawPolicyId: 
       paymentStatus: true,
       autopay: true,
       needsPaymentAssistance: true,
+      effectiveDate: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
     },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [existing.holder, ...existing.members.map((m) => m.person)]);
+
+  // Hallazgo #6A de UAT (Fase 022): este formulario nunca toca
+  // effectiveDate, pero sí puede fijar un nextPaymentDueDate anterior a
+  // ella si no se valida contra el valor ya existente.
+  const finalNextPaymentDueDate =
+    input.nextPaymentDueDate !== undefined ? input.nextPaymentDueDate : existing.nextPaymentDueDate;
+  assertNextPaymentNotBeforeEffective(existing.effectiveDate, finalNextPaymentDueDate);
 
   const data: Prisma.PolicyUncheckedUpdateInput = {
     autopay: input.autopay,

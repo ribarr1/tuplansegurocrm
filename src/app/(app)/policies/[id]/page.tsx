@@ -53,13 +53,19 @@ export default async function PolicyDetailPage({
     throw error;
   }
 
-  const holderIsCovered = policy.members.some((m) => m.role === "PRIMARY");
+  // Fase 022 (Hallazgo #3 de UAT): el titular está cubierto si aparece
+  // como PolicyMember, INDEPENDIENTEMENTE de su rol — nunca se infiere
+  // desde `role === "PRIMARY"` (un PolicyMember del titular con un rol
+  // distinto por un bug de datos previo seguiría significando "está
+  // cubierto"; el rol correcto se garantiza ahora en el servicio, ver
+  // policies.service.ts).
+  const holderIsCovered = policy.members.some((m) => m.person.id === policy.holder.id);
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">
+          <h2 className="font-heading text-lg font-semibold">
             {policy.policyNumber ?? "Póliza sin número"}
           </h2>
           <Badge variant={POLICY_STATUS_BADGE_VARIANT[policy.status]}>

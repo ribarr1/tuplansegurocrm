@@ -16,3 +16,19 @@ export const setUserActiveSchema = z.object({
   isActive: z.boolean(),
 });
 export type SetUserActiveInput = z.infer<typeof setUserActiveSchema>;
+
+// Fase 022 (Hallazgo #4 de UAT) — Restablecer contraseña. Misma
+// política mínima ya configurada en auth.ts (minPasswordLength: 10).
+// confirmPassword se valida aquí (nunca solo en el cliente) para que
+// un error de tipeo no quede silenciosamente ignorado.
+export const resetUserPasswordSchema = z
+  .object({
+    id: userIdSchema,
+    newPassword: z.string().min(10, "La contraseña debe tener al menos 10 caracteres."),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Las contraseñas no coinciden.",
+    path: ["confirmPassword"],
+  });
+export type ResetUserPasswordInput = z.infer<typeof resetUserPasswordSchema>;

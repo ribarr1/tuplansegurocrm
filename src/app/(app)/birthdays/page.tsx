@@ -53,7 +53,7 @@ export default async function BirthdaysPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Cumpleaños</h2>
+      <h2 className="font-heading text-lg font-semibold">Cumpleaños</h2>
 
       <div className="flex flex-wrap gap-1 border-b">
         {VIEWS.map((v) => (
@@ -75,7 +75,12 @@ export default async function BirthdaysPage({
         <input type="hidden" name="view" value={view} />
         <div className="flex flex-col gap-1">
           <Label htmlFor="q">Buscar</Label>
-          <Input id="q" name="q" placeholder="Nombre" defaultValue={sp.q ?? ""} className="w-56" />
+          {/* Fase 022 (Hallazgo #7 de UAT): key fuerza remount cuando
+              cambia sp.q vía otra navegación de la misma ruta (ej. un
+              link de paginación/limpiar filtros) sin que el usuario haya
+              tocado este campo — evita mutar defaultValue sobre una
+              instancia ya inicializada (ver policies/new/page.tsx). */}
+          <Input key={sp.q ?? ""} id="q" name="q" placeholder="Nombre" defaultValue={sp.q ?? ""} className="w-56" />
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="status">Felicitación</Label>

@@ -61,15 +61,20 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
   return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
 }
 
+// Fase 022 (Hallazgo #2 de UAT): createPerson ahora SIEMPRE fuerza
+// PROSPECT (todo contacto nuevo nace Prospecto) — este helper necesita
+// un fixture ya en estado CLIENT, así que lo fija con un update directo
+// después de crear, fuera de la regla de negocio normal (no es lo que
+// se está probando aquí).
 async function makePerson(actor: AuthorizedUser, assignedAgentId?: string) {
   const person = await createPerson(actor, {
     firstName: "Test",
     lastName: uniqueName("Person"),
-    contactStatus: "CLIENT",
     ...(assignedAgentId ? { assignedAgentId } : {}),
   });
   createdPersonIds.push(person.id);
-  return person;
+  await prisma.person.update({ where: { id: person.id }, data: { contactStatus: "CLIENT" } });
+  return { ...person, contactStatus: "CLIENT" as const };
 }
 
 async function makeProduct(policyType: "HEALTH" | "LIFE" = "HEALTH") {

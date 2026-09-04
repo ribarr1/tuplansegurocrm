@@ -25,12 +25,20 @@ export function ContactForm({
   activeAgents = [],
   showAgentSelect,
   submitLabel,
+  isEditing = false,
 }: {
   action: (state: PersonFormState, formData: FormData) => Promise<PersonFormState>;
   defaultValues?: ContactFormDefaultValues;
   activeAgents?: { id: string; name: string }[];
   showAgentSelect: boolean;
   submitLabel: string;
+  // Hallazgo #2 de UAT (Fase 022): un contacto nuevo SIEMPRE nace
+  // Prospecto (el servicio lo fuerza igual aunque se envíe otro valor,
+  // ver createPerson) — mostrar aquí un selector de Estado en el
+  // formulario de creación sería engañoso (parecería editable cuando
+  // en realidad se ignora). Editar sí permite cambiarlo libremente,
+  // incluyendo pasar a Cliente/Ex cliente/Otro manualmente.
+  isEditing?: boolean;
 }) {
   const [state, formAction, isPending] = useActionState(action, undefined);
 
@@ -91,21 +99,33 @@ export function ContactForm({
         )}
       </div>
 
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="contactStatus">Estado</Label>
-        <select
-          id="contactStatus"
-          name="contactStatus"
-          defaultValue={values.contactStatus ?? "PROSPECT"}
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          {CONTACT_STATUS_VALUES.map((status) => (
-            <option key={status} value={status}>
-              {CONTACT_STATUS_LABELS[status]}
-            </option>
-          ))}
-        </select>
-      </div>
+      {isEditing ? (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="contactStatus">Estado</Label>
+          <select
+            id="contactStatus"
+            name="contactStatus"
+            defaultValue={values.contactStatus ?? "PROSPECT"}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {CONTACT_STATUS_VALUES.map((status) => (
+              <option key={status} value={status}>
+                {CONTACT_STATUS_LABELS[status]}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">
+            Cliente se asigna automáticamente cuando el contacto queda cubierto por una póliza
+            activa — cambia este valor manualmente solo para Ex cliente/Otro, o para corregir un
+            caso puntual.
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Todo contacto nuevo inicia como Prospecto. Se vuelve Cliente automáticamente cuando
+          quede cubierto por una póliza activa.
+        </p>
+      )}
 
       {showAgentSelect && (
         <div className="flex flex-col gap-1">

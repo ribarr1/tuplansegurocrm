@@ -93,7 +93,7 @@ export default async function TasksPage({
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Tareas</h2>
+        <h2 className="font-heading text-lg font-semibold">Tareas</h2>
         <Button nativeButton={false} render={<Link href="/tasks/new" />}>
           + Nueva tarea
         </Button>
@@ -120,7 +120,8 @@ export default async function TasksPage({
       <form className="flex flex-wrap items-end gap-3" method="GET">
         <div className="flex flex-col gap-1">
           <Label htmlFor="q">Buscar</Label>
-          <Input id="q" name="q" placeholder="Título" defaultValue={sp.q ?? ""} className="w-56" />
+          {/* Fase 022 (Hallazgo #7 de UAT): ver policies/new/page.tsx. */}
+          <Input key={sp.q ?? ""} id="q" name="q" placeholder="Título" defaultValue={sp.q ?? ""} className="w-56" />
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="status">Estado</Label>

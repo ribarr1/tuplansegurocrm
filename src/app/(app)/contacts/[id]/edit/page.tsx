@@ -47,7 +47,7 @@ export default async function EditContactPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">
+      <h2 className="font-heading text-lg font-semibold">
         Editar contacto — {person.firstName} {person.lastName}
       </h2>
       <ContactForm
@@ -66,6 +66,7 @@ export default async function EditContactPage({
         activeAgents={activeAgents}
         showAgentSelect={showAgentSelect}
         submitLabel="Guardar cambios"
+        isEditing
       />
     </div>
   );

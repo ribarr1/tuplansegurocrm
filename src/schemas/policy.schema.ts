@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalSearchFilter, optionalUuidFilter, optionalEnumFilter } from "@/schemas/common";
+import { optionalSearchFilter, optionalUuidFilter, optionalEnumFilter, dateOnlySchema } from "@/schemas/common";
 
 // Valores reales de los enums de Policy (prisma/schema.prisma), duplicados
 // aquí como literales por la misma razón que en person.schema.ts /
@@ -89,11 +89,11 @@ export const createPolicySchema = z
     coveredMembers: z.array(coveredMemberSchema).default([]),
     policyNumber: z.string().trim().min(1).max(100).optional(),
     status: z.enum(POLICY_STATUS_VALUES).default("PENDING"),
-    effectiveDate: z.coerce.date().optional(),
-    terminationDate: z.coerce.date().optional(),
+    effectiveDate: dateOnlySchema().optional(),
+    terminationDate: dateOnlySchema().optional(),
     premiumAmount: decimalAmountSchema.optional(),
     billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
-    nextPaymentDueDate: z.coerce.date().optional(),
+    nextPaymentDueDate: dateOnlySchema().optional(),
     autopay: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     needsPaymentAssistance: z
       .enum(["true", "false"])
@@ -124,11 +124,11 @@ export const updatePolicySchema = z
     productId: z.uuid("Selecciona un producto válido.").optional(),
     policyNumber: z.string().trim().min(1).max(100).optional(),
     status: z.enum(POLICY_STATUS_VALUES).optional(),
-    effectiveDate: z.coerce.date().optional(),
-    terminationDate: z.coerce.date().optional(),
+    effectiveDate: dateOnlySchema().optional(),
+    terminationDate: dateOnlySchema().optional(),
     premiumAmount: decimalAmountSchema.optional(),
     billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
-    nextPaymentDueDate: z.coerce.date().optional(),
+    nextPaymentDueDate: dateOnlySchema().optional(),
     autopay: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
     needsPaymentAssistance: z
       .enum(["true", "false"])
@@ -164,11 +164,11 @@ export const renewPolicySchema = z
     coveredMembers: z.array(coveredMemberSchema).default([]),
     policyNumber: z.string().trim().min(1).max(100).optional(),
     status: z.enum(POLICY_STATUS_VALUES).default("PENDING"),
-    effectiveDate: z.coerce.date().optional(),
-    terminationDate: z.coerce.date().optional(),
+    effectiveDate: dateOnlySchema().optional(),
+    terminationDate: dateOnlySchema().optional(),
     premiumAmount: decimalAmountSchema.optional(),
     billingFrequency: z.enum(BILLING_FREQUENCY_VALUES).optional(),
-    nextPaymentDueDate: z.coerce.date().optional(),
+    nextPaymentDueDate: dateOnlySchema().optional(),
     autopay: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     needsPaymentAssistance: z
       .enum(["true", "false"])
@@ -191,7 +191,7 @@ export type RenewPolicyInput = z.infer<typeof renewPolicySchema>;
 // — vive en AuditEvent.metadata (ver policies.service.ts::cancelPolicy
 // y docs/DECISIONS.md).
 export const cancelPolicySchema = z.object({
-  terminationDate: z.coerce.date({ error: "Selecciona una fecha de terminación válida." }),
+  terminationDate: dateOnlySchema("Selecciona una fecha de terminación válida."),
   reason: z.string().trim().max(500).optional(),
 });
 export type CancelPolicyInput = z.infer<typeof cancelPolicySchema>;

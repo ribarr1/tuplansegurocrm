@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
-import { canEditPerson } from "@/services/people.service";
+import { canEditPerson, recomputePersonContactStatus } from "@/services/people.service";
 import { personIdSchema } from "@/schemas/person.schema";
 import { householdIdSchema } from "@/schemas/household.schema";
 import {
@@ -166,6 +166,72 @@ function assertTerminationNotBeforeEffective(
       "VALIDATION_ERROR",
       "terminationDate: La fecha de finalización no puede ser anterior a la fecha de inicio."
     );
+  }
+}
+
+// Fase 022 (Hallazgo #6A de UAT): mismo principio que
+// assertTerminationNotBeforeEffective, para el próximo pago — un caso
+// real encontrado en UAT tenía effectiveDate 10/01/2026 con
+// nextPaymentDueDate 10/01/2025 (un año ANTES de que la póliza
+// siquiera empezara), nunca validado. Exportada para reutilizarse
+// desde premiums.service.ts (Editar seguimiento de pago), que no
+// vuelve a tocar effectiveDate pero sí necesita validar contra el ya
+// existente.
+export function assertNextPaymentNotBeforeEffective(
+  effectiveDate: Date | null,
+  nextPaymentDueDate: Date | null
+): void {
+  if (effectiveDate && nextPaymentDueDate && nextPaymentDueDate < effectiveDate) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "nextPaymentDueDate: El próximo pago no puede ser anterior a la fecha efectiva de la póliza."
+    );
+  }
+}
+
+// Fase 022 (Hallazgo #6B de UAT): una PERSONA (nunca "el hogar") no
+// puede estar cubierta por dos pólizas de SALUD activas/operativas al
+// mismo tiempo con fechas solapadas. Otros miembros del mismo hogar
+// pueden tener su propia póliza de salud sin problema — la unidad real
+// es la persona cubierta, no el hogar completo.
+//
+// Solo se comparan pólizas HEALTH con status ACTIVE ("operativas") —
+// nunca CANCELLED/EXPIRED (historial, no cobertura simultánea real) ni
+// PENDING (todavía no está en vigor). Dos períodos se solapan si
+// start1 <= (end2 ?? infinito) AND start2 <= (end1 ?? infinito) —
+// terminationDate null significa cobertura todavía abierta/vigente.
+const OPEN_ENDED = new Date(8640000000000000); // Date máximo representable en JS
+
+async function assertNoOverlappingHealthCoverage(
+  db: typeof prisma | Prisma.TransactionClient,
+  personId: string,
+  effectiveDate: Date,
+  terminationDate: Date | null,
+  excludePolicyId?: string
+): Promise<void> {
+  const candidates = await db.policyMember.findMany({
+    where: {
+      personId,
+      ...(excludePolicyId ? { policyId: { not: excludePolicyId } } : {}),
+      policy: { status: "ACTIVE", product: { policyType: "HEALTH" } },
+    },
+    select: {
+      policy: { select: { policyNumber: true, effectiveDate: true, terminationDate: true } },
+    },
+  });
+
+  const newEnd = terminationDate ?? OPEN_ENDED;
+  for (const candidate of candidates) {
+    // status ACTIVE garantiza effectiveDate no-nulo (assertActiveHasEffectiveDate).
+    const otherStart = candidate.policy.effectiveDate!;
+    const otherEnd = candidate.policy.terminationDate ?? OPEN_ENDED;
+    const overlaps = effectiveDate <= otherEnd && otherStart <= newEnd;
+    if (overlaps) {
+      throw new AppError(
+        "VALIDATION_ERROR",
+        `Esta persona ya tiene una póliza de salud (${candidate.policy.policyNumber ?? "sin número"}) que se solapa con las fechas seleccionadas.`
+      );
+    }
   }
 }
 
@@ -398,6 +464,7 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
   const product = await assertActiveProduct(input.productId);
   assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);
   assertTerminationNotBeforeEffective(input.effectiveDate ?? null, input.terminationDate ?? null);
+  assertNextPaymentNotBeforeEffective(input.effectiveDate ?? null, input.nextPaymentDueDate ?? null);
 
   // Ningún covered member puede declarar role=PRIMARY: ese rol está
   // reservado exclusivamente para el titular cuando holderCovered=true
@@ -421,6 +488,20 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
     ...(input.holderCovered ? [{ personId: input.holderId, role: "PRIMARY" as const }] : []),
     ...input.coveredMembers,
   ];
+
+  // Hallazgo #6B de UAT (Fase 022): solo relevante para pólizas de
+  // Salud ya operativas (ACTIVE) — una PENDING/CANCELLED/EXPIRED nunca
+  // representa cobertura simultánea real.
+  if (product.policyType === "HEALTH" && input.status === "ACTIVE") {
+    for (const member of membersToCreate) {
+      await assertNoOverlappingHealthCoverage(
+        prisma,
+        member.personId,
+        input.effectiveDate!,
+        input.terminationDate ?? null
+      );
+    }
+  }
 
   let policyId: string;
   try {
@@ -463,6 +544,12 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
         contactPersonId: input.holderId,
         summary: `Póliza ${product.policyType} creada`,
       });
+      // Hallazgo #2 de UAT (Fase 022): recomputar Prospecto/Cliente de
+      // cada persona recién cubierta — nunca solo del titular, todos los
+      // miembros cubiertos entran a la misma regla.
+      for (const member of membersToCreate) {
+        await recomputePersonContactStatus(tx, member.personId, actor);
+      }
       return created.id;
     });
   } catch (error) {
@@ -514,6 +601,7 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
   const product = await assertActiveProduct(input.productId);
   assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);
   assertTerminationNotBeforeEffective(input.effectiveDate ?? null, input.terminationDate ?? null);
+  assertNextPaymentNotBeforeEffective(input.effectiveDate ?? null, input.nextPaymentDueDate ?? null);
 
   const personIds = input.coveredMembers.map((m) => m.personId);
   const uniquePersonIds = new Set(personIds);
@@ -532,6 +620,22 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
     ...(input.holderCovered ? [{ personId: oldPolicy.holderId, role: "PRIMARY" as const }] : []),
     ...input.coveredMembers,
   ];
+
+  // Hallazgo #6B de UAT (Fase 022) — excluye la póliza ANTERIOR del
+  // chequeo: renovar es reemplazar esa cobertura, no sumar una
+  // simultánea nueva, aunque la anterior siga ACTIVE por no haberse
+  // cancelado todavía.
+  if (product.policyType === "HEALTH" && input.status === "ACTIVE") {
+    for (const member of membersToCreate) {
+      await assertNoOverlappingHealthCoverage(
+        prisma,
+        member.personId,
+        input.effectiveDate!,
+        input.terminationDate ?? null,
+        oldPolicyId
+      );
+    }
+  }
 
   let newPolicyId: string;
   try {
@@ -573,6 +677,10 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
         summary: `Póliza renovada (a partir de la póliza anterior)`,
         metadata: { previousPolicyId: oldPolicyId },
       });
+      // Hallazgo #2 de UAT (Fase 022).
+      for (const member of membersToCreate) {
+        await recomputePersonContactStatus(tx, member.personId, actor);
+      }
       return created.id;
     });
   } catch (error) {
@@ -618,7 +726,7 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       healthCoverageSource: true,
       product: { select: { policyType: true } },
       holder: { select: { assignedAgentId: true } },
-      members: { select: { person: { select: { assignedAgentId: true } } } },
+      members: { select: { personId: true, person: { select: { assignedAgentId: true } } } },
     },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
@@ -668,8 +776,20 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
     input.effectiveDate !== undefined ? input.effectiveDate : existing.effectiveDate;
   const finalTerminationDate =
     input.terminationDate !== undefined ? input.terminationDate : existing.terminationDate;
+  const finalNextPaymentDueDate =
+    input.nextPaymentDueDate !== undefined ? input.nextPaymentDueDate : existing.nextPaymentDueDate;
   assertActiveHasEffectiveDate(finalStatus, finalEffectiveDate);
   assertTerminationNotBeforeEffective(finalEffectiveDate, finalTerminationDate);
+  assertNextPaymentNotBeforeEffective(finalEffectiveDate, finalNextPaymentDueDate);
+
+  // Hallazgo #6B de UAT (Fase 022): re-validar solapamiento cuando el
+  // resultado final es una póliza de Salud ACTIVE — cubre tanto
+  // activarla ahora como mover sus fechas mientras ya está activa.
+  if (existing.product.policyType === "HEALTH" && finalStatus === "ACTIVE" && finalEffectiveDate) {
+    for (const member of existing.members) {
+      await assertNoOverlappingHealthCoverage(prisma, member.personId, finalEffectiveDate, finalTerminationDate, id);
+    }
+  }
 
   const changes = buildDiff(existing, { ...input, ...data }, POLICY_AUDIT_FIELDS);
   // CANCEL es el hecho más relevante cuando la póliza pasa a CANCELLED
@@ -680,6 +800,8 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       : input.status !== undefined && input.status !== existing.status
         ? "POLICY_STATUS_CHANGE"
         : "POLICY_UPDATE";
+
+  const statusChanged = input.status !== undefined && input.status !== existing.status;
 
   await prisma.$transaction(async (tx) => {
     await tx.policy.update({ where: { id }, data });
@@ -695,6 +817,16 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
         summary: action === "POLICY_CANCEL" ? "Póliza cancelada" : "Póliza actualizada",
         changes,
       });
+    }
+    // Hallazgo #2 de UAT (Fase 022): activar/desactivar/cancelar/expirar
+    // una póliza puede mover a Prospecto<->Cliente al titular y a cada
+    // miembro cubierto — solo tiene sentido recomputar cuando el status
+    // realmente cambió (otros campos editados no afectan esta regla).
+    if (statusChanged) {
+      await recomputePersonContactStatus(tx, existing.holderId, actor);
+      for (const member of existing.members) {
+        await recomputePersonContactStatus(tx, member.personId, actor);
+      }
     }
   });
   return getPolicyById(actor, id);
@@ -722,7 +854,7 @@ export async function cancelPolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       effectiveDate: true,
       terminationDate: true,
       holder: { select: { assignedAgentId: true } },
-      members: { select: { person: { select: { assignedAgentId: true } } } },
+      members: { select: { personId: true, person: { select: { assignedAgentId: true } } } },
     },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
@@ -756,6 +888,12 @@ export async function cancelPolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       changes,
       metadata: input.reason ? { reason: input.reason } : undefined,
     });
+    // Hallazgo #2 de UAT (Fase 022): cancelar quita la cobertura activa
+    // — recomputar titular y cada miembro cubierto.
+    await recomputePersonContactStatus(tx, existing.holderId, actor);
+    for (const member of existing.members) {
+      await recomputePersonContactStatus(tx, member.personId, actor);
+    }
   });
 
   return getPolicyById(actor, id);
@@ -777,6 +915,10 @@ async function loadPolicyForMemberManagement(policyId: string) {
       id: true,
       holderId: true,
       householdId: true,
+      status: true,
+      effectiveDate: true,
+      terminationDate: true,
+      product: { select: { policyType: true } },
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
     },
@@ -845,8 +987,15 @@ export async function getEligibleHouseholdMembersForPolicy(actor: AuthorizedUser
   ]);
 
   const alreadyCovered = new Set(existingPolicyMembers.map((m) => m.personId));
+  // Fase 022 (Hallazgo #3 de UAT): el titular NUNCA debe aparecer como
+  // candidato para "+ Agregar miembro" — su cobertura se administra
+  // exclusivamente con la opción "¿El titular está cubierto?" al
+  // crear/renovar la póliza (rol PRIMARY garantizado ahí). Agregarlo
+  // por este otro camino permitía terminar con un PolicyMember del
+  // titular con un rol equivocado (SPOUSE/DEPENDENT/OTHER en vez de
+  // PRIMARY) — ver también el guard equivalente en addPolicyMember.
   return householdMembers
-    .filter((m) => !alreadyCovered.has(m.person.id))
+    .filter((m) => !alreadyCovered.has(m.person.id) && m.person.id !== policy.holderId)
     .map((m) => ({
       personId: m.person.id,
       firstName: m.person.firstName,
@@ -868,11 +1017,33 @@ export async function addPolicyMember(actor: AuthorizedUser, rawPolicyId: unknow
   const policy = await loadPolicyForMemberManagement(policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
 
+  // Fase 022 (Hallazgo #3 de UAT): defensa en profundidad — el titular
+  // nunca se agrega por este camino (siempre PRIMARY, vía "¿El titular
+  // está cubierto?" al crear/renovar), aunque alguien manipule el
+  // request directamente saltándose la lista de candidatos de la UI.
+  if (input.personId === policy.holderId) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "personId: El titular se administra con la opción \"¿El titular está cubierto?\", no se agrega como miembro."
+    );
+  }
+
   const person = await prisma.person.findUnique({
     where: { id: input.personId },
     select: { id: true, firstName: true, lastName: true },
   });
   if (!person) throw new AppError("NOT_FOUND", "Persona no encontrada.");
+
+  // Hallazgo #6B de UAT (Fase 022).
+  if (policy.product.policyType === "HEALTH" && policy.status === "ACTIVE" && policy.effectiveDate) {
+    await assertNoOverlappingHealthCoverage(
+      prisma,
+      input.personId,
+      policy.effectiveDate,
+      policy.terminationDate,
+      policyId
+    );
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -889,6 +1060,8 @@ export async function addPolicyMember(actor: AuthorizedUser, rawPolicyId: unknow
         contactPersonId: input.personId,
         summary: `${person.firstName} ${person.lastName} agregado(a) a la póliza`,
       });
+      // Hallazgo #2 de UAT (Fase 022).
+      await recomputePersonContactStatus(tx, input.personId, actor);
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -929,6 +1102,11 @@ export async function removePolicyMember(actor: AuthorizedUser, rawPolicyId: unk
       contactPersonId: member.personId,
       summary: `${member.person.firstName} ${member.person.lastName} removido(a) de la póliza`,
     });
+    // Hallazgo #2 de UAT (Fase 022): si esta era su ÚNICA cobertura
+    // activa, vuelve a Prospecto — pero nunca si sigue cubierto por
+    // otra póliza activa (recomputePersonContactStatus revisa TODAS
+    // sus coberturas, no solo esta).
+    await recomputePersonContactStatus(tx, member.personId, actor);
   });
   return getPolicyById(actor, policyId);
 }

@@ -48,12 +48,12 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
   return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
 }
 
-async function makePerson(assignedAgentId: string | null = null) {
+async function makePerson(assignedAgentId: string | null = null, contactStatus: "CLIENT" | "PROSPECT" = "CLIENT") {
   const person = await prisma.person.create({
     data: {
       firstName: "Test",
       lastName: `Person${Date.now()}${Math.random().toString(36).slice(2)}`,
-      contactStatus: "CLIENT",
+      contactStatus,
       assignedAgentId,
     },
   });
@@ -1130,5 +1130,381 @@ describe("policies.service", () => {
 
     const notes = await prisma.note.findMany({ where: { policyId: policy.id } });
     expect(notes).toHaveLength(0);
+  });
+
+  // Fase 022 (Hallazgo #1 de UAT): el servidor rechaza fechas
+  // imposibles independientemente del enmascarado del cliente.
+  describe("Hallazgo #1 — validación real de fecha (servidor)", () => {
+    it("rechaza effectiveDate con día inválido de calendario (30 de febrero)", async () => {
+      const holder = await makePerson();
+      await expect(
+        createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+          effectiveDate: "2026-02-30",
+        })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("acepta 29 de febrero en año bisiesto", async () => {
+      const holder = await makePerson();
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+          effectiveDate: "2028-02-29",
+        })
+      );
+      expect(policy.effectiveDate?.toISOString()).toBe("2028-02-29T00:00:00.000Z");
+    });
+
+    it("rechaza terminationDate con mes fuera de rango", async () => {
+      const holder = await makePerson();
+      await expect(
+        createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+          terminationDate: "2026-13-01",
+        })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+  });
+
+  // Fase 022 (Hallazgo #3 de UAT): el titular cubierto se reconoce por
+  // PolicyMember.personId === Policy.holderId, nunca por role ===
+  // "PRIMARY" — y el titular nunca puede terminar con un rol distinto
+  // de PRIMARY.
+  describe("Hallazgo #3 — titular cubierto reconocido correctamente", () => {
+    it("holderId también presente en PolicyMember -> titular cubierto = true, rol PRIMARY", async () => {
+      const holder = await makePerson();
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "true",
+        })
+      );
+      const full = await getPolicyById(admin, policy.id);
+      const holderMember = full.members.find((m) => m.person.id === holder.id);
+      expect(holderMember).toBeTruthy();
+      expect(holderMember?.role).toBe("PRIMARY");
+    });
+
+    it("el titular nunca aparece como candidato para + Agregar miembro", async () => {
+      const holder = await makePerson();
+      const household = await prisma.household.create({ data: {} });
+      createdHouseholdIds.push(household.id);
+      await prisma.householdMember.create({ data: { personId: holder.id, householdId: household.id, role: "HEAD" } });
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+        })
+      );
+      // La póliza debe quedar vinculada a ese único hogar para que
+      // getEligibleHouseholdMembersForPolicy tenga candidatos que
+      // filtrar.
+      const reloaded = await getPolicyById(admin, policy.id);
+      expect(reloaded.householdId).toBe(household.id);
+
+      const candidates = await getEligibleHouseholdMembersForPolicy(admin, policy.id);
+      expect(candidates.some((c) => c.personId === holder.id)).toBe(false);
+    });
+
+    it("addPolicyMember rechaza agregar al titular directamente (defensa en profundidad)", async () => {
+      const holder = await makePerson();
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+        })
+      );
+      await expect(addPolicyMember(admin, policy.id, { personId: holder.id, role: "OTHER" })).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+  });
+
+  // Fase 022 (Hallazgo #2 de UAT): ciclo automático Prospecto <-> Cliente.
+  describe("Hallazgo #2 — ciclo automático Prospecto <-> Cliente", () => {
+    it("una persona recién creada (vía el servicio createPerson) nace Prospecto", async () => {
+      const { createPerson } = await import("@/services/people.service");
+      const created = await createPerson(admin, { firstName: "Nace", lastName: `Prospecto${Date.now()}` });
+      createdPersonIds.push(created.id);
+      expect(created.contactStatus).toBe("PROSPECT");
+    });
+
+    it("cubierta por una póliza ACTIVA -> se vuelve Cliente", async () => {
+      const holder = await makePerson(null, "PROSPECT");
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+        })
+      );
+      const updated = await prisma.person.findUniqueOrThrow({ where: { id: holder.id } });
+      expect(updated.contactStatus).toBe("CLIENT");
+    });
+
+    it("quitar su ÚNICA cobertura activa -> vuelve a Prospecto", async () => {
+      const holder = await makePerson();
+      const member = await makePerson(null, "PROSPECT");
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+          coveredMembers: [{ personId: member.id, role: "OTHER" }],
+        })
+      );
+      expect((await prisma.person.findUniqueOrThrow({ where: { id: member.id } })).contactStatus).toBe("CLIENT");
+      const detailed = await getPolicyMembersDetailed(admin, policy.id);
+      const memberRow = detailed.find((m) => m.person.id === member.id)!;
+      await removePolicyMember(admin, policy.id, memberRow.id);
+      const after = await prisma.person.findUniqueOrThrow({ where: { id: member.id } });
+      expect(after.contactStatus).toBe("PROSPECT");
+    });
+
+    it("quitar una de VARIAS coberturas activas -> permanece Cliente", async () => {
+      const person = await makePerson();
+      const policyA = trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+        })
+      );
+      const dentalProduct = await prisma.product.create({
+        data: { carrierId, name: `Dental${Date.now()}`, policyType: "DENTAL", isActive: true },
+      });
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: dentalProduct.id,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+        })
+      );
+      const detailed = await getPolicyMembersDetailed(admin, policyA.id);
+      const holderMember = detailed.find((m) => m.person.id === person.id)!;
+      await removePolicyMember(admin, policyA.id, holderMember.id);
+      const after = await prisma.person.findUniqueOrThrow({ where: { id: person.id } });
+      expect(after.contactStatus).toBe("CLIENT");
+    });
+
+    it("cancelar la ÚLTIMA póliza activa -> vuelve a Prospecto", async () => {
+      const holder = await makePerson();
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+        })
+      );
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-01" });
+      const after = await prisma.person.findUniqueOrThrow({ where: { id: holder.id } });
+      expect(after.contactStatus).toBe("PROSPECT");
+    });
+
+    it("FORMER_CLIENT nunca se sobrescribe automáticamente, aunque tenga cobertura activa", async () => {
+      const holder = await makePerson();
+      await prisma.person.update({ where: { id: holder.id }, data: { contactStatus: "FORMER_CLIENT" } });
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+        })
+      );
+      const after = await prisma.person.findUniqueOrThrow({ where: { id: holder.id } });
+      expect(after.contactStatus).toBe("FORMER_CLIENT");
+    });
+
+    it("recomputePersonContactStatus es idempotente (llamarlo dos veces no duplica audit events)", async () => {
+      const holder = await makePerson(null, "PROSPECT");
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+        })
+      );
+      const { recomputePersonContactStatus } = await import("@/services/people.service");
+      await prisma.$transaction(async (tx) => {
+        await recomputePersonContactStatus(tx, holder.id, admin);
+      });
+      const events = await prisma.auditEvent.findMany({
+        where: { contactPersonId: holder.id, action: "CONTACT_STATUS_CHANGE" },
+      });
+      // Un solo evento: el disparado por createPolicy — la segunda
+      // llamada manual no debe generar uno nuevo porque el status ya
+      // es el correcto.
+      expect(events).toHaveLength(1);
+      void policy;
+    });
+  });
+
+  // Fase 022 (Hallazgo #6B de UAT): doble cobertura de salud solapada.
+  describe("Hallazgo #6B — no doble cobertura de salud solapada para la misma persona", () => {
+    it("bloquea una segunda póliza de salud ACTIVE con fechas solapadas para la MISMA persona", async () => {
+      const person = await makePerson();
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+          terminationDate: "2026-12-31",
+        })
+      );
+      await expect(
+        createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-10-01",
+          terminationDate: "2027-09-30",
+        })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("permite una renovación NO solapada (período futuro consecutivo)", async () => {
+      const person = await makePerson();
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+          terminationDate: "2026-12-31",
+        })
+      );
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2027-01-01",
+          terminationDate: "2027-12-31",
+        })
+      );
+    });
+
+    it("un miembro DISTINTO del mismo hogar puede tener su propia póliza de salud sin problema (la unidad es la persona, no el hogar)", async () => {
+      const father = await makePerson();
+      const mother = await makePerson();
+      const daughter = await makePerson();
+      const household = await prisma.household.create({ data: {} });
+      createdHouseholdIds.push(household.id);
+      await prisma.householdMember.createMany({
+        data: [
+          { personId: father.id, householdId: household.id, role: "HEAD" },
+          { personId: mother.id, householdId: household.id, role: "SPOUSE" },
+          { personId: daughter.id, householdId: household.id, role: "CHILD" },
+        ],
+      });
+
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: father.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+          terminationDate: "2026-12-31",
+          coveredMembers: [{ personId: mother.id, role: "SPOUSE" }],
+        })
+      );
+
+      // La hija NO está cubierta en la Policy A -> su propia póliza de
+      // salud, aunque solape en fechas, debe permitirse.
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: daughter.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-06-01",
+          terminationDate: "2026-12-31",
+        })
+      );
+    });
+
+    it("bloquea agregar a alguien vía addPolicyMember si ya está cubierto por otra póliza de salud solapada", async () => {
+      const person = await makePerson();
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+          terminationDate: "2026-12-31",
+        })
+      );
+      const otherHolder = await makePerson();
+      const otherPolicy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: otherHolder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+          status: "ACTIVE",
+          effectiveDate: "2026-03-01",
+          terminationDate: "2026-09-30",
+        })
+      );
+      await expect(
+        addPolicyMember(admin, otherPolicy.id, { personId: person.id, role: "OTHER" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("nunca bloquea contra una póliza CANCELLED (no representa cobertura simultánea real)", async () => {
+      const person = await makePerson();
+      const cancelled = trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-01-01",
+          terminationDate: "2026-12-31",
+        })
+      );
+      await cancelPolicy(admin, cancelled.id, { terminationDate: "2026-06-01" });
+
+      trackPolicy(
+        await createPolicy(admin, {
+          holderId: person.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          status: "ACTIVE",
+          effectiveDate: "2026-03-01",
+          terminationDate: "2026-11-30",
+        })
+      );
+    });
   });
 });

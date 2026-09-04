@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
-import { createUser, setUserActive } from "@/services/users.service";
+import { createUser, setUserActive, resetUserPassword } from "@/services/users.service";
 import { AppError } from "@/services/errors";
 
 export type CreateUserFormState =
@@ -46,4 +46,36 @@ export async function toggleUserActiveAction(
   }
   revalidatePath("/settings/users");
   return {};
+}
+
+// Fase 022 (Hallazgo #4 de UAT) — Restablecer contraseña.
+export type ResetPasswordFormState =
+  | { error?: string; fieldErrors?: Record<string, string>; success?: true }
+  | undefined;
+
+export async function resetUserPasswordAction(
+  userId: string,
+  _prevState: ResetPasswordFormState,
+  formData: FormData
+): Promise<ResetPasswordFormState> {
+  const actor = await requireSessionUser();
+  try {
+    await resetUserPassword(actor, {
+      id: userId,
+      newPassword: String(formData.get("newPassword") ?? ""),
+      confirmPassword: String(formData.get("confirmPassword") ?? ""),
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      if (error.code === "VALIDATION_ERROR") {
+        const sep = error.message.indexOf(": ");
+        if (sep > 0) {
+          return { fieldErrors: { [error.message.slice(0, sep)]: error.message.slice(sep + 2) } };
+        }
+      }
+      return { error: error.message };
+    }
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  return { success: true };
 }

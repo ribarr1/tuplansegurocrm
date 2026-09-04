@@ -55,6 +55,46 @@ async function assertCarrierExists(carrierId: string): Promise<void> {
   if (!carrier) throw new AppError("NOT_FOUND", "Compañía no encontrada.");
 }
 
+// Fase 022 (Hallazgo #5 de UAT): identidad de producto V1 = carrierId +
+// nombre normalizado + policyType + planYear. Normalización deliberadamente
+// simple (trim, minúsculas, espacios redundantes colapsados a uno solo) —
+// suficiente para detectar "aetna copagos 100" === "Aetna Copagos 100" ===
+// "  aetna copagos 100  " sin intentar deduplicar variaciones de
+// puntuación/acentos, que podrían bloquear nombres legítimamente distintos.
+export function normalizeProductName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Chequeo previo con mensaje claro (mejor UX que solo esperar el P2002
+// de la restricción única de la base) — la restricción única en DB
+// (migración 014) sigue siendo la protección real contra condiciones de
+// carrera, este chequeo nunca es la única defensa.
+async function assertNoDuplicateProduct(
+  carrierId: string,
+  name: string,
+  policyType: string,
+  planYear: number | null | undefined,
+  excludeId?: string
+): Promise<void> {
+  const nameNormalized = normalizeProductName(name);
+  const existing = await prisma.product.findFirst({
+    where: {
+      carrierId,
+      nameNormalized,
+      policyType: policyType as Prisma.EnumPolicyTypeFilter["equals"],
+      planYear: planYear ?? null,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+  });
+  if (existing) {
+    throw new AppError(
+      "CONFLICT",
+      "name: Ya existe un producto con este nombre para esta compañía, tipo de seguro y año de plan."
+    );
+  }
+}
+
 export async function listProducts(actor: AuthorizedUser, rawQuery: unknown) {
   void actor;
   const { page, pageSize, carrierId, policyType, active } = parseOrThrow(
@@ -102,8 +142,26 @@ export async function createProduct(actor: AuthorizedUser, rawInput: unknown) {
   assertCanManageProducts(actor);
   const input = parseOrThrow(createProductSchema, rawInput);
   await assertCarrierExists(input.carrierId);
+  await assertNoDuplicateProduct(input.carrierId, input.name, input.policyType, input.planYear);
 
-  return prisma.product.create({ data: input, select: productSelect });
+  try {
+    // nameNormalized nunca se pasa manualmente — lo calcula un trigger
+    // de Postgres a partir de `name` en cada INSERT/UPDATE (migración
+    // 014), así funciona igual para este servicio, los scripts de seed
+    // y el importador legacy, sin que ninguno necesite saberlo.
+    return await prisma.product.create({
+      data: input,
+      select: productSelect,
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new AppError(
+        "CONFLICT",
+        "name: Ya existe un producto con este nombre para esta compañía, tipo de seguro y año de plan."
+      );
+    }
+    throw error;
+  }
 }
 
 export async function updateProduct(actor: AuthorizedUser, rawId: unknown, rawInput: unknown) {
@@ -113,7 +171,14 @@ export async function updateProduct(actor: AuthorizedUser, rawId: unknown, rawIn
 
   const existing = await prisma.product.findUnique({
     where: { id },
-    select: { id: true, _count: { select: { policies: true } } },
+    select: {
+      id: true,
+      carrierId: true,
+      name: true,
+      policyType: true,
+      planYear: true,
+      _count: { select: { policies: true } },
+    },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Producto no encontrado.");
 
@@ -133,7 +198,28 @@ export async function updateProduct(actor: AuthorizedUser, rawId: unknown, rawIn
     await assertCarrierExists(input.carrierId);
   }
 
-  return prisma.product.update({ where: { id }, data: input, select: productSelect });
+  // Fase 022 (Hallazgo #5 de UAT): revalida contra la combinación FINAL
+  // (existente + lo que realmente cambia), solo cuando algún campo de
+  // la identidad del producto está en juego — evita una consulta extra
+  // en la edición típica que solo toca externalCode/isActive.
+  const finalName = input.name ?? existing.name;
+  const finalPolicyType = input.policyType ?? existing.policyType;
+  const finalPlanYear = input.planYear !== undefined ? input.planYear : existing.planYear;
+  if (input.name !== undefined || input.carrierId !== undefined) {
+    await assertNoDuplicateProduct(existing.carrierId, finalName, finalPolicyType, finalPlanYear, id);
+  }
+
+  try {
+    return await prisma.product.update({ where: { id }, data: input, select: productSelect });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new AppError(
+        "CONFLICT",
+        "name: Ya existe un producto con este nombre para esta compañía, tipo de seguro y año de plan."
+      );
+    }
+    throw error;
+  }
 }
 
 // Mismo motivo que setCarrierActive: atajo directo con boolean ya

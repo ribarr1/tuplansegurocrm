@@ -203,7 +203,14 @@ export async function createPerson(actor: AuthorizedUser, rawInput: unknown) {
 
   return prisma.$transaction(async (tx) => {
     const person = await tx.person.create({
-      data: { ...input, assignedAgentId },
+      // Hallazgo #2 de UAT (Fase 022): TODO contacto nuevo nace como
+      // PROSPECT, sin excepción — nunca se crea directamente como
+      // Cliente desde este flujo (el import legacy es un camino
+      // completamente separado, src/import/apply.ts, que sí puede
+      // fijar CLIENT por razones históricas). Volverse Cliente es
+      // siempre una consecuencia automática de tener cobertura activa
+      // (recomputePersonContactStatus), nunca una elección al crear.
+      data: { ...input, contactStatus: "PROSPECT", assignedAgentId },
       select: detailSelect,
     });
     await recordAuditEvent(tx, {
@@ -291,5 +298,61 @@ export async function updatePerson(
       });
     }
     return updated;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Ciclo automático Prospecto <-> Cliente — Fase 022 (Hallazgo #2 de UAT)
+//
+// Regla de negocio: la fuente de verdad de si alguien es Cliente es
+// "¿esta Person está cubierta como PolicyMember de al menos una Policy
+// ACTIVE?" — NUNCA "¿es titular?" ni "¿pertenece a un Household?". Se
+// aplica por igual a titular, esposo/a, hijo/a, dependiente u otro
+// miembro cubierto: todos son simplemente PolicyMember.
+//
+// Solo alterna entre PROSPECT y CLIENT. FORMER_CLIENT/OTHER son
+// decisiones administrativas explícitas (alguien decidió a mano que ya
+// no es cliente activo, o que no encaja en las otras categorías) —
+// esta función NUNCA las sobrescribe, ni siquiera si la persona vuelve
+// a tener cobertura activa; volver a marcarla como Cliente en ese caso
+// requiere una acción manual explícita, igual que hoy.
+//
+// Idempotente: si el status ya es el correcto, no escribe ni audita
+// nada. Se llama SIEMPRE dentro de la misma transacción que el cambio
+// de membresía/estado de póliza que la dispara (nunca aparte, para que
+// nunca quede un estado a medias si algo falla).
+const AUTO_MANAGED_CONTACT_STATUSES = ["PROSPECT", "CLIENT"] as const;
+
+export async function recomputePersonContactStatus(
+  tx: Prisma.TransactionClient,
+  personId: string,
+  actor: AuthorizedUser | null
+): Promise<void> {
+  const person = await tx.person.findUnique({
+    where: { id: personId },
+    select: { id: true, contactStatus: true },
+  });
+  if (!person) return;
+  if (!(AUTO_MANAGED_CONTACT_STATUSES as readonly string[]).includes(person.contactStatus)) return;
+
+  const activeCoverage = await tx.policyMember.findFirst({
+    where: { personId, policy: { status: "ACTIVE" } },
+    select: { id: true },
+  });
+  const nextStatus = activeCoverage ? "CLIENT" : "PROSPECT";
+  if (nextStatus === person.contactStatus) return;
+
+  await tx.person.update({ where: { id: personId }, data: { contactStatus: nextStatus } });
+  await recordAuditEvent(tx, {
+    actor,
+    entityType: "Person",
+    entityId: personId,
+    action: "CONTACT_STATUS_CHANGE",
+    contactPersonId: personId,
+    summary:
+      nextStatus === "CLIENT"
+        ? "Contacto actualizado automáticamente a Cliente (cobertura activa)"
+        : "Contacto actualizado automáticamente a Prospecto (sin cobertura activa)",
+    changes: { contactStatus: { before: person.contactStatus, after: nextStatus } },
   });
 }

@@ -44,7 +44,7 @@ export default async function NewPolicyPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Nueva póliza</h2>
+      <h2 className="font-heading text-lg font-semibold">Nueva póliza</h2>
 
       <section className="flex flex-col gap-3 rounded-md border p-4">
         <h3 className="text-sm font-medium">
@@ -54,6 +54,19 @@ export default async function NewPolicyPage({
           <div className="flex flex-1 flex-col gap-1">
             <Label htmlFor="holderSearch">Buscar persona</Label>
             <Input
+              // Hallazgo #7 de UAT (Fase 022): esta sección (incluido este
+              // Input) sigue montada al navegar de "?holderSearch=x" a
+              // "?holderId=y" (mismo Client Component `Input`, misma
+              // posición en el árbol — Next.js no la remonta solo porque
+              // cambien los searchParams de la misma ruta). Sin `key`,
+              // `defaultValue` pasaría de "x" a "" sobre una instancia YA
+              // inicializada — exactamente lo que Base UI advierte
+              // ("changing the default value state of an uncontrolled
+              // FieldControl after being initialized"). La `key` fuerza un
+              // remount limpio cuando el término de búsqueda cambia,
+              // mismo patrón ya usado para el `key={formKey}` de los
+              // formularios con useActionState.
+              key={sp.holderSearch ?? ""}
               id="holderSearch"
               name="holderSearch"
               placeholder="Nombre, teléfono o correo"

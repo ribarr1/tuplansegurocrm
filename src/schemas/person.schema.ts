@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalSearchFilter, optionalEnumFilter } from "@/schemas/common";
+import { optionalSearchFilter, optionalEnumFilter, dateOnlySchema } from "@/schemas/common";
 
 // Valores reales de ContactStatus (prisma/schema.prisma). Duplicado aquí
 // como literales porque Zod no puede importar un enum de Prisma
@@ -35,9 +35,8 @@ const personFieldsSchema = {
   secondLastName: z.string().trim().min(1).max(100).optional(),
   preferredName: z.string().trim().min(1).max(100).optional(),
   // No en el futuro: fecha de nacimiento no puede ser posterior a hoy.
-  dateOfBirth: z.coerce
-    .date()
-    .max(new Date(), "La fecha de nacimiento no puede ser en el futuro.")
+  dateOfBirth: dateOnlySchema()
+    .refine((d) => d <= new Date(), "La fecha de nacimiento no puede ser en el futuro.")
     .optional(),
   email: z.email("Correo electrónico inválido.").optional(),
   // Validación básica de longitud, sin normalización estricta E.164 —

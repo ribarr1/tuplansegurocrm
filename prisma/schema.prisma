@@ -180,20 +180,35 @@ model Carrier {
 // Producto/plan ofrecido por un carrier. Fuente de verdad del tipo de
 // seguro y del carrier de una póliza (Policy no duplica estos datos).
 model Product {
-  id           String     @id @default(uuid()) @db.Uuid
-  carrierId    String     @db.Uuid
-  name         String
-  policyType   PolicyType
-  planYear     Int?
-  externalCode String?
-  isActive     Boolean    @default(true)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id             String     @id @default(uuid()) @db.Uuid
+  carrierId      String     @db.Uuid
+  name           String
+  // Fase 022 (Hallazgo #5 de UAT): "nombre normalizado" para detectar
+  // duplicados reales ("aetna copagos 100" vs "Aetna Copagos 100" vs
+  // "  aetna copagos 100  ") — SIEMPRE calculado por el servicio
+  // (normalizeProductName en products.service.ts: trim, minúsculas,
+  // espacios redundantes colapsados), nunca editado directamente ni
+  // expuesto en la UI. `name` conserva el texto exacto que escribió el
+  // usuario para mostrarlo; este campo es solo para comparar.
+  // @default("") es un placeholder: el valor real SIEMPRE lo calcula el
+  // trigger de Postgres de la migración 014 antes de cada INSERT/UPDATE,
+  // nunca este default — está aquí solo para que Prisma Client marque el
+  // campo como opcional en `create`, ya que ningún caller (servicio,
+  // scripts, tests, import legacy) debe tener que conocer este campo
+  // derivado.
+  nameNormalized String     @default("")
+  policyType     PolicyType
+  planYear       Int?
+  externalCode   String?
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   carrier         Carrier          @relation(fields: [carrierId], references: [id], onDelete: Restrict)
   policies        Policy[]
   commissionRules CommissionRule[]
 
+  @@unique([carrierId, nameNormalized, policyType, planYear])
   @@index([carrierId, policyType, planYear])
   @@map("products")
 }

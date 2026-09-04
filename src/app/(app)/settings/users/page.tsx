@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ROLE_LABELS } from "@/lib/labels";
 import { CreateUserForm } from "./create-user-form";
 import { ToggleUserActiveButton } from "./toggle-active-button";
+import { ResetPasswordDialog } from "./reset-password-dialog";
 import { formatDateUS } from "@/lib/business-time";
 
 const formatDate = formatDateUS;
@@ -29,7 +30,7 @@ export default async function UsersPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Usuarios</h2>
+      <h2 className="font-heading text-lg font-semibold">Usuarios</h2>
 
       <CreateUserForm />
 
@@ -61,7 +62,12 @@ export default async function UsersPage() {
                   <Link href={`/settings/users/${user.id}/activity`} className="text-sm underline">
                     Ver actividad
                   </Link>
-                  <ToggleUserActiveButton userId={user.id} isActive={user.isActive} />
+                  <ResetPasswordDialog userId={user.id} userName={user.name} />
+                  <ToggleUserActiveButton
+                    userId={user.id}
+                    isActive={user.isActive}
+                    isSelf={user.id === actor.id}
+                  />
                 </TableCell>
               </TableRow>
             ))}

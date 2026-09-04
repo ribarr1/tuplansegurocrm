@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { optionalSearchFilter, optionalUuidFilter, optionalEnumFilter, optionalBooleanFilter } from "@/schemas/common";
+import {
+  optionalSearchFilter,
+  optionalUuidFilter,
+  optionalEnumFilter,
+  optionalBooleanFilter,
+  isValidDateOnlyString,
+} from "@/schemas/common";
 import { BILLING_FREQUENCY_VALUES, PAYMENT_STATUS_VALUES } from "@/schemas/policy.schema";
 
 export const listPremiumTrackingQuerySchema = z.object({
@@ -51,23 +57,24 @@ function nullableEnum<T extends readonly [string, ...string[]]>(values: T) {
     .optional();
 }
 
-// nextPaymentDueDate es @db.Date — un <input type="date"> entrega
-// "2026-08-15", que new Date(...) interpreta como medianoche UTC (regla
-// ECMA-262 para strings solo-fecha), exactamente lo que Prisma espera
-// para esta columna. No requiere ninguna conversión de zona horaria
-// (a diferencia de un datetime-local, ver task.schema.ts::dueAt).
+// nextPaymentDueDate es @db.Date — un <input type="date"> (o
+// USDateInput) entrega "YYYY-MM-DD". Fase 022 (Hallazgo #1 de UAT):
+// NUNCA usar `new Date(string)` directamente para validar esto — es
+// lenienta con días de calendario inválidos (ej. "2026-02-30" se
+// "redondea" silenciosamente a marzo en vez de rechazarse). Se valida
+// con isValidDateOnlyString (mismo validador centralizado que
+// dateOnlySchema, common.ts) antes de construir el Date.
 function nullableDateOnly() {
   return z
     .string()
     .transform((v, ctx) => {
       const trimmed = v.trim();
       if (trimmed === "") return null;
-      const date = new Date(trimmed);
-      if (Number.isNaN(date.getTime())) {
-        ctx.addIssue({ code: "custom", message: "Fecha inválida." });
+      if (!isValidDateOnlyString(trimmed)) {
+        ctx.addIssue({ code: "custom", message: "Fecha inválida. Verifica día y mes." });
         return z.NEVER;
       }
-      return date;
+      return new Date(`${trimmed}T00:00:00.000Z`);
     })
     .optional();
 }

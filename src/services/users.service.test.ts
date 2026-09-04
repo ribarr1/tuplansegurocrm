@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { createUser, setUserActive, listAllUsers } from "@/services/users.service";
+import { createUser, setUserActive, listAllUsers, resetUserPassword } from "@/services/users.service";
+import { auth } from "@/lib/auth";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -123,6 +124,137 @@ describe("users.service", () => {
     createdUserIds.push(first.user.id);
     await expect(createUser(admin, { name: "Dos", email, role: "AGENT" })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
+    });
+  });
+
+  // Fase 022 (Hallazgo #4 de UAT): restablecer contraseña.
+  describe("resetUserPassword", () => {
+    it("ADMIN cambia la contraseña de otro usuario, la nueva funciona y la anterior deja de funcionar", async () => {
+      const email = `resetpw.${Date.now()}@test.local`;
+      const { user, temporaryPassword } = await createUser(admin, { name: "Reset PW", email, role: "AGENT" });
+      createdUserIds.push(user.id);
+
+      const oldSignIn = await auth.api.signInEmail({
+        body: { email, password: temporaryPassword },
+        asResponse: true,
+      });
+      expect(oldSignIn.status).toBe(200);
+
+      const newPassword = "NuevaContraseñaSegura2026";
+      await resetUserPassword(admin, { id: user.id, newPassword, confirmPassword: newPassword });
+
+      const oldSignInAfter = await auth.api.signInEmail({
+        body: { email, password: temporaryPassword },
+        asResponse: true,
+      });
+      expect(oldSignInAfter.status).not.toBe(200);
+
+      const newSignIn = await auth.api.signInEmail({
+        body: { email, password: newPassword },
+        asResponse: true,
+      });
+      expect(newSignIn.status).toBe(200);
+    });
+
+    it("restablecer la contraseña invalida las sesiones existentes del usuario", async () => {
+      const email = `resetpw-session.${Date.now()}@test.local`;
+      const { user, temporaryPassword } = await createUser(admin, { name: "Reset Session", email, role: "AGENT" });
+      createdUserIds.push(user.id);
+      await auth.api.signInEmail({ body: { email, password: temporaryPassword }, asResponse: true });
+      const sessionsBefore = await prisma.session.count({ where: { userId: user.id } });
+      expect(sessionsBefore).toBeGreaterThan(0);
+
+      await resetUserPassword(admin, {
+        id: user.id,
+        newPassword: "OtraContraseñaSegura2026",
+        confirmPassword: "OtraContraseñaSegura2026",
+      });
+      const sessionsAfter = await prisma.session.count({ where: { userId: user.id } });
+      expect(sessionsAfter).toBe(0);
+    });
+
+    it("rechaza si newPassword y confirmPassword no coinciden", async () => {
+      const { user } = await createUser(admin, {
+        name: "Mismatch",
+        email: `mismatch.${Date.now()}@test.local`,
+        role: "AGENT",
+      });
+      createdUserIds.push(user.id);
+      await expect(
+        resetUserPassword(admin, { id: user.id, newPassword: "PasswordUno123", confirmPassword: "PasswordDos123" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("rechaza una contraseña demasiado corta", async () => {
+      const { user } = await createUser(admin, {
+        name: "Corta",
+        email: `short.${Date.now()}@test.local`,
+        role: "AGENT",
+      });
+      createdUserIds.push(user.id);
+      await expect(
+        resetUserPassword(admin, { id: user.id, newPassword: "corta", confirmPassword: "corta" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("un no-ADMIN no puede restablecer contraseñas", async () => {
+      const { user } = await createUser(admin, {
+        name: "Target",
+        email: `target.${Date.now()}@test.local`,
+        role: "AGENT",
+      });
+      createdUserIds.push(user.id);
+      await expect(
+        resetUserPassword(agent, { id: user.id, newPassword: "PasswordValida123", confirmPassword: "PasswordValida123" })
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("el audit log NUNCA guarda la contraseña, solo el targetUserId", async () => {
+      const { user } = await createUser(admin, {
+        name: "Audited",
+        email: `audited.${Date.now()}@test.local`,
+        role: "AGENT",
+      });
+      createdUserIds.push(user.id);
+      const newPassword = "ContraseñaAuditable2026";
+      await resetUserPassword(admin, { id: user.id, newPassword, confirmPassword: newPassword });
+
+      const event = await prisma.auditEvent.findFirst({
+        where: { entityType: "User", entityId: user.id, action: "USER_PASSWORD_RESET" },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(event).toBeTruthy();
+      expect(event?.metadata).toMatchObject({ targetUserId: user.id });
+      expect(JSON.stringify(event)).not.toContain(newPassword);
+    });
+  });
+
+  // Fase 022 (Hallazgo #4 de UAT): protección de auto-desactivación.
+  describe("protección de auto-desactivación de ADMIN", () => {
+    it("un ADMIN no puede desactivarse a sí mismo", async () => {
+      const { user } = await createUser(admin, {
+        name: "Self Disable",
+        email: `selfdisable.${Date.now()}@test.local`,
+        role: "ADMIN",
+      });
+      createdUserIds.push(user.id);
+      const selfActor: AuthorizedUser = { ...user };
+      await expect(setUserActive(selfActor, { id: selfActor.id, isActive: false })).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+      const stillActive = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      expect(stillActive.isActive).toBe(true);
+    });
+
+    it("un ADMIN sigue pudiendo desactivar a OTRO ADMIN (la protección es solo sobre sí mismo)", async () => {
+      const { user } = await createUser(admin, {
+        name: "Other Admin",
+        email: `otheradmin.${Date.now()}@test.local`,
+        role: "ADMIN",
+      });
+      createdUserIds.push(user.id);
+      const updated = await setUserActive(admin, { id: user.id, isActive: false });
+      expect(updated.isActive).toBe(false);
     });
   });
 });

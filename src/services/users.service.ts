@@ -4,7 +4,12 @@ import { hashPassword } from "better-auth/crypto";
 import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
-import { userIdSchema, createUserSchema, setUserActiveSchema } from "@/schemas/user.schema";
+import {
+  userIdSchema,
+  createUserSchema,
+  setUserActiveSchema,
+  resetUserPasswordSchema,
+} from "@/schemas/user.schema";
 import { recordAuditEvent } from "@/services/audit.service";
 
 // Solo para uso administrativo (ej. selector de "agente asignado" al
@@ -107,9 +112,19 @@ export async function createUser(actor: AuthorizedUser, rawInput: unknown) {
 
 // Salvaguarda: nunca permitir que el ADMIN activo restante quede
 // desactivado — dejaría el CRM sin nadie con acceso administrativo.
+// Fase 022 (Hallazgo #4 de UAT): tampoco un ADMIN puede desactivarse a
+// SÍ MISMO — aunque no sea el último, evita quedarse fuera de su
+// propia sesión activa por accidente (y evita el caso raro de que
+// alguien se desactive a sí mismo con la única sesión de administrador
+// abierta en ese momento). Validado server-side, nunca solo oculto en
+// la UI — rechaza aunque el request se manipule directamente.
 export async function setUserActive(actor: AuthorizedUser, rawInput: unknown) {
   assertAdminOnly(actor);
   const input = parseOrThrow(setUserActiveSchema, rawInput);
+
+  if (!input.isActive && input.id === actor.id) {
+    throw new AppError("VALIDATION_ERROR", "No puedes desactivar tu propia cuenta.");
+  }
 
   const target = await prisma.user.findUnique({ where: { id: input.id }, select: { id: true, role: true, isActive: true } });
   if (!target) throw new AppError("NOT_FOUND", "Usuario no encontrado.");
@@ -147,4 +162,52 @@ export async function getUserById(actor: AuthorizedUser, rawId: unknown) {
   const user = await prisma.user.findUnique({ where: { id }, select: userSelect });
   if (!user) throw new AppError("NOT_FOUND", "Usuario no encontrado.");
   return user;
+}
+
+// Restablecer contraseña — Fase 022 (Hallazgo #4 de UAT). ADMIN-only,
+// para CUALQUIER otro usuario (incluido otro ADMIN). Actualiza el
+// mismo Account "credential" que crea createUser, con la MISMA función
+// de hash (better-auth/crypto::hashPassword) — Better Auth sigue
+// siendo la única fuente de verdad de autenticación, esto no
+// reinventa ni improvisa el hash, solo reproduce lo que su propio
+// endpoint de login espera encontrar. Invalida todas las sesiones
+// activas de ese usuario (Session), para que un restablecimiento
+// administrativo lo obligue a iniciar sesión de nuevo con la
+// contraseña nueva, en vez de dejar una sesión vieja abierta.
+// Nunca se guarda la contraseña (ni el hash) en el audit log — solo
+// el hecho de que se restableció.
+export async function resetUserPassword(actor: AuthorizedUser, rawInput: unknown) {
+  assertAdminOnly(actor);
+  const input = parseOrThrow(resetUserPasswordSchema, rawInput);
+
+  const target = await prisma.user.findUnique({ where: { id: input.id }, select: { id: true, name: true } });
+  if (!target) throw new AppError("NOT_FOUND", "Usuario no encontrado.");
+
+  const account = await prisma.account.findFirst({
+    where: { userId: input.id, providerId: "credential" },
+    select: { id: true },
+  });
+  if (!account) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Este usuario no tiene una credencial de contraseña local que restablecer."
+    );
+  }
+
+  const hashedPassword = await hashPassword(input.newPassword);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.account.update({ where: { id: account.id }, data: { password: hashedPassword } });
+    await tx.session.deleteMany({ where: { userId: input.id } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "User",
+      entityId: input.id,
+      action: "USER_PASSWORD_RESET",
+      summary: `Contraseña restablecida para ${target.name}`,
+      metadata: { targetUserId: input.id },
+    });
+  });
+
+  return { success: true as const };
 }

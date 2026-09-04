@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidSsn, normalizeIdentifier } from "@/lib/sensitive-identity-format";
+import { dateOnlySchema } from "@/schemas/common";
 
 // Identidad sensible del contacto (SSN, información migratoria) —
 // Fase 021. Los valores en claro (SSN/USCIS/número de documento)
@@ -64,7 +65,7 @@ export const setUscisNumberSchema = z.object({
 export type SetUscisNumberInput = z.infer<typeof setUscisNumberSchema>;
 
 function optionalDateOnly() {
-  return z.coerce.date().optional();
+  return dateOnlySchema().optional();
 }
 
 export const createImmigrationDocumentSchema = z.object({
@@ -95,11 +96,11 @@ export const updateImmigrationDocumentSchema = z.object({
     .optional()
     .transform((v) => (v && v.trim() !== "" ? v.trim() : undefined)),
   issuedDate: z
-    .union([z.literal(""), z.coerce.date()])
+    .union([z.literal(""), dateOnlySchema()])
     .optional()
     .transform((v) => (v === "" ? null : v)),
   expirationDate: z
-    .union([z.literal(""), z.coerce.date()])
+    .union([z.literal(""), dateOnlySchema()])
     .optional()
     .transform((v) => (v === "" ? null : v)),
 });

@@ -276,4 +276,93 @@ describe("products.service", () => {
       createPolicy(admin, { holderId: holder.id, productId: product.id, holderCovered: "false" })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
+
+  // Fase 022 (Hallazgo #5 de UAT): productos duplicados.
+  describe("Hallazgo #5 — prevención de productos duplicados", () => {
+    it("rechaza el mismo nombre exacto para el mismo carrier/tipo/año", async () => {
+      const carrier = await makeCarrier();
+      const name = uniqueName("Aetna Copagos 100");
+      trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name, policyType: "HEALTH", planYear: 2026 })
+      );
+      await expect(
+        createProduct(admin, { carrierId: carrier.id, name, policyType: "HEALTH", planYear: 2026 })
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    });
+
+    it("rechaza un duplicado normalizado (mayúsculas/espacios distintos, mismo nombre real)", async () => {
+      const carrier = await makeCarrier();
+      const base = uniqueName("aetna copagos 100");
+      trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name: base, policyType: "HEALTH", planYear: 2026 })
+      );
+      const variant = `  ${base.toUpperCase()}  `.replace(/(\s)\s+/g, "$1"); // espacios de más + mayúsculas
+      await expect(
+        createProduct(admin, { carrierId: carrier.id, name: variant, policyType: "HEALTH", planYear: 2026 })
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    });
+
+    it("permite el mismo nombre en un carrier DISTINTO", async () => {
+      const carrierA = await makeCarrier();
+      const carrierB = await makeCarrier();
+      const name = uniqueName("Mismo Nombre");
+      trackProduct(
+        await createProduct(admin, { carrierId: carrierA.id, name, policyType: "HEALTH", planYear: 2026 })
+      );
+      trackProduct(
+        await createProduct(admin, { carrierId: carrierB.id, name, policyType: "HEALTH", planYear: 2026 })
+      );
+    });
+
+    it("permite el mismo producto en un año DISTINTO", async () => {
+      const carrier = await makeCarrier();
+      const name = uniqueName("Plan Anual");
+      trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name, policyType: "HEALTH", planYear: 2026 })
+      );
+      trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name, policyType: "HEALTH", planYear: 2027 })
+      );
+    });
+
+    it("permite el mismo nombre con un tipo de seguro DISTINTO", async () => {
+      const carrier = await makeCarrier();
+      const name = uniqueName("Plan Combinado");
+      trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name, policyType: "HEALTH", planYear: 2026 })
+      );
+      trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name, policyType: "DENTAL", planYear: 2026 })
+      );
+    });
+
+    it("updateProduct también rechaza renombrar hacia un duplicado ya existente", async () => {
+      const carrier = await makeCarrier();
+      const nameA = uniqueName("Plan Original A");
+      const nameB = uniqueName("Plan Original B");
+      trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name: nameA, policyType: "HEALTH", planYear: 2026 })
+      );
+      const productB = trackProduct(
+        await createProduct(admin, { carrierId: carrier.id, name: nameB, policyType: "HEALTH", planYear: 2026 })
+      );
+      await expect(updateProduct(admin, productB.id, { name: nameA })).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
+    });
+
+    it("updateProduct permite renombrar el producto a un nombre no usado por nadie más", async () => {
+      const carrier = await makeCarrier();
+      const product = trackProduct(
+        await createProduct(admin, {
+          carrierId: carrier.id,
+          name: uniqueName("Plan Antiguo"),
+          policyType: "HEALTH",
+          planYear: 2026,
+        })
+      );
+      const updated = await updateProduct(admin, product.id, { name: uniqueName("Plan Renombrado") });
+      expect(updated.name).toContain("Plan Renombrado");
+    });
+  });
 });
