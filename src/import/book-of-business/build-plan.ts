@@ -51,6 +51,24 @@ export async function buildImportPlan(
       existing.data.phone = existing.data.phone ?? source.phone;
       existing.sensitive.ssn = existing.sensitive.ssn ?? source.ssn;
       existing.sensitive.uscisNumber = existing.sensitive.uscisNumber ?? source.uscisNumber;
+      // Hallazgo #1 de UAT (Fase 024): sex NUNCA es identidad fuerte de
+      // dedup (dos filas de la misma persona pueden traer sex distinto
+      // por captura manual inconsistente). Si una fila trae UNKNOWN y
+      // la otra un valor conocido, se prefiere el conocido. Si AMBAS
+      // traen valores conocidos mutuamente distintos, no se elige en
+      // silencio — se reporta PERSON_SEX_CONFLICT y se conserva el
+      // primero visto (nunca se sobrescribe con el segundo a ciegas).
+      if (existing.data.sex === "UNKNOWN" && source.sex !== "UNKNOWN") {
+        existing.data.sex = source.sex;
+      } else if (existing.data.sex !== "UNKNOWN" && source.sex !== "UNKNOWN" && existing.data.sex !== source.sex) {
+        issues.push({
+          rowIndex,
+          sourceIndex,
+          code: "PERSON_SEX_CONFLICT",
+          message: "Esta persona ya apareció con un sexo distinto en otra fila del mismo import — se conserva el primero visto, revisar manualmente.",
+          severity: "WARNING",
+        });
+      }
       return key;
     }
 
@@ -91,6 +109,7 @@ export async function buildImportPlan(
         firstName: source.firstName,
         lastName: source.lastName,
         dateOfBirth: source.dateOfBirth,
+        sex: source.sex,
         email: source.email,
         phone: source.phone,
       },
@@ -204,17 +223,42 @@ export async function buildImportPlan(
       });
     }
 
+    const planYear = row.effectiveDate.getUTCFullYear();
+
+    // Parte C de la ficha (Fase 024): regla de NORMALIZACIÓN DE ESTE
+    // DATASET/IMPORT específico, no una regla de lifecycle general del
+    // CRM (esa sigue viviendo en policies.service.ts sin tocarse). Este
+    // book es enteramente HEALTH (Parte G) y trae pólizas 2025 que ya
+    // no deben quedar ACTIVE tras la reimportación — se normalizan a
+    // CANCELLED, con terminationDate = 2025-12-31 SOLO cuando el source
+    // no trae una explícita (única excepción documentada a "nunca
+    // inferir terminationDate" — acotada a este caso concreto). Nunca
+    // toca pólizas 2026.
+    const isHealth2025 = planYear === 2025;
+    const normalizedStatus = isHealth2025 ? "CANCELLED" : status;
+    const normalizedTerminationDate = isHealth2025 ? new Date(Date.UTC(2025, 11, 31)) : null;
+    if (isHealth2025 && status !== "CANCELLED") {
+      issues.push({
+        rowIndex: row.rowIndex,
+        sourceIndex: row.sourceIndex,
+        code: "HEALTH_2025_NORMALIZED_TO_CANCELLED",
+        message: `Póliza de salud del plan year 2025 (estatus fuente "${row.status}") normalizada a CANCELLED con terminationDate 12/31/2025 para esta reimportación.`,
+        severity: "WARNING",
+      });
+    }
+
     policies.push({
       rowIndex: row.rowIndex,
       sourceIndex: row.sourceIndex,
       holderMatchKey: holderKey,
       carrierName: matchedCarrierName,
       planName: normalizePlanName(row.planRaw),
-      planYear: row.effectiveDate.getUTCFullYear(),
-      status,
+      planYear,
+      status: normalizedStatus,
       operationType,
       effectiveDate: row.effectiveDate,
-      terminationDate: null, // nunca se infiere — ver Hallazgo §37/§38 de la ficha
+      terminationDate: normalizedTerminationDate, // nunca se infiere salvo la excepción 2025 de arriba — ver Hallazgo §37/§38 de la ficha
+      normalizedHealth2025: isHealth2025,
       premiumAmount: row.premium,
       needsPaymentAssistance: row.assistance,
       healthCoverageSource: "MARKETPLACE",
@@ -291,9 +335,16 @@ export async function buildImportPlan(
 
   const blocking = issues.filter((i) => i.severity === "BLOCKING");
   const carriersNeeded = new Set(policies.map((p) => p.carrierName)).size;
-  const productKeySet = new Set(
+  const productKeys = new Set(
     policies.map((p) => `${p.carrierName}::${normalizeCarrierName(p.planName)}::${p.planYear}`)
   );
+
+  // Parte G (Fase 024): este importer SOLO deriva productos HEALTH de
+  // este book (ver apply-plan.ts) — todo producto derivado aquí es
+  // HEALTH por construcción, nunca se inventan DENTAL/SUPPLEMENTAL/etc.
+  const productsByPolicyType: Record<string, number> = { HEALTH: productKeys.size };
+  const sexCounts = { MALE: 0, FEMALE: 0, OTHER: 0, UNKNOWN: 0 };
+  for (const p of persons) sexCounts[p.data.sex]++;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -312,10 +363,13 @@ export async function buildImportPlan(
       policiesToCreate: policies.length,
       policyMembersToCreate: policies.reduce((sum, p) => sum + (p.holderCovered ? 1 : 0) + p.coveredMembers.length, 0),
       carriersNeeded,
-      productsNeeded: productKeySet.size,
+      productsNeeded: productKeys.size,
       sensitiveIdentitiesToImport: persons.filter((p) => p.sensitive.ssn).length,
       uscisToImport: persons.filter((p) => p.sensitive.uscisNumber).length,
       notesToImport: policies.filter((p) => p.note).length,
+      sex: sexCounts,
+      healthPolicies2025NormalizedToCancelled: policies.filter((p) => p.normalizedHealth2025).length,
+      productsByPolicyType,
     },
   };
 }

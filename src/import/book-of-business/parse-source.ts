@@ -1,5 +1,5 @@
 import { normalizeIdentifier, isValidSsn, normalizeSsn } from "@/lib/sensitive-identity-format";
-import { parseSourceAmount, parseSourceDateMDY, isSourceYes, collapseSpaces } from "./normalize";
+import { parseSourceAmount, parseSourceDateMDY, isSourceYes, collapseSpaces, mapPersonSex } from "./normalize";
 import type { SourceRow, PersonSourceData, DependentSourceData, RowIssue } from "./types";
 
 // Nombres de columna EXACTOS del CSV real (private-imports/exported-table.csv).
@@ -23,6 +23,7 @@ const COL = {
   INGRESOS: "INGRESOS",
   CREDITO_FISCAL: "CREDITO FISCAL",
   TITULAR_DISPLAY: "TITULAR NOMBRE Y APELLIDO",
+  TITULAR_SEXO: "TITULAR SEXO",
   TITULAR_EMAIL: "TITULAR EMAIL",
   TITULAR_DOB: "TITULAR FECHA DE NACIMIENTO",
   TITULAR_SSN: "TITULAR NUMERO DE SEGURIDAD SOCIAL",
@@ -34,6 +35,7 @@ const COL = {
   TITULAR_TELEFONO: "TITULAR TELEFONO",
   TITULAR_DIRECCION: "TITULAR DIRECCION",
   TITULAR_CONDADO: "TITULAR CONDADO",
+  CONYUGUE_SEXO: "CONYUGUE SEXO",
   CONYUGUE_EMAIL: "CONYUGUE EMAIL",
   CONYUGUE_DOB: "CONYUGUE FECHA DE NACIMIENTO",
   CONYUGUE_SSN: "CONYUGUE NUMERO DE SEGURIDAD SOCIALCONYUGUE NUMERO DE SEGURIDAD SOCIAL",
@@ -82,6 +84,7 @@ function buildPersonFromStructured(
   firstNameRaw: string,
   lastNameRaw: string,
   dobRaw: string,
+  sexRaw: string,
   emailRaw: string,
   phoneRaw: string,
   ssnRaw: string,
@@ -101,11 +104,14 @@ function buildPersonFromStructured(
   }
   if (firstName === "" || lastName === "") return null;
 
+  const sexResult = mapPersonSex(sexRaw);
+
   return {
     firstName,
     lastName,
     displayName: displayFallback.trim() || `${firstName} ${lastName}`,
     dateOfBirth: dobRaw.trim() ? parseSourceDateMDY(dobRaw) : null,
+    sex: sexResult?.value ?? "UNKNOWN",
     email: emailRaw.trim() || null,
     phone: phoneRaw.trim() || null,
     ssn: extractSsn(ssnRaw),
@@ -158,10 +164,12 @@ export function parseSourceRecords(records: Record<string, string>[]): ParsedSou
       return;
     }
 
+    const holderSexRaw = cell(record, COL.TITULAR_SEXO);
     const holder = buildPersonFromStructured(
       cell(record, COL.TITULAR_NOMBRE),
       cell(record, COL.TITULAR_APELLIDO),
       holderDobRaw,
+      holderSexRaw,
       cell(record, COL.TITULAR_EMAIL),
       cell(record, COL.TITULAR_TELEFONO),
       cell(record, COL.TITULAR_SSN),
@@ -180,15 +188,26 @@ export function parseSourceRecords(records: Record<string, string>[]): ParsedSou
       });
       return;
     }
+    if (holderSexRaw && mapPersonSex(holderSexRaw)?.recognized === false) {
+      issues.push({
+        rowIndex,
+        sourceIndex,
+        code: "PERSON_SEX_UNRECOGNIZED",
+        message: `Sexo del titular no reconocido ("${holderSexRaw}") — se deja como No especificado.`,
+        severity: "WARNING",
+      });
+    }
 
     const spouseFirstRaw = cell(record, COL.CONYUGUE_NOMBRE);
     const spouseLastRaw = cell(record, COL.CONYUGUE_APELLIDO);
+    const spouseSexRaw = cell(record, COL.CONYUGUE_SEXO);
     let spouse: PersonSourceData | null = null;
     if (spouseFirstRaw || spouseLastRaw) {
       spouse = buildPersonFromStructured(
         spouseFirstRaw,
         spouseLastRaw,
         cell(record, COL.CONYUGUE_DOB),
+        spouseSexRaw,
         cell(record, COL.CONYUGUE_EMAIL),
         cell(record, COL.CONYUGUE_TELEFONO),
         cell(record, COL.CONYUGUE_SSN),
@@ -197,6 +216,15 @@ export function parseSourceRecords(records: Record<string, string>[]): ParsedSou
         cell(record, COL.CONYUGUE_COVERED),
         `${spouseFirstRaw} ${spouseLastRaw}`
       );
+      if (spouse && spouseSexRaw && mapPersonSex(spouseSexRaw)?.recognized === false) {
+        issues.push({
+          rowIndex,
+          sourceIndex,
+          code: "PERSON_SEX_UNRECOGNIZED",
+          message: `Sexo del cónyuge no reconocido ("${spouseSexRaw}") — se deja como No especificado.`,
+          severity: "WARNING",
+        });
+      }
       if (!spouse) {
         issues.push({
           rowIndex,
@@ -219,6 +247,7 @@ export function parseSourceRecords(records: Record<string, string>[]): ParsedSou
         split.firstName,
         split.lastName,
         cell(record, dependentCol(n, "FECHA DE NACIMIENTO")),
+        "", // el CSV real no trae SEXO por dependiente — nunca se infiere
         "",
         "",
         cell(record, dependentCol(n, "NUMERO DE SEGURIDAD SOCIAL")),

@@ -8,6 +8,7 @@ export type PersonSourceData = {
   lastName: string;
   displayName: string; // NOMBRE Y APELLIDO tal cual, solo para desambiguar en warnings sin PII estructurada
   dateOfBirth: Date | null;
+  sex: "MALE" | "FEMALE" | "OTHER" | "UNKNOWN"; // Fase 024 (Hallazgo #1) — nunca inferido, solo del source
   email: string | null;
   phone: string | null;
   ssn: string | null; // SENSIBLE — normalizado a 9 dígitos, o null
@@ -67,6 +68,7 @@ export type PersonPlanEntry = {
     firstName: string;
     lastName: string;
     dateOfBirth: Date | null;
+    sex: "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
     email: string | null;
     phone: string | null;
   };
@@ -116,6 +118,11 @@ export type PolicyPlanEntry = {
   coveredMembers: { matchKey: string; role: "SPOUSE" | "DEPENDENT" }[];
   note: string | null;
   previousPolicySourceIndex: string | null; // heurística de renovación, resuelto en build-plan
+  // Fase 024, Parte C: true si esta póliza HEALTH planYear=2025 fue
+  // normalizada a CANCELLED por la regla de este import (no una
+  // decisión real del negocio) — solo para trazabilidad en el reporte,
+  // nunca cambia el comportamiento del resto de la app.
+  normalizedHealth2025: boolean;
 };
 
 export type ImportPlan = {
@@ -139,5 +146,8 @@ export type ImportPlan = {
     sensitiveIdentitiesToImport: number;
     uscisToImport: number;
     notesToImport: number;
+    sex: { MALE: number; FEMALE: number; OTHER: number; UNKNOWN: number };
+    healthPolicies2025NormalizedToCancelled: number;
+    productsByPolicyType: Record<string, number>;
   };
 };

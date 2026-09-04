@@ -149,6 +149,37 @@ export function comparePolicyChronology<T extends { effectiveDate: Date; operati
   return 0;
 }
 
+// Fase 024 (Hallazgo #1): sexo/género — normalización deliberadamente
+// conservadora. El book real usa MUJER/HOMBRE (español), pero se
+// aceptan también las variantes en inglés/abreviadas que trae la ficha
+// como ejemplo, por si un futuro import las usa. Cualquier valor no
+// reconocido -> UNKNOWN + advertencia (nunca se adivina, nunca se
+// infiere del nombre).
+export type PersonSexValue = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
+
+const SEX_MAP: Record<string, PersonSexValue> = {
+  MUJER: "FEMALE",
+  FEMENINO: "FEMALE",
+  FEMALE: "FEMALE",
+  F: "FEMALE",
+  HOMBRE: "MALE",
+  MASCULINO: "MALE",
+  MALE: "MALE",
+  M: "MALE",
+  OTRO: "OTHER",
+  OTHER: "OTHER",
+};
+
+// null = source vacío (no es una advertencia, simplemente no hay dato).
+// "UNKNOWN" explícito solo se devuelve para un valor NO vacío pero no
+// reconocido — el caller decide si eso amerita un warning.
+export function mapPersonSex(raw: string): { value: PersonSexValue; recognized: boolean } | null {
+  const key = normalizeForMatch(raw);
+  if (key === "") return null;
+  const mapped = SEX_MAP[key];
+  return mapped ? { value: mapped, recognized: true } : { value: "UNKNOWN", recognized: false };
+}
+
 // Monto en dólares desde texto de source ("$1,234.50", "1234.5", "",
 // "N/A") -> number o null si no es un monto real. No se usa Decimal
 // aquí (el import trabaja en memoria); apply-plan.ts convierte a

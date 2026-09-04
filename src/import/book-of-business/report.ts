@@ -27,6 +27,9 @@ export type ImportReport = {
   blockingErrors: { sourceIndex: string; code: string; message: string }[];
   statusCounts: Record<string, number>;
   carrierCounts: Record<string, number>;
+  sexCounts: { MALE: number; FEMALE: number; OTHER: number; UNKNOWN: number };
+  healthPolicies2025NormalizedToCancelled: number;
+  productsByPolicyType: Record<string, number>;
 };
 
 export function buildImportReport(plan: ImportPlan, applyResult: ApplyResult | null): ImportReport {
@@ -72,5 +75,8 @@ export function buildImportReport(plan: ImportPlan, applyResult: ApplyResult | n
     blockingErrors,
     statusCounts,
     carrierCounts,
+    sexCounts: plan.counts.sex,
+    healthPolicies2025NormalizedToCancelled: plan.counts.healthPolicies2025NormalizedToCancelled,
+    productsByPolicyType: plan.counts.productsByPolicyType,
   };
 }

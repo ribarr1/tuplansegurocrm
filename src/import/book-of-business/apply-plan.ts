@@ -185,6 +185,7 @@ export async function applyImportPlan(
             firstName: p.data.firstName,
             lastName: p.data.lastName,
             dateOfBirth: p.data.dateOfBirth,
+            sex: p.data.sex,
             email: p.data.email,
             phone: p.data.phone,
             contactStatus: "PROSPECT", // Hallazgo #2 de Fase 022: nunca CLIENT directo, recomputePersonContactStatus decide después

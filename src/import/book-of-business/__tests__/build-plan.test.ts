@@ -122,4 +122,70 @@ describe("book-of-business build-plan", () => {
     const result = await plan([{ ...HOLDER_ROW, "FECHA DE INICIO": "01/01/2027" }]);
     expect(result.policies[0].planYear).toBe(2027);
   });
+
+  // Fase 024 (Hallazgo #1): Person.sex en build-plan.
+  it("importa el sexo del titular desde TITULAR SEXO", async () => {
+    const result = await plan([{ ...HOLDER_ROW, "TITULAR SEXO": "Mujer" }]);
+    expect(result.persons[0].data.sex).toBe("FEMALE");
+  });
+
+  it("sex nunca es identidad fuerte de dedup: la misma persona con sex distinto en dos filas no duplica", async () => {
+    const row1 = { ...HOLDER_ROW, "TITULAR SEXO": "Hombre" };
+    const row2 = { ...HOLDER_ROW, INDEX: "10002", "FECHA DE INICIO": "01/01/2027", "TITULAR SEXO": "Mujer" };
+    const result = await plan([row1, row2]);
+    expect(result.persons.filter((p) => p.outcome === "NEW")).toHaveLength(1);
+    expect(result.issues.some((i) => i.code === "PERSON_SEX_CONFLICT")).toBe(true);
+  });
+
+  it("una fila sin sex y otra con sex conocido: se conserva el conocido, sin advertencia", async () => {
+    const row1 = { ...HOLDER_ROW, "TITULAR SEXO": "" };
+    const row2 = { ...HOLDER_ROW, INDEX: "10002", "FECHA DE INICIO": "01/01/2027", "TITULAR SEXO": "Mujer" };
+    const result = await plan([row1, row2]);
+    expect(result.persons[0].data.sex).toBe("FEMALE");
+    expect(result.issues.some((i) => i.code === "PERSON_SEX_CONFLICT")).toBe(false);
+  });
+
+  it("sin dato de sexo, la persona queda UNKNOWN (nunca se infiere del nombre)", async () => {
+    const result = await plan([HOLDER_ROW]);
+    expect(result.persons[0].data.sex).toBe("UNKNOWN");
+  });
+
+  // Fase 024, Parte C: normalización de pólizas HEALTH 2025.
+  it("una póliza HEALTH 2025 PROCESADA se normaliza a CANCELLED con terminationDate 2025-12-31", async () => {
+    const result = await plan([{ ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2025", ESTATUS: "PROCESADA" }]);
+    expect(result.policies[0].status).toBe("CANCELLED");
+    expect(result.policies[0].terminationDate).toEqual(new Date(Date.UTC(2025, 11, 31)));
+    expect(result.policies[0].normalizedHealth2025).toBe(true);
+    expect(result.issues.some((i) => i.code === "HEALTH_2025_NORMALIZED_TO_CANCELLED")).toBe(true);
+  });
+
+  it("una póliza 2025 ya CANCELADA en el source no genera warning de normalización (no cambió nada)", async () => {
+    const result = await plan([{ ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2025", ESTATUS: "CANCELADA" }]);
+    expect(result.policies[0].status).toBe("CANCELLED");
+    expect(result.issues.some((i) => i.code === "HEALTH_2025_NORMALIZED_TO_CANCELLED")).toBe(false);
+  });
+
+  it("una póliza 2026 nunca se normaliza (la regla es exclusiva de 2025)", async () => {
+    const result = await plan([{ ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2026", ESTATUS: "PROCESADA" }]);
+    expect(result.policies[0].status).toBe("ACTIVE");
+    expect(result.policies[0].terminationDate).toBeNull();
+    expect(result.policies[0].normalizedHealth2025).toBe(false);
+  });
+
+  it("counts.healthPolicies2025NormalizedToCancelled cuenta solo las filas realmente normalizadas", async () => {
+    const result = await plan([
+      { ...HOLDER_ROW, "FECHA DE INICIO": "03/01/2025", ESTATUS: "PROCESADA" },
+      {
+        ...HOLDER_ROW,
+        INDEX: "10002",
+        "TITULAR NOMBRE Y APELLIDO": "Otro Titular",
+        "TITULAR NOMBRE": "Otro",
+        "TITULAR APELLIDO": "Titular",
+        "TITULAR FECHA DE NACIMIENTO": "01/01/1990",
+        "FECHA DE INICIO": "03/01/2026",
+        ESTATUS: "PROCESADA",
+      },
+    ]);
+    expect(result.counts.healthPolicies2025NormalizedToCancelled).toBe(1);
+  });
 });

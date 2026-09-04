@@ -11,6 +11,7 @@ import {
   parseSourceDateMDY,
   parseSourceAmount,
   comparePolicyChronology,
+  mapPersonSex,
 } from "../normalize";
 
 describe("book-of-business normalize", () => {
@@ -96,6 +97,36 @@ describe("book-of-business normalize", () => {
     expect(parseSourceAmount("125")).toBe(125);
     expect(parseSourceAmount("")).toBeNull();
     expect(parseSourceAmount("N/A")).toBeNull();
+  });
+
+  // Fase 024 (Hallazgo #1): Person.sex.
+  it("mapea sexo fuente (español, el que trae el book real) a MALE/FEMALE", () => {
+    expect(mapPersonSex("MUJER")).toEqual({ value: "FEMALE", recognized: true });
+    expect(mapPersonSex("Hombre")).toEqual({ value: "MALE", recognized: true });
+  });
+
+  it("mapea también variantes en inglés/abreviadas", () => {
+    expect(mapPersonSex("FEMALE")).toEqual({ value: "FEMALE", recognized: true });
+    expect(mapPersonSex("male")).toEqual({ value: "MALE", recognized: true });
+    expect(mapPersonSex("F")).toEqual({ value: "FEMALE", recognized: true });
+    expect(mapPersonSex("m")).toEqual({ value: "MALE", recognized: true });
+    expect(mapPersonSex("Otro")).toEqual({ value: "OTHER", recognized: true });
+  });
+
+  it("un valor de sexo vacío es null (no una advertencia)", () => {
+    expect(mapPersonSex("")).toBeNull();
+    expect(mapPersonSex("   ")).toBeNull();
+  });
+
+  it("un valor de sexo no reconocido es UNKNOWN pero marcado recognized:false (para poder advertir)", () => {
+    expect(mapPersonSex("NO BINARIO XYZ")).toEqual({ value: "UNKNOWN", recognized: false });
+  });
+
+  it("nunca infiere sexo del nombre — mapPersonSex solo lee el valor fuente explícito", () => {
+    // No hay ninguna heurística de nombre en mapPersonSex: mismo
+    // comportamiento sin importar qué nombre acompañe al valor, porque
+    // la función ni siquiera recibe el nombre como argumento.
+    expect(mapPersonSex("HOMBRE")).toEqual({ value: "MALE", recognized: true });
   });
 
   it("orden cronológico: NEW_ENROLLMENT precede a RENEWAL/REPLACEMENT en la misma fecha", () => {

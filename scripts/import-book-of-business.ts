@@ -120,11 +120,30 @@ async function main() {
   console.log("Reset completo.");
 
   // --- 7) apply ---
+  // El plan de arriba se construyó ANTES del wipe — su dedup de
+  // personas (buildImportPlan) consultó la DB tal como estaba entonces
+  // y puede haber marcado personas como MATCHED_EXISTING contra filas
+  // que el wipe recién borró. Aplicar ESE plan directamente violaría
+  // FKs (personId apuntando a una Person que ya no existe). Se
+  // reconstruye el plan una segunda vez, ahora contra la DB ya vacía
+  // de negocio — determinista, mismo input, mismo resultado salvo que
+  // ahora toda persona sale NEW en vez de MATCHED_EXISTING (§42,
+  // idempotencia). Esto también revalida "0 errores BLOCKING" contra
+  // el estado real que se va a escribir, no uno obsoleto.
+  console.log("Reconstruyendo el plan contra la base ya reseteada (evita FKs a personas ya borradas)...");
+  const postWipePlan = await buildImportPlan(sourceRows, parseIssues, carrierCatalog.records);
+  if (!postWipePlan.readyToImport) {
+    console.error("El plan post-wipe tiene errores BLOCKING inesperados — deteniéndose sin aplicar.");
+    console.error(JSON.stringify(buildImportReport(postWipePlan, null).blockingErrors, null, 2));
+    process.exitCode = 1;
+    return;
+  }
+
   console.log("Aplicando el plan de import...");
   const carrierNames = carrierCatalog.records.map((c) => c.name);
-  const applyResult = await applyImportPlan(plan, carrierNames);
+  const applyResult = await applyImportPlan(postWipePlan, carrierNames);
 
-  const finalReport = buildImportReport(plan, applyResult);
+  const finalReport = buildImportReport(postWipePlan, applyResult);
   fs.writeFileSync(REPORT_PATH, JSON.stringify(finalReport, null, 2));
   console.log(JSON.stringify(finalReport, null, 2));
   console.log(`\nImport aplicado. Reporte (sin PII) escrito en ${REPORT_PATH}.`);

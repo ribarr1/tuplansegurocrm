@@ -139,4 +139,57 @@ describe("book-of-business apply-plan (integración)", () => {
     // Sin PolicyMember activo -> nunca pasa a CLIENT.
     expect(person!.contactStatus).toBe("PROSPECT");
   });
+
+  it("Hallazgo #1 (Fase 024): el sexo se persiste en Person.sex", async () => {
+    const row: FixtureRow = {
+      ...HOLDER_ROW,
+      INDEX: "50003",
+      "TITULAR NOMBRE Y APELLIDO": "Applyfixture Sexo",
+      "TITULAR NOMBRE": "Applyfixture",
+      "TITULAR APELLIDO": "Sexo",
+      "TITULAR FECHA DE NACIMIENTO": "02/02/1980",
+      "TITULAR SEXO": "Mujer",
+      "TITULAR NUMERO DE SEGURIDAD SOCIAL": "",
+      "TITULAR USCIS#": "",
+      "TITULAR TIPO DE DOCUMENTO": "",
+      OBSERVACIONES: "",
+    };
+    await applyFixture([row]);
+    const person = await prisma.person.findFirst({
+      where: { firstName: "Applyfixture", lastName: "Sexo" },
+      select: { sex: true },
+    });
+    expect(person?.sex).toBe("FEMALE");
+  });
+
+  it("Fase 024, Parte C: una póliza HEALTH 2025 normalizada a CANCELLED nunca convierte al titular en CLIENT", async () => {
+    const row: FixtureRow = {
+      ...HOLDER_ROW,
+      INDEX: "50004",
+      "TITULAR NOMBRE Y APELLIDO": "Applyfixture Historico2025",
+      "TITULAR NOMBRE": "Applyfixture",
+      "TITULAR APELLIDO": "Historico2025",
+      "TITULAR FECHA DE NACIMIENTO": "03/03/1975",
+      "FECHA DE INICIO": "01/01/2025",
+      ESTATUS: "PROCESADA",
+      "TITULAR NUMERO DE SEGURIDAD SOCIAL": "",
+      "TITULAR USCIS#": "",
+      "TITULAR TIPO DE DOCUMENTO": "",
+      OBSERVACIONES: "",
+    };
+    await applyFixture([row]);
+
+    const person = await prisma.person.findFirst({
+      where: { firstName: "Applyfixture", lastName: "Historico2025" },
+      select: { contactStatus: true },
+    });
+    expect(person?.contactStatus).toBe("PROSPECT");
+
+    const policy = await prisma.policy.findFirst({
+      where: { holder: { firstName: "Applyfixture", lastName: "Historico2025" } },
+      select: { status: true, terminationDate: true },
+    });
+    expect(policy?.status).toBe("CANCELLED");
+    expect(policy?.terminationDate?.toISOString().slice(0, 10)).toBe("2025-12-31");
+  });
 });
