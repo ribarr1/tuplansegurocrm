@@ -302,6 +302,20 @@ Base de datos LOCAL/DEV reiniciada por completo antes de esta ronda — usar dat
 - [ ] Revisar visualmente: sidebar azul marino con el logo existente, tipografía Playfair Display en los títulos principales, acento dorado solo en alertas/vencimientos — confirmar que ninguna funcionalidad, ruta ni permiso cambió respecto a antes del rediseño.
 - [ ] Revisar la consola del navegador en las páginas con filtros (Tareas, Pólizas, Comisiones, Primas, Contactos, Cumpleaños, Reportes) — confirmar ausencia de advertencias de Base UI sobre "uncontrolled FieldControl".
 
+## 38. Cierre de UAT final y libro de negocio real (Fase 023)
+
+La base DEV/local ahora contiene el libro de negocio REAL (clientes/familias/pólizas/identidad sensible). Usar esta lista con cuidado — los datos visibles son reales, no ficticios.
+
+- [ ] Un documento migratorio nuevo (Permanent Resident Card / EAD / Otro) sin número — confirmar que el formulario lo bloquea (campo requerido) y que el servidor también lo rechaza si se manipula la petición.
+- [ ] Abrir Contactos → cualquier contacto → Editar — confirmar que carga sin 404 y que guardar cambios funciona.
+- [ ] Abrir Pólizas → una póliza de Salud → Editar información de salud — confirmar que carga sin 404.
+- [ ] Configuración → Productos → Editar un producto real — confirmar que carga sin 404.
+- [ ] En Editar póliza, escribir una fecha de "Próximo pago" anterior a la fecha efectiva y guardar — confirmar que el mensaje de error aparece debajo del campo (no solo en consola) y que los demás valores del formulario no se pierden.
+- [ ] Reportes → Clientes: confirmar que la cartera real se ve completa, con categorías migratorias y hogares correctos.
+- [ ] Abrir un contacto real con SSN registrado, pulsar "Mostrar" — confirmar reveal y "Ocultar" después. Repetir con USCIS/A-Number.
+- [ ] Confirmar que ningún contacto importado tiene un documento migratorio con "Número: —" (documentos sin número nunca deberían haberse creado en este import).
+- [ ] Revisar la consola del navegador en varias páginas — confirmar ausencia de errores/warnings.
+
 ---
 
 **Si algo de esta lista falla o se ve distinto a lo esperado, anótalo con la mayor cantidad de detalle posible (qué se hizo, qué se esperaba, qué pasó) antes de continuar con los siguientes pasos del proyecto** (creación de usuarios reales, resolución de bloqueos de importación, segundo dry run, autorización de `--apply`).

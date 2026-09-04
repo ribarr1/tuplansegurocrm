@@ -161,3 +161,7 @@ Todo `apply.ts` corre dentro de **una sola** `prisma.$transaction(...)` — pref
 - Nunca se serializa `plan.persons[].data` (nombre/email/teléfono/DOB) al reporte JSON — solo conteos agregados (`counts.persons.{NEW,MATCHED,AMBIGUOUS}`).
 - `ImportIssue.message` se redacta a mano en cada punto de emisión — nunca interpola el valor crudo de una celda, solo códigos/nombres de columna/números de fila.
 - Verificado en tests (`import.test.ts`, casos V/W/X/AH): el plan y el reporte JSON serializados nunca contienen los valores de fixture usados para SSN/banco/credenciales.
+
+## Relación con el importador del libro de negocio real (Fase 023)
+
+Este pipeline (Fase 019) y `src/import/book-of-business/` + `scripts/import-book-of-business.ts` (Fase 023) son **dos pipelines de import completamente separados, deliberadamente**: mapean columnas de dos formatos de origen distintos (el Excel legacy de esta fase vs. el CSV real exportado del libro de negocio actual, con nombres de columna diferentes — ver `docs/DECISIONS.md`, sección "Importador del libro de negocio real"). No comparten código de mapeo, aunque siguen el mismo principio rector (dry-run por defecto, `--apply` requiere flags explícitos, nunca `CSV → prisma.create()` directo, reporte sin PII). El de Fase 023 es el que efectivamente se usó para cargar los datos reales de negocio a la base DEV/local — este documento (Fase 019) describe el pipeline original, mantenido por si se necesita importar un Excel con ese formato específico en el futuro.
