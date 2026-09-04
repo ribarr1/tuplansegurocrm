@@ -1078,6 +1078,59 @@ describe("policies.service", () => {
     );
   });
 
+  // Fase 025.1 (Hallazgo #1 de UAT): encontrado con datos reales — una
+  // renovación (previousPolicyId apuntando a la póliza anterior, que
+  // seguía ACTIVE por no haberse cancelado) se activaba automáticamente
+  // (ej. vía el lifecycle job) y updatePolicy rechazaba la activación
+  // por "solapamiento" contra su propia predecesora — la misma
+  // cobertura conceptual, nunca una simultánea real.
+  it("updatePolicy nunca rechaza por solapamiento contra la predecesora de una renovación (previousPolicyId)", async () => {
+    const holder = await makePerson();
+    const original = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-01-01"),
+        // Sin terminationDate: cobertura abierta — el peor caso para
+        // solapamiento, la predecesora "cubre" cualquier fecha futura.
+      })
+    );
+    const renewal = trackPolicy(
+      await renewPolicy(admin, original.id, {
+        productId: activeProductId,
+        holderCovered: "true",
+        status: "PENDING",
+        effectiveDate: new Date("2026-06-01"),
+      })
+    );
+    const renewalRow = await prisma.policy.findUniqueOrThrow({ where: { id: renewal.id } });
+    expect(renewalRow.previousPolicyId).toBe(original.id);
+
+    // Activar la renovación (mismo camino que el lifecycle job) NO debe
+    // rechazarse por solapamiento contra `original`, que sigue ACTIVE.
+    const activated = await updatePolicy(admin, renewal.id, { status: "ACTIVE" });
+    expect(activated.status).toBe("ACTIVE");
+
+    // La predecesora, en cambio, SÍ debe seguir detectando un
+    // solapamiento real contra una tercera póliza independiente.
+    const carrier2 = await prisma.carrier.create({ data: { name: `OtroCarrier ${Date.now()}` } });
+    createdExtraCarrierIds.push(carrier2.id);
+    const product2 = await prisma.product.create({
+      data: { carrierId: carrier2.id, name: "Otro Plan HEALTH", policyType: "HEALTH" },
+    });
+    await expect(
+      createPolicy(admin, {
+        holderId: holder.id,
+        productId: product2.id,
+        holderCovered: "true",
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-02-01"),
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
   it("después de cancelar una póliza, sigue siendo posible crear una póliza NUEVA para el mismo titular (no una renovación)", async () => {
     const holder = await makePerson();
     const cancelledPolicy = trackPolicy(
@@ -1307,6 +1360,31 @@ describe("policies.service", () => {
     );
     await updatePolicy(admin, policy.id, { paymentManagementMode: "ASSISTED" });
     const row = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id } });
+    expect(row.paymentManagementMode).toBe("ASSISTED");
+    expect(row.autopay).toBe(false);
+    expect(row.needsPaymentAssistance).toBe(true);
+  });
+
+  // Fase 025.1 (Hallazgo #3 de UAT, item 19): renewPolicy (una póliza
+  // NUEVA) también deriva los mirrors legacy centralmente.
+  it("renewPolicy deriva autopay/needsPaymentAssistance a partir de paymentManagementMode", async () => {
+    const holder = await makePerson();
+    const original = trackPolicy(
+      await createPolicy(admin, {
+        holderId: holder.id,
+        productId: activeProductId,
+        holderCovered: "true",
+        paymentManagementMode: "CLIENT_MANAGED",
+      })
+    );
+    const renewal = trackPolicy(
+      await renewPolicy(admin, original.id, {
+        productId: activeProductId,
+        holderCovered: "true",
+        paymentManagementMode: "ASSISTED",
+      })
+    );
+    const row = await prisma.policy.findUniqueOrThrow({ where: { id: renewal.id } });
     expect(row.paymentManagementMode).toBe("ASSISTED");
     expect(row.autopay).toBe(false);
     expect(row.needsPaymentAssistance).toBe(true);
@@ -1723,5 +1801,190 @@ describe("policies.service", () => {
         })
       );
     });
+  });
+});
+
+// Fase 025.1 (Hallazgo #2 de UAT): default de terminationDate para
+// pólizas HEALTH = 31/12 del planYear real del Product, nunca el año
+// del servidor. Usa productos propios con planYear explícito (a
+// diferencia del fixture principal activeProductId, que lo deja null
+// a propósito para no afectar el resto de la suite).
+describe("policies.service — Hallazgo #2 de UAT (Fase 025.1): terminationDate default para HEALTH", () => {
+  let admin: AuthorizedUser;
+  let carrierId: string;
+  const createdProductIds: string[] = [];
+  const createdPersonIds: string[] = [];
+  const createdPolicyIds: string[] = [];
+
+  beforeAll(async () => {
+    const user = await prisma.user.create({
+      data: { name: "Admin HealthTerm", email: `admin.healthterm.${Date.now()}@test.local`, role: "ADMIN", isActive: true },
+    });
+    admin = { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+    const carrier = await prisma.carrier.create({ data: { name: `HealthTerm Carrier ${Date.now()}` } });
+    carrierId = carrier.id;
+  });
+
+  afterAll(async () => {
+    await prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
+    await prisma.policy.updateMany({ where: { id: { in: createdPolicyIds } }, data: { previousPolicyId: null } });
+    await prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } });
+    await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
+    await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
+    await prisma.carrier.deleteMany({ where: { id: carrierId } });
+    await prisma.user.delete({ where: { id: admin.id } });
+  });
+
+  async function makeHealthProduct(planYear: number) {
+    const product = await prisma.product.create({
+      data: {
+        carrierId,
+        name: `Plan HEALTH ${planYear} ${Date.now()}${Math.random().toString(36).slice(2)}`,
+        policyType: "HEALTH",
+        planYear,
+      },
+    });
+    createdProductIds.push(product.id);
+    return product.id;
+  }
+
+  async function makePersonHT() {
+    const person = await prisma.person.create({
+      data: { firstName: "HealthTerm", lastName: `Person${Date.now()}${Math.random().toString(36).slice(2)}`, contactStatus: "PROSPECT" },
+    });
+    createdPersonIds.push(person.id);
+    return person;
+  }
+
+  it("4) HEALTH planYear=2025 sin terminationDate por defecto -> 2025-12-31", async () => {
+    const productId = await makeHealthProduct(2025);
+    const person = await makePersonHT();
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2025-01-01",
+    });
+    createdPolicyIds.push(policy.id);
+    expect(policy.terminationDate?.toISOString().slice(0, 10)).toBe("2025-12-31");
+  });
+
+  it("5) HEALTH planYear=2026 sin terminationDate por defecto -> 2026-12-31", async () => {
+    const productId = await makeHealthProduct(2026);
+    const person = await makePersonHT();
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+    });
+    createdPolicyIds.push(policy.id);
+    expect(policy.terminationDate?.toISOString().slice(0, 10)).toBe("2026-12-31");
+  });
+
+  it("6) HEALTH planYear=2027 sin terminationDate por defecto -> 2027-12-31", async () => {
+    const productId = await makeHealthProduct(2027);
+    const person = await makePersonHT();
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2027-01-01",
+    });
+    createdPolicyIds.push(policy.id);
+    expect(policy.terminationDate?.toISOString().slice(0, 10)).toBe("2027-12-31");
+  });
+
+  it("7) una terminationDate explícita del usuario nunca se sobrescribe con el default", async () => {
+    const productId = await makeHealthProduct(2026);
+    const person = await makePersonHT();
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+      terminationDate: "2026-08-15",
+    });
+    createdPolicyIds.push(policy.id);
+    expect(policy.terminationDate?.toISOString().slice(0, 10)).toBe("2026-08-15");
+  });
+
+  it("8) una cancelación anticipada real (vía cancelPolicy) se conserva, nunca se reemplaza por 12/31", async () => {
+    const productId = await makeHealthProduct(2026);
+    const person = await makePersonHT();
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+    });
+    createdPolicyIds.push(policy.id);
+    // Al crear, ya quedó en 2026-12-31 (default) — cancelPolicy con una
+    // fecha anticipada real debe ganarle a ese default.
+    const cancelled = await cancelPolicy(admin, policy.id, { terminationDate: "2026-05-15" });
+    expect(cancelled.terminationDate?.toISOString().slice(0, 10)).toBe("2026-05-15");
+  });
+
+  it("renewPolicy también aplica el default de terminationDate para HEALTH", async () => {
+    const productId = await makeHealthProduct(2027);
+    const person = await makePersonHT();
+    const original = await createPolicy(admin, {
+      holderId: person.id,
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2026-01-01",
+      terminationDate: "2026-12-31",
+    });
+    createdPolicyIds.push(original.id);
+
+    const renewal = await renewPolicy(admin, original.id, {
+      productId,
+      holderCovered: "true",
+      status: "ACTIVE",
+      effectiveDate: "2027-01-01",
+    });
+    createdPolicyIds.push(renewal.id);
+    expect(renewal.terminationDate?.toISOString().slice(0, 10)).toBe("2027-12-31");
+  });
+
+  it("updatePolicy: cambiar de producto (planYear distinto) mientras PENDING recalcula la fecha sugerida no personalizada", async () => {
+    const productA = await makeHealthProduct(2026);
+    const productB = await makeHealthProduct(2027);
+    const person = await makePersonHT();
+    // PENDING sin effectiveDate/terminationDate todavía.
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId: productA,
+      holderCovered: "true",
+      effectiveDate: "2026-06-01",
+    });
+    createdPolicyIds.push(policy.id);
+    expect(policy.terminationDate?.toISOString().slice(0, 10)).toBe("2026-12-31");
+
+    const updated = await updatePolicy(admin, policy.id, { productId: productB });
+    expect(updated.terminationDate?.toISOString().slice(0, 10)).toBe("2027-12-31");
+  });
+
+  it("updatePolicy: cambiar de producto NUNCA sobrescribe una terminationDate personalizada por el usuario", async () => {
+    const productA = await makeHealthProduct(2026);
+    const productB = await makeHealthProduct(2027);
+    const person = await makePersonHT();
+    const policy = await createPolicy(admin, {
+      holderId: person.id,
+      productId: productA,
+      holderCovered: "true",
+      effectiveDate: "2026-06-01",
+      terminationDate: "2026-09-30",
+    });
+    createdPolicyIds.push(policy.id);
+
+    const updated = await updatePolicy(admin, policy.id, { productId: productB });
+    expect(updated.terminationDate?.toISOString().slice(0, 10)).toBe("2026-09-30");
   });
 });

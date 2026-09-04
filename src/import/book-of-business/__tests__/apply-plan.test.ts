@@ -99,6 +99,32 @@ describe("book-of-business apply-plan (integración)", () => {
     expect(member?.role).toBe("PRIMARY");
   });
 
+  // Fase 025.1 (Hallazgo #3 de UAT, item 20): el importador escribe
+  // paymentManagementMode y sus mirrors legacy de forma consistente —
+  // nunca autopay=true y needsPaymentAssistance=true simultáneamente.
+  it("los mirrors legacy (autopay/needsPaymentAssistance) siempre coinciden con paymentManagementMode", async () => {
+    const person = await prisma.person.findFirst({
+      where: { firstName: "Applyfixture", lastName: "Holder" },
+      select: { id: true },
+    });
+    const policy = await prisma.policy.findFirst({
+      where: { holderId: person!.id },
+      select: { paymentManagementMode: true, autopay: true, needsPaymentAssistance: true },
+    });
+    expect(policy).not.toBeNull();
+    expect(policy!.autopay && policy!.needsPaymentAssistance).toBe(false);
+    if (policy!.paymentManagementMode === "AUTOPAY") {
+      expect(policy!.autopay).toBe(true);
+      expect(policy!.needsPaymentAssistance).toBe(false);
+    } else if (policy!.paymentManagementMode === "ASSISTED") {
+      expect(policy!.autopay).toBe(false);
+      expect(policy!.needsPaymentAssistance).toBe(true);
+    } else {
+      expect(policy!.autopay).toBe(false);
+      expect(policy!.needsPaymentAssistance).toBe(false);
+    }
+  });
+
   it("el SSN y el USCIS se guardan cifrados, nunca en texto plano en la DB", async () => {
     const person = await prisma.person.findFirst({
       where: { firstName: "Applyfixture", lastName: "Holder" },

@@ -96,7 +96,7 @@ export const clientReportSelect = {
       status: true,
       effectiveDate: true,
       terminationDate: true,
-      needsPaymentAssistance: true,
+      paymentManagementMode: true,
       product: { select: { policyType: true, carrier: { select: { name: true } } } },
     },
   },

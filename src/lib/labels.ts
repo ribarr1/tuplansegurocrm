@@ -187,6 +187,22 @@ export const POLICY_BUSINESS_SOURCE_LABELS: Record<PolicyBusinessSource, string>
   UNKNOWN: "Sin clasificar",
 };
 
+// Fase 025.1 (Hallazgo #3 de UAT): paymentManagementMode es la ÚNICA
+// fuente de verdad operacional para "Autopay"/"Asistencia" — estas dos
+// funciones centralizan ese mapeo (nunca leer autopay/
+// needsPaymentAssistance directamente para decidir qué mostrar en una
+// lista/tabla operativa; esos booleanos solo existen como espejo
+// derivado para consultas/filtros heredados, ver docs/DECISIONS.md).
+// No existe combinación válida de "Autopay: Sí" + "Requiere
+// asistencia" porque ambas se derivan del mismo valor único.
+export function paymentModeAutopayLabel(mode: PaymentManagementMode): "Sí" | "No" {
+  return mode === "AUTOPAY" ? "Sí" : "No";
+}
+
+export function paymentModeShowsAssistanceBadge(mode: PaymentManagementMode): boolean {
+  return mode === "ASSISTED";
+}
+
 export const CLIENT_PORTAL_TYPE_LABELS: Record<ClientPortalType, string> = {
   CARRIER: "Compañía",
   MARKETPLACE: "Marketplace",

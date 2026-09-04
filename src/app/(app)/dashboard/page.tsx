@@ -17,6 +17,7 @@ import {
   PAYMENT_STATUS_LABELS,
   BIRTHDAY_GREETING_STATUS_LABELS,
   BIRTHDAY_GREETING_STATUS_BADGE_VARIANT,
+  paymentModeShowsAssistanceBadge,
 } from "@/lib/labels";
 
 function greeting(): string {
@@ -189,7 +190,9 @@ export default async function DashboardPage() {
                     {item.paymentStatus && (
                       <Badge variant="outline">{PAYMENT_STATUS_LABELS[item.paymentStatus as keyof typeof PAYMENT_STATUS_LABELS]}</Badge>
                     )}
-                    {item.needsPaymentAssistance && <Badge variant="secondary">Asistencia</Badge>}
+                    {paymentModeShowsAssistanceBadge(item.paymentManagementMode) && (
+                      <Badge variant="secondary">Asistencia</Badge>
+                    )}
                     {item.isOverdue && <Badge variant="destructive">Vencida</Badge>}
                   </div>
                 </Link>

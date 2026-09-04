@@ -20,6 +20,7 @@ import {
   CONTACT_STATUS_BADGE_VARIANT,
   IMMIGRATION_CATEGORY_LABELS,
   POLICY_TYPE_LABELS,
+  paymentModeShowsAssistanceBadge,
 } from "@/lib/labels";
 import { CONTACT_STATUS_VALUES } from "@/schemas/person.schema";
 import { IMMIGRATION_CATEGORY_VALUES } from "@/schemas/sensitive-identity.schema";
@@ -309,7 +310,11 @@ export default async function ClientReportPage({
                           ? `${formatDateOnlyUS(primaryPolicy.effectiveDate)} – ${formatDateOnlyUS(primaryPolicy.terminationDate)}`
                           : "—"}
                       </TableCell>
-                      <TableCell>{primaryPolicy?.needsPaymentAssistance ? "Sí" : "—"}</TableCell>
+                      <TableCell>
+                        {primaryPolicy && paymentModeShowsAssistanceBadge(primaryPolicy.paymentManagementMode)
+                          ? "Sí"
+                          : "—"}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {person.lastActivity
                           ? `${person.lastActivity.summary} — ${formatDateTimeUS(person.lastActivity.createdAt)}`

@@ -10,7 +10,7 @@ import { toCsv } from "@/lib/csv";
 import { formatDateOnlyUS } from "@/lib/date-only";
 import { clientReportQuerySchema } from "@/schemas/reports.schema";
 import { buildClientReportWhere, clientReportSelect } from "@/services/reports.service";
-import { IMMIGRATION_CATEGORY_LABELS, POLICY_TYPE_LABELS } from "@/lib/labels";
+import { IMMIGRATION_CATEGORY_LABELS, POLICY_TYPE_LABELS, paymentModeShowsAssistanceBadge } from "@/lib/labels";
 
 // ---------------------------------------------------------------------------
 // Exportación CSV — Fase 020 (§1 de la ficha).
@@ -240,7 +240,7 @@ export async function exportClientReportCsv(actor: AuthorizedUser, rawQuery: unk
         primaryPolicy ? POLICY_TYPE_LABELS[primaryPolicy.product.policyType] : "",
         formatDateOnlyUS(primaryPolicy?.effectiveDate),
         formatDateOnlyUS(primaryPolicy?.terminationDate),
-        primaryPolicy?.needsPaymentAssistance ? "Sí" : "",
+        primaryPolicy && paymentModeShowsAssistanceBadge(primaryPolicy.paymentManagementMode) ? "Sí" : "",
       ];
     })
   );

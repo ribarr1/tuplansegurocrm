@@ -15,7 +15,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { BILLING_FREQUENCY_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/labels";
+import {
+  BILLING_FREQUENCY_LABELS,
+  PAYMENT_STATUS_LABELS,
+  paymentModeAutopayLabel,
+  paymentModeShowsAssistanceBadge,
+} from "@/lib/labels";
 import { PAYMENT_STATUS_VALUES } from "@/schemas/policy.schema";
 import { formatDateOnlyUS } from "@/lib/date-only";
 
@@ -262,9 +267,9 @@ export default async function PremiumsPage({
                         {item.isOverdue && <Badge variant="destructive">Vencida</Badge>}
                       </div>
                     </TableCell>
-                    <TableCell>{item.autopay ? "Sí" : "No"}</TableCell>
+                    <TableCell>{paymentModeAutopayLabel(item.paymentManagementMode)}</TableCell>
                     <TableCell>
-                      {item.needsPaymentAssistance ? (
+                      {paymentModeShowsAssistanceBadge(item.paymentManagementMode) ? (
                         <Badge variant="secondary">Requiere asistencia</Badge>
                       ) : (
                         "—"

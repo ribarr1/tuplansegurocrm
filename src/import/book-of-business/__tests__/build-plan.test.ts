@@ -195,3 +195,18 @@ describe("book-of-business build-plan", () => {
     expect(result.counts.healthPolicies2025NormalizedToExpired).toBe(1);
   });
 });
+
+// Fase 025.1 (Hallazgo #3 de UAT, item 20): el importador deriva
+// paymentManagementMode centralmente — nunca autopay/
+// needsPaymentAssistance de forma independiente.
+describe("book-of-business build-plan — mapeo de paymentManagementMode", () => {
+  it("ASISTENCIA = SI mapea a ASSISTED", async () => {
+    const result = await plan([{ ...HOLDER_ROW, ASISTENCIA: "SI" }]);
+    expect(result.policies[0].paymentManagementMode).toBe("ASSISTED");
+  });
+
+  it("sin ASISTENCIA mapea a CLIENT_MANAGED (nunca AUTOPAY por defecto)", async () => {
+    const result = await plan([{ ...HOLDER_ROW, ASISTENCIA: "" }]);
+    expect(result.policies[0].paymentManagementMode).toBe("CLIENT_MANAGED");
+  });
+});

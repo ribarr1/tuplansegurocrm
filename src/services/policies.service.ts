@@ -219,6 +219,25 @@ export function assertNextPaymentNotBeforeEffective(
   }
 }
 
+// Fase 025.1 (Hallazgo #2 de UAT): las pólizas HEALTH normalmente
+// terminan el 31 de diciembre de su plan year, salvo cancelación real
+// anticipada — sin este default, terminationDate quedaba en null
+// indefinidamente para pólizas que nunca la reciben explícitamente.
+// Usa Product.planYear (el año real del plan) y NUNCA el año del
+// servidor/reloj; si el producto no tiene planYear capturado (algunos
+// productos no anuales, ver docs/DECISIONS.md), cae de vuelta al año
+// de effectiveDate — todavía el "año real de la póliza", nunca "hoy".
+function healthDefaultTerminationDate(
+  policyType: string,
+  planYear: number | null,
+  effectiveDate: Date | null
+): Date | null {
+  if (policyType !== "HEALTH") return null;
+  const year = planYear ?? (effectiveDate ? effectiveDate.getUTCFullYear() : null);
+  if (year == null) return null;
+  return new Date(Date.UTC(year, 11, 31));
+}
+
 // Fase 022 (Hallazgo #6B de UAT): una PERSONA (nunca "el hogar") no
 // puede estar cubierta por dos pólizas de SALUD activas/operativas al
 // mismo tiempo con fechas solapadas. Otros miembros del mismo hogar
@@ -237,12 +256,25 @@ async function assertNoOverlappingHealthCoverage(
   personId: string,
   effectiveDate: Date,
   terminationDate: Date | null,
-  excludePolicyId?: string
+  excludePolicyId?: string | (string | null | undefined)[]
 ): Promise<void> {
+  // Fase 025.1 (Hallazgo #1 de UAT): excluir la póliza que se está
+  // editando NO basta cuando esa póliza participa en una cadena de
+  // renovación — su predecesora (previousPolicyId) o su renovación
+  // (renewedInto) es la MISMA cobertura conceptual, nunca una
+  // simultánea real, aunque técnicamente sean dos filas de Policy.
+  // Encontrado en datos reales de DEV: una póliza renovada que el
+  // lifecycle job activó automáticamente (PENDING -> ACTIVE) quedó
+  // solapando con su propia predecesora, que seguía ACTIVE por no
+  // haberse cancelado todavía — updatePolicy ahora excluye ambos
+  // extremos de la cadena, no solo el id editado.
+  const excludeIds = (Array.isArray(excludePolicyId) ? excludePolicyId : [excludePolicyId]).filter(
+    (v): v is string => Boolean(v)
+  );
   const candidates = await db.policyMember.findMany({
     where: {
       personId,
-      ...(excludePolicyId ? { policyId: { not: excludePolicyId } } : {}),
+      ...(excludeIds.length > 0 ? { policyId: { notIn: excludeIds } } : {}),
       policy: { status: "ACTIVE", product: { policyType: "HEALTH" } },
     },
     select: {
@@ -273,6 +305,7 @@ async function assertActiveProduct(productId: string) {
       isActive: true,
       policyType: true,
       carrierId: true,
+      planYear: true,
       carrier: { select: { isActive: true } },
     },
   });
@@ -516,7 +549,13 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
 
   const product = await assertActiveProduct(input.productId);
   assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);
-  assertTerminationNotBeforeEffective(input.effectiveDate ?? null, input.terminationDate ?? null);
+  // Fase 025.1 (Hallazgo #2 de UAT): terminationDate explícita del
+  // usuario SIEMPRE gana — el default de 12/31/planYear solo aplica
+  // cuando el campo se dejó en blanco.
+  const resolvedTerminationDate =
+    input.terminationDate ??
+    healthDefaultTerminationDate(product.policyType, product.planYear, input.effectiveDate ?? null);
+  assertTerminationNotBeforeEffective(input.effectiveDate ?? null, resolvedTerminationDate);
   assertNextPaymentNotBeforeEffective(input.effectiveDate ?? null, input.nextPaymentDueDate ?? null);
 
   // Ningún covered member puede declarar role=PRIMARY: ese rol está
@@ -557,12 +596,7 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
   // representa cobertura simultánea real.
   if (product.policyType === "HEALTH" && input.status === "ACTIVE") {
     for (const member of membersToCreate) {
-      await assertNoOverlappingHealthCoverage(
-        prisma,
-        member.personId,
-        input.effectiveDate!,
-        input.terminationDate ?? null
-      );
+      await assertNoOverlappingHealthCoverage(prisma, member.personId, input.effectiveDate!, resolvedTerminationDate);
     }
   }
 
@@ -578,7 +612,7 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
           policyNumber: input.policyNumber,
           status: input.status,
           effectiveDate: input.effectiveDate,
-          terminationDate: input.terminationDate,
+          terminationDate: resolvedTerminationDate,
           premiumAmount: input.premiumAmount,
           billingFrequency: input.billingFrequency,
           nextPaymentDueDate: input.nextPaymentDueDate,
@@ -679,7 +713,10 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
 
   const product = await assertActiveProduct(input.productId);
   assertActiveHasEffectiveDate(input.status, input.effectiveDate ?? null);
-  assertTerminationNotBeforeEffective(input.effectiveDate ?? null, input.terminationDate ?? null);
+  const resolvedTerminationDate =
+    input.terminationDate ??
+    healthDefaultTerminationDate(product.policyType, product.planYear, input.effectiveDate ?? null);
+  assertTerminationNotBeforeEffective(input.effectiveDate ?? null, resolvedTerminationDate);
   assertNextPaymentNotBeforeEffective(input.effectiveDate ?? null, input.nextPaymentDueDate ?? null);
 
   const personIds = input.coveredMembers.map((m) => m.personId);
@@ -721,7 +758,7 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
         prisma,
         member.personId,
         input.effectiveDate!,
-        input.terminationDate ?? null,
+        resolvedTerminationDate,
         oldPolicyId
       );
     }
@@ -739,7 +776,7 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
           policyNumber: input.policyNumber,
           status: input.status,
           effectiveDate: input.effectiveDate,
-          terminationDate: input.terminationDate,
+          terminationDate: resolvedTerminationDate,
           previousPolicyId: oldPolicyId,
           premiumAmount: input.premiumAmount,
           billingFrequency: input.billingFrequency,
@@ -806,6 +843,8 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       effectiveDate: true,
       terminationDate: true,
       productId: true,
+      previousPolicyId: true,
+      renewedInto: { select: { id: true } },
       policyNumber: true,
       premiumAmount: true,
       billingFrequency: true,
@@ -816,7 +855,7 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       paymentStatus: true,
       operationType: true,
       healthCoverageSource: true,
-      product: { select: { policyType: true } },
+      product: { select: { policyType: true, planYear: true } },
       holder: { select: { assignedAgentId: true } },
       members: { select: { personId: true, person: { select: { assignedAgentId: true } } } },
     },
@@ -832,6 +871,7 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
 
   const data: Prisma.PolicyUncheckedUpdateInput = {};
 
+  let newProductForHealthDefault: { policyType: string; planYear: number | null } | null = null;
   if (input.productId !== undefined && input.productId !== existing.productId) {
     if (existing.status !== "PENDING") {
       throw new AppError(
@@ -839,14 +879,41 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
         "productId: Solo se puede cambiar el producto mientras la póliza está Pendiente."
       );
     }
-    await assertActiveProduct(input.productId);
+    const newProduct = await assertActiveProduct(input.productId);
     data.productId = input.productId;
+    newProductForHealthDefault = newProduct;
   }
 
   if (input.policyNumber !== undefined) data.policyNumber = input.policyNumber;
   if (input.status !== undefined) data.status = input.status;
   if (input.effectiveDate !== undefined) data.effectiveDate = input.effectiveDate;
   if (input.terminationDate !== undefined) data.terminationDate = input.terminationDate;
+  // Fase 025.1 (Hallazgo #2 de UAT): si cambia el producto/plan year
+  // mientras PENDING y el usuario NO está fijando terminationDate en
+  // esta misma llamada, la fecha sugerida se recalcula con el nuevo
+  // planYear — pero SOLO si la fecha actual coincide exactamente con
+  // el default que se le habría calculado al producto ANTERIOR (i.e.
+  // nunca se tocó a mano). Una terminationDate custom (distinta de ese
+  // default) nunca se sobrescribe.
+  let autoRecomputedTerminationDate: Date | null | undefined;
+  if (input.terminationDate === undefined && newProductForHealthDefault) {
+    const oldDefault = healthDefaultTerminationDate(
+      existing.product.policyType,
+      existing.product.planYear,
+      existing.effectiveDate
+    );
+    const currentLooksAutoGenerated =
+      oldDefault && existing.terminationDate && oldDefault.getTime() === existing.terminationDate.getTime();
+    if (currentLooksAutoGenerated || (!existing.terminationDate && newProductForHealthDefault.policyType === "HEALTH")) {
+      const newEffectiveDate = input.effectiveDate !== undefined ? input.effectiveDate : existing.effectiveDate;
+      autoRecomputedTerminationDate = healthDefaultTerminationDate(
+        newProductForHealthDefault.policyType,
+        newProductForHealthDefault.planYear,
+        newEffectiveDate
+      );
+      data.terminationDate = autoRecomputedTerminationDate;
+    }
+  }
   if (input.premiumAmount !== undefined) data.premiumAmount = input.premiumAmount;
   if (input.billingFrequency !== undefined) data.billingFrequency = input.billingFrequency;
   if (input.nextPaymentDueDate !== undefined) data.nextPaymentDueDate = input.nextPaymentDueDate;
@@ -873,7 +940,11 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   const finalEffectiveDate =
     input.effectiveDate !== undefined ? input.effectiveDate : existing.effectiveDate;
   const finalTerminationDate =
-    input.terminationDate !== undefined ? input.terminationDate : existing.terminationDate;
+    input.terminationDate !== undefined
+      ? input.terminationDate
+      : autoRecomputedTerminationDate !== undefined
+        ? autoRecomputedTerminationDate
+        : existing.terminationDate;
   const finalNextPaymentDueDate =
     input.nextPaymentDueDate !== undefined ? input.nextPaymentDueDate : existing.nextPaymentDueDate;
   assertActiveHasEffectiveDate(finalStatus, finalEffectiveDate);
@@ -885,7 +956,11 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   // activarla ahora como mover sus fechas mientras ya está activa.
   if (existing.product.policyType === "HEALTH" && finalStatus === "ACTIVE" && finalEffectiveDate) {
     for (const member of existing.members) {
-      await assertNoOverlappingHealthCoverage(prisma, member.personId, finalEffectiveDate, finalTerminationDate, id);
+      await assertNoOverlappingHealthCoverage(prisma, member.personId, finalEffectiveDate, finalTerminationDate, [
+        id,
+        existing.previousPolicyId,
+        existing.renewedInto?.id,
+      ]);
     }
   }
 

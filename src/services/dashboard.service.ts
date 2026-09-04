@@ -89,7 +89,7 @@ type UrgentPremiumItem = {
   nextPaymentDueDate: Date | null;
   paymentStatus: string | null;
   isOverdue: boolean;
-  needsPaymentAssistance: boolean;
+  paymentManagementMode: "AUTOPAY" | "ASSISTED" | "CLIENT_MANAGED";
 };
 
 async function getPremiumsBlock(actor: AuthorizedUser) {
@@ -124,7 +124,7 @@ async function getPremiumsBlock(actor: AuthorizedUser) {
       nextPaymentDueDate: p.nextPaymentDueDate,
       paymentStatus: p.paymentStatus,
       isOverdue: p.isOverdue,
-      needsPaymentAssistance: p.needsPaymentAssistance,
+      paymentManagementMode: p.paymentManagementMode,
     }));
 
   return {

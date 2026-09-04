@@ -3,7 +3,12 @@ import { getPoliciesForPerson } from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { POLICY_STATUS_BADGE_VARIANT, POLICY_STATUS_LABELS, POLICY_TYPE_LABELS } from "@/lib/labels";
+import {
+  POLICY_STATUS_BADGE_VARIANT,
+  POLICY_STATUS_LABELS,
+  POLICY_TYPE_LABELS,
+  paymentModeShowsAssistanceBadge,
+} from "@/lib/labels";
 import { formatDateOnlyUS } from "@/lib/date-only";
 
 const formatDate = formatDateOnlyUS;
@@ -62,9 +67,11 @@ export async function PoliciesTab({ actor, personId }: { actor: AuthorizedUser; 
                   )}
                   {/* Hallazgo #1 de UAT (Fase 025): CANCELLED/EXPIRED
                       son puramente históricas — nunca muestran la
-                      alerta de asistencia, aunque el valor guardado
-                      siga siendo true. */}
-                  {policy.needsPaymentAssistance &&
+                      alerta de asistencia, aunque el modo guardado
+                      siga siendo ASSISTED. Hallazgo #3 de UAT (Fase
+                      025.1): deriva de paymentManagementMode, nunca
+                      del boolean legacy directamente. */}
+                  {paymentModeShowsAssistanceBadge(policy.paymentManagementMode) &&
                     policy.status !== "CANCELLED" &&
                     policy.status !== "EXPIRED" && (
                       <Badge variant="secondary">Requiere asistencia</Badge>
