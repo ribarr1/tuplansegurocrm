@@ -43,7 +43,7 @@ export default async function NewCommissionExpectationPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Nueva comisión esperada</h2>
+      <h2 className="font-heading text-lg font-semibold">Nueva comisión esperada</h2>
       <ExpectationForm
         action={createCommissionExpectationAction}
         policyId={policy.id}

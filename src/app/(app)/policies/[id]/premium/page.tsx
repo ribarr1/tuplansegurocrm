@@ -44,7 +44,7 @@ export default async function EditPremiumTrackingPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">
+      <h2 className="font-heading text-lg font-semibold">
         Seguimiento de pago — {premium.policyNumber ?? "Póliza sin número"}
       </h2>
       <PremiumDetailForm

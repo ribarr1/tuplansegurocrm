@@ -45,7 +45,7 @@ export default async function EditProductPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Editar producto — {product.name}</h2>
+      <h2 className="font-heading text-lg font-semibold">Editar producto — {product.name}</h2>
       <ProductForm
         action={updateProductAction.bind(null, id)}
         defaultValues={{

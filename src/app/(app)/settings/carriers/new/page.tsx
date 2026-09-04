@@ -22,7 +22,7 @@ export default async function NewCarrierPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Nueva compañía</h2>
+      <h2 className="font-heading text-lg font-semibold">Nueva compañía</h2>
       <CarrierForm action={createCarrierAction} submitLabel="Crear compañía" />
     </div>
   );

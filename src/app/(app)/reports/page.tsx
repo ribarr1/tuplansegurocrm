@@ -13,7 +13,7 @@ export default async function ReportsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Reportes</h2>
+      <h2 className="font-heading text-lg font-semibold">Reportes</h2>
       <div className="grid gap-4 sm:grid-cols-3">
         <Link href="/reports/clients">
           <Card className="h-full transition-colors hover:bg-muted/40">

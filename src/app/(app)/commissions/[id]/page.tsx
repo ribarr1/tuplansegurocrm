@@ -86,7 +86,7 @@ export default async function CommissionExpectationDetailPage({
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">{formatPeriod(expectation.period)}</h2>
+          <h2 className="font-heading text-lg font-semibold">{formatPeriod(expectation.period)}</h2>
           <Badge variant={COMMISSION_DERIVED_STATUS_BADGE_VARIANT[expectation.derivedStatus]}>
             {COMMISSION_DERIVED_STATUS_LABELS[expectation.derivedStatus]}
           </Badge>

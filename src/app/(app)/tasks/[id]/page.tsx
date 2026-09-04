@@ -53,7 +53,7 @@ export default async function TaskDetailPage({
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">{task.title}</h2>
+          <h2 className="font-heading text-lg font-semibold">{task.title}</h2>
           <Badge variant={TASK_STATUS_BADGE_VARIANT[task.status]}>
             {TASK_STATUS_LABELS[task.status]}
           </Badge>

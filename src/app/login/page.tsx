@@ -36,11 +36,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-background px-4">
-      <Image src="/brand/logo-horizontal.png" alt="TuPlanSeguro USA" width={220} height={44} priority />
+    <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-gradient-to-b from-[var(--brand-surface)] to-background px-4">
+      <Image src="/brand/logo-horizontal.png" alt="Tu Plan Seguro Usa" width={220} height={44} priority />
 
-      <Card className="w-full max-w-sm">
-        <CardHeader>
+      <Card className="w-full max-w-sm border-border/80 shadow-sm">
+        <CardHeader className="gap-1">
+          <h1 className="font-heading text-xl font-semibold text-foreground">Bienvenido</h1>
           <p className="text-sm text-muted-foreground">Inicia sesión para continuar</p>
         </CardHeader>
         <CardContent>
@@ -81,6 +82,8 @@ export default function LoginPage() {
           </form>
         </CardContent>
       </Card>
+
+      <p className="text-xs text-muted-foreground">Tu Plan Seguro Usa — uso interno</p>
     </div>
   );
 }

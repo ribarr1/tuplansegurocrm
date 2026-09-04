@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 export default function Forbidden() {
   return (
     <div className="flex flex-col items-center gap-3 p-16 text-center">
-      <h1 className="text-lg font-semibold">Acceso no autorizado</h1>
+      <h1 className="font-heading text-lg font-semibold">Acceso no autorizado</h1>
       <p className="text-sm text-muted-foreground">
         No tienes permiso para acceder a esta sección.
       </p>

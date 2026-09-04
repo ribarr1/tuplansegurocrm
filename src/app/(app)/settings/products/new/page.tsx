@@ -25,7 +25,7 @@ export default async function NewProductPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Nuevo producto</h2>
+      <h2 className="font-heading text-lg font-semibold">Nuevo producto</h2>
       <ProductForm action={createProductAction} carriers={carriers} submitLabel="Crear producto" />
     </div>
   );

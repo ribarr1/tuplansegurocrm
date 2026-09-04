@@ -52,7 +52,7 @@ export default async function HealthPolicyDetailPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">
+      <h2 className="font-heading text-lg font-semibold">
         {existing ? "Editar" : "Agregar"} información de salud — {policy.policyNumber ?? "sin número"}
       </h2>
       {existing ? (

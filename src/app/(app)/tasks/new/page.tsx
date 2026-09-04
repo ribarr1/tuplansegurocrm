@@ -44,7 +44,7 @@ export default async function NewTaskPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Nueva tarea</h2>
+      <h2 className="font-heading text-lg font-semibold">Nueva tarea</h2>
       <TaskForm
         action={createTaskAction}
         personId={sp.personId}

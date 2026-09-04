@@ -53,7 +53,7 @@ export default async function ProductsPage({
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Productos</h2>
+        <h2 className="font-heading text-lg font-semibold">Productos</h2>
         {isAdmin && (
           <Button nativeButton={false} render={<Link href="/settings/products/new" />}>
             + Nuevo producto

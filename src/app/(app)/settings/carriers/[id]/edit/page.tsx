@@ -40,7 +40,7 @@ export default async function EditCarrierPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Editar compañía — {carrier.name}</h2>
+      <h2 className="font-heading text-lg font-semibold">Editar compañía — {carrier.name}</h2>
       <CarrierForm
         action={updateCarrierAction.bind(null, id)}
         defaultValues={{ name: carrier.name, isActive: carrier.isActive }}

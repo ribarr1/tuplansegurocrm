@@ -35,7 +35,7 @@ export default async function ReconciliationPage() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Conciliar pagos de comisiones</h2>
+        <h2 className="font-heading text-lg font-semibold">Conciliar pagos de comisiones</h2>
         <Button variant="ghost" nativeButton={false} render={<Link href="/commissions" />}>
           Volver a Comisiones
         </Button>

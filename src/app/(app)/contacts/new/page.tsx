@@ -10,7 +10,7 @@ export default async function NewContactPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Nuevo contacto</h2>
+      <h2 className="font-heading text-lg font-semibold">Nuevo contacto</h2>
       <ContactForm
         action={createPersonAction}
         activeAgents={activeAgents}

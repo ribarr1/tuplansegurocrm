@@ -31,7 +31,7 @@ export default async function UserActivityPage({ params }: { params: Promise<{ i
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Actividad de {user.name}</h2>
+        <h2 className="font-heading text-lg font-semibold">Actividad de {user.name}</h2>
         <Link href="/settings/users" className="text-sm underline">
           Volver a Usuarios
         </Link>

@@ -38,13 +38,31 @@ function formatMoney(amount: { toFixed: (n: number) => string }): string {
   return `$${amount.toFixed(2)}`;
 }
 
-function KpiCard({ label, value, href }: { label: string; value: number; href: string }) {
+function KpiCard({
+  label,
+  value,
+  href,
+  alert,
+}: {
+  label: string;
+  value: number;
+  href: string;
+  alert?: boolean;
+}) {
   return (
     <Link
       href={href}
-      className="flex flex-col gap-1 rounded-md border p-4 hover:bg-muted/40"
+      className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30"
     >
-      <span className="text-2xl font-semibold">{value}</span>
+      <span
+        className={
+          alert && value > 0
+            ? "font-heading text-2xl font-semibold text-[var(--brand-accent)]"
+            : "font-heading text-2xl font-semibold text-foreground"
+        }
+      >
+        {value}
+      </span>
       <span className="text-sm text-muted-foreground">{label}</span>
     </Link>
   );
@@ -61,7 +79,7 @@ export default async function DashboardPage() {
   return (
     <div className="flex flex-col gap-8 p-6">
       <div>
-        <h2 className="text-lg font-semibold">
+        <h2 className="font-heading text-xl font-semibold text-foreground">
           {greeting()}, {actor.name}
         </h2>
         <p className="text-sm text-muted-foreground">Esto es lo que necesita tu atención hoy.</p>
@@ -72,16 +90,23 @@ export default async function DashboardPage() {
         <h3 className="text-sm font-medium text-muted-foreground">Hoy</h3>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <KpiCard label="Tareas de hoy" value={data.tasks.todayCount} href="/tasks?dueToday=true" />
-          <KpiCard label="Tareas vencidas" value={data.tasks.overdueCount} href="/tasks?overdueOnly=true" />
+          <KpiCard
+            label="Tareas vencidas"
+            value={data.tasks.overdueCount}
+            href="/tasks?overdueOnly=true"
+            alert
+          />
           <KpiCard
             label="Pagos vencidos"
             value={data.premiums.overdueCount}
             href="/premiums?overdueOnly=true"
+            alert
           />
           <KpiCard
             label="Requieren asistencia"
             value={data.premiums.assistanceCount}
             href="/premiums?needsAssistance=true"
+            alert
           />
         </div>
       </section>
@@ -218,12 +243,18 @@ export default async function DashboardPage() {
       <section className="flex flex-col gap-3">
         <h3 className="text-sm font-medium text-muted-foreground">Cartera</h3>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
-          <Link href="/policies?status=ACTIVE" className="flex flex-col gap-1 rounded-md border p-4 hover:bg-muted/40">
-            <span className="text-2xl font-semibold">{data.policies.activeCount}</span>
+          <Link
+            href="/policies?status=ACTIVE"
+            className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30"
+          >
+            <span className="font-heading text-2xl font-semibold text-foreground">{data.policies.activeCount}</span>
             <span className="text-sm text-muted-foreground">Pólizas activas</span>
           </Link>
-          <Link href="/policies?status=PENDING" className="flex flex-col gap-1 rounded-md border p-4 hover:bg-muted/40">
-            <span className="text-2xl font-semibold">{data.policies.pendingCount}</span>
+          <Link
+            href="/policies?status=PENDING"
+            className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30"
+          >
+            <span className="font-heading text-2xl font-semibold text-foreground">{data.policies.pendingCount}</span>
             <span className="text-sm text-muted-foreground">Pólizas pendientes</span>
           </Link>
         </div>

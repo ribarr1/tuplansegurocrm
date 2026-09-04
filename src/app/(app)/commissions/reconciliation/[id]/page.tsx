@@ -58,7 +58,7 @@ export default async function ReconciliationDetailPage({
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">{statement.fileName}</h2>
+          <h2 className="font-heading text-lg font-semibold">{statement.fileName}</h2>
           <p className="text-sm text-muted-foreground">
             {statement.source} · {statement.totalRows} filas · Total declarado: ${statement.receivedTotal.toString()}
           </p>

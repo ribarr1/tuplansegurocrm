@@ -30,7 +30,7 @@ export default async function CarriersPage({
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Compañías</h2>
+        <h2 className="font-heading text-lg font-semibold">Compañías</h2>
         {isAdmin && (
           <Button nativeButton={false} render={<Link href="/settings/carriers/new" />}>
             + Nueva compañía

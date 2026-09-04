@@ -48,7 +48,7 @@ export default async function EditPolicyPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">
+      <h2 className="font-heading text-lg font-semibold">
         Editar póliza — {policy.policyNumber ?? "sin número"}
       </h2>
       <EditPolicyForm

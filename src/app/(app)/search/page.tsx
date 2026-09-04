@@ -21,7 +21,7 @@ export default async function SearchPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Buscar</h2>
+      <h2 className="font-heading text-lg font-semibold">Buscar</h2>
       <form method="GET" className="flex max-w-xl gap-2">
         <input
           type="text"

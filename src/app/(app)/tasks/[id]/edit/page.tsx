@@ -42,7 +42,7 @@ export default async function EditTaskPage({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Editar tarea — {task.title}</h2>
+      <h2 className="font-heading text-lg font-semibold">Editar tarea — {task.title}</h2>
       <EditTaskForm
         action={updateTaskAction.bind(null, id)}
         defaultValues={{

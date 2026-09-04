@@ -49,7 +49,7 @@ export default async function RenewPolicyPage({ params }: { params: Promise<{ id
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Renovar póliza</h2>
+      <h2 className="font-heading text-lg font-semibold">Renovar póliza</h2>
       <p className="text-sm text-muted-foreground">
         Se creará una póliza nueva vinculada a esta como su renovación — la póliza actual nunca se
         modifica. Revisa y confirma los datos antes de guardar; número de póliza y fechas siempre se

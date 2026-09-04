@@ -7,7 +7,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="text-lg font-semibold">Configuración</h2>
+      <h2 className="font-heading text-lg font-semibold">Configuración</h2>
 
       <div className="grid gap-4 sm:grid-cols-2">
         {actor.role === "ADMIN" && (

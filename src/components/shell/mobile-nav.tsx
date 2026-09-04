@@ -19,15 +19,17 @@ export function MobileNav({ role }: { role: UserRole }) {
         <Menu className="size-5" />
       </SheetTrigger>
       <SheetContent side="left" className="w-64 bg-sidebar p-0 text-sidebar-foreground">
-        <SheetHeader className="h-14 justify-center border-b border-sidebar-border px-4">
+        <SheetHeader className="h-16 justify-center border-b border-sidebar-border px-4">
           <SheetTitle>
-            <Image
-              src="/brand/logo-horizontal.png"
-              alt="TuPlanSeguro USA"
-              width={160}
-              height={32}
-              className="h-8 w-auto"
-            />
+            <div className="flex items-center gap-2 rounded-lg bg-white/95 px-3 py-1.5">
+              <Image
+                src="/brand/logo-horizontal.png"
+                alt="Tu Plan Seguro USA"
+                width={160}
+                height={32}
+                className="h-7 w-auto"
+              />
+            </div>
           </SheetTitle>
         </SheetHeader>
         <NavContent role={role} onNavigate={() => setOpen(false)} />

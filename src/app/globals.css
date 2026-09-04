@@ -7,9 +7,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-dm-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-playfair-display);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -52,28 +52,33 @@
 }
 
 /*
- * Identidad visual de TuPlanSeguro USA — Fase 019.5.
+ * Identidad visual de Tu Plan Seguro USA — Fase 022 (Parte J).
  *
- * Colores extraídos directamente de los assets reales del logo
- * (LOGO-1.png / LOGO-3.png) con GetPixel(), no inventados:
- *   - Azul  #0070AA (wordmark "TU PLAN", cabeza/cuerpo del ícono)
- *   - Verde #00A660 (wordmark "SEGURO", cabeza/cuerpo del ícono)
- *   - Naranja #FF7F13 (corazón del ícono) — deliberadamente de uso
- *     escaso/decorativo, nunca como color de fondo dominante (ver
- *     docs/DECISIONS.md: "no saturar cada componente de naranja/azul").
+ * Paleta oficial de marca (sustituye cualquier paleta temporal
+ * anterior, ver docs/DECISIONS.md):
+ *   PRIMARY    #1B2D6B — azul marino profundo, sidebar/acciones principales.
+ *   SECONDARY  #2541A8 — azul más vivo, acciones secundarias/hover.
+ *   ACCENT     #F5A623 — dorado/naranja, SOLO para llamadas de atención
+ *              puntuales (vencimientos, alertas, indicadores) — nunca
+ *              como color de fondo dominante ni en botones comunes.
+ *   BACKGROUND #FFFFFF — fondo general de la aplicación.
+ *   SURFACE    #F8F9FF — tarjetas/paneles/sidebar, un blanco azulado
+ *              muy sutil que se distingue del fondo sin ser gris frío.
  *
  * --brand-* son los tokens de marca en sí; el resto de tokens shadcn
  * (--color- de abajo) los REMAPEA sobre el sistema existente en vez
- * de hardcodear el color en cada componente.
+ * de hardcodear el color en cada componente — ningún componente debe
+ * usar un hex directamente, siempre una clase Tailwind que resuelve a
+ * uno de estos tokens.
  */
 :root {
-  --brand-primary: #0070aa;
-  --brand-secondary: #00a660;
-  --brand-accent: #ff7f13;
-  --brand-background: #f5f8fa;
-  --brand-surface: #ffffff;
-  --brand-text: #0b2136;
-  --brand-muted: #5b6b7a;
+  --brand-primary: #1b2d6b;
+  --brand-secondary: #2541a8;
+  --brand-accent: #f5a623;
+  --brand-background: #ffffff;
+  --brand-surface: #f8f9ff;
+  --brand-text: #161b33;
+  --brand-muted: #5b6478;
 
   --background: var(--brand-background);
   --foreground: var(--brand-text);
@@ -83,40 +88,40 @@
   --popover-foreground: var(--brand-text);
   --primary: var(--brand-primary);
   --primary-foreground: #ffffff;
-  --secondary: #e7eef2;
-  --secondary-foreground: var(--brand-text);
-  --muted: #eef2f5;
+  --secondary: var(--brand-secondary);
+  --secondary-foreground: #ffffff;
+  --muted: #eef0fb;
   --muted-foreground: var(--brand-muted);
-  --accent: #e7eef2;
-  --accent-foreground: var(--brand-text);
+  --accent: var(--brand-accent);
+  --accent-foreground: #2b1a00;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: #dce4ea;
-  --input: #dce4ea;
-  --ring: var(--brand-primary);
+  --border: #e0e3f5;
+  --input: #e0e3f5;
+  --ring: var(--brand-secondary);
   --chart-1: var(--brand-primary);
   --chart-2: var(--brand-secondary);
   --chart-3: var(--brand-accent);
-  --chart-4: #5b8aa6;
-  --chart-5: #4c9c7b;
+  --chart-4: #6d7fc9;
+  --chart-5: #8a5cf6;
   --radius: 0.625rem;
-  --sidebar: #eaf2f7;
-  --sidebar-foreground: var(--brand-text);
-  --sidebar-primary: var(--brand-primary);
+  --sidebar: var(--brand-primary);
+  --sidebar-foreground: #eef0fb;
+  --sidebar-primary: var(--brand-secondary);
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #d9e8f0;
-  --sidebar-accent-foreground: var(--brand-text);
-  --sidebar-border: #d3e0e8;
-  --sidebar-ring: var(--brand-primary);
+  --sidebar-accent: #24397f;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #24397f;
+  --sidebar-ring: var(--brand-accent);
 }
 
 .dark {
-  --brand-primary: #3fa0d6;
-  --brand-secondary: #35c088;
-  --brand-accent: #ff9640;
-  --brand-background: #0b1620;
-  --brand-surface: #101e2b;
-  --brand-text: #e6eef2;
-  --brand-muted: #93a7b5;
+  --brand-primary: #4a63c4;
+  --brand-secondary: #6a84e0;
+  --brand-accent: #f5b854;
+  --brand-background: #0c1024;
+  --brand-surface: #12172e;
+  --brand-text: #e7e9f7;
+  --brand-muted: #9aa2c0;
 
   --background: var(--brand-background);
   --foreground: var(--brand-text);
@@ -125,13 +130,13 @@
   --popover: var(--brand-surface);
   --popover-foreground: var(--brand-text);
   --primary: var(--brand-primary);
-  --primary-foreground: #0b1620;
-  --secondary: #16283a;
+  --primary-foreground: #ffffff;
+  --secondary: #1c2547;
   --secondary-foreground: var(--brand-text);
-  --muted: #16283a;
+  --muted: #1c2547;
   --muted-foreground: var(--brand-muted);
-  --accent: #16283a;
-  --accent-foreground: var(--brand-text);
+  --accent: #2a2140;
+  --accent-foreground: var(--brand-accent);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
@@ -139,13 +144,13 @@
   --chart-1: var(--brand-primary);
   --chart-2: var(--brand-secondary);
   --chart-3: var(--brand-accent);
-  --chart-4: #6fa8c9;
-  --chart-5: #6fbf9d;
-  --sidebar: #0e1c28;
+  --chart-4: #7c93e6;
+  --chart-5: #a480f8;
+  --sidebar: #080b1a;
   --sidebar-foreground: var(--brand-text);
   --sidebar-primary: var(--brand-primary);
-  --sidebar-primary-foreground: #0b1620;
-  --sidebar-accent: #16283a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1c2547;
   --sidebar-accent-foreground: var(--brand-text);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: var(--brand-primary);
