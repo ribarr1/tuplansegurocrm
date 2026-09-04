@@ -1,0 +1,92 @@
+// Fixture CSV ficticio del libro de negocio — Fase 023. Ningún
+// nombre/email/teléfono/SSN/USCIS aquí es real (mismo criterio que
+// src/import/__tests__/fixture.ts, Fase 019). Reproduce las 104
+// columnas EXACTAS del export real, en el mismo orden.
+
+export const BOOK_HEADERS = [
+  "INDEX",
+  "ESTATUS",
+  "TITULAR NOMBRE Y APELLIDO",
+  "AGENTE",
+  "FECHA DE INICIO",
+  "ESTADO",
+  "COMPAÑIA DE SEGUROS",
+  "PROCESADA POR",
+  "CONSENTIMIENTO USADO",
+  "ASISTENCIA",
+  "PLAN",
+  "PRIMA",
+  "DEDUCIBLE",
+  "MAXIMO DE BOLSILLO",
+  "INGRESOS",
+  "CREDITO FISCAL",
+  "TIMESTAMP CREACION",
+  "TIMESTAMP ACTUALIZACION",
+  "TITULAR SEXO",
+  "TITULAR EMAIL",
+  "TITULAR FECHA DE NACIMIENTO",
+  "TITULAR EDAD",
+  "TITULAR NUMERO DE SEGURIDAD SOCIAL",
+  "TITULAR NOMBRE",
+  "TITULAR APELLIDO",
+  "TITULAR TIPO DE DOCUMENTO",
+  "TITULAR USCIS#",
+  "¿EL TITULAR ESTARA CUBIERTO EN ESTA POLIZA?",
+  "TITULAR PAIS DE ORIGEN",
+  "TITULAR TELEFONO",
+  "TITULAR DIRECCION",
+  "TITULAR CONDADO",
+  "CONYUGUE SEXO",
+  "CONYUGUE EMAIL",
+  "CONYUGUE FECHA DE NACIMIENTO",
+  "CONYUGUE EDAD",
+  "CONYUGUE NUMERO DE SEGURIDAD SOCIALCONYUGUE NUMERO DE SEGURIDAD SOCIAL",
+  "CONYUGUE NOMBRE",
+  "CONYUGUE APELLIDO",
+  "CONYUGUE TIPO DE DOCUMENTO",
+  "CONYUGUE USCIS#",
+  "¿EL CONYUGUE ESTARA CUBIERTO EN ESTA POLIZA?",
+  "CONYUGUE PAIS DE ORIGEN",
+  "CONYUGUE TELEFONO",
+  ...[1, 2, 3, 4, 5, 6].flatMap((n) => [
+    `DEPENDIENTE ${n} NOMBRE Y APELLIDO`,
+    `DEPENDIENTE ${n} FECHA DE NACIMIENTO`,
+    `DEPENDIENTE ${n} RELACION`,
+    `DEPENDIENTE ${n} TIPO DE DOCUMENTO`,
+    `DEPENDIENTE ${n} USCIS#`,
+    `DEPENDIENTE ${n} NUMERO DE SEGURIDAD SOCIAL`,
+    `¿EL DEPENDIENTE ${n} ESTARA CUBIERTO EN ESTA POLIZA?`,
+  ]),
+  "BANCO",
+  "TITULAR DE LA CUENTA BANCARIA",
+  "NUMERO DE RUTA",
+  "NUMERO DE CUENTA",
+  "CIUDAD DEL BANCO",
+  "ESTADO DEL BANCO",
+  "NOMBRE IMPRESO EN LA TARJETA",
+  "TIPO DE TARJETA",
+  "COMPAÑIA DE LA TARJETA",
+  "NUMERO DE LA TARJETA",
+  "MES DE VENCIMIENTO DE LA TARJETA",
+  "AÑO DE VENCIMIENTO DE LA TARJETA",
+  "CODIGO DE SEGURIDAD DE LA TARJETA",
+  "OBSERVACIONES",
+  "MIEMBROS",
+  "TIPO DE APLICACION",
+  "CREATED BY",
+  "LAST MODIFIED BY",
+] as const;
+
+export type FixtureRow = Partial<Record<(typeof BOOK_HEADERS)[number], string>>;
+
+function csvEscape(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+export function buildFixtureCsv(rows: FixtureRow[]): string {
+  const lines = [BOOK_HEADERS.map(csvEscape).join(",")];
+  for (const row of rows) {
+    lines.push(BOOK_HEADERS.map((h) => csvEscape(row[h] ?? "")).join(","));
+  }
+  return lines.join("\n");
+}

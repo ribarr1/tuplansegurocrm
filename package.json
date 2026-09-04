@@ -10,7 +10,8 @@
     "test": "vitest run",
     "create-admin": "tsx scripts/create-admin.ts",
     "seed:dev": "tsx scripts/seed-dev.ts",
-    "import:legacy": "tsx scripts/import-legacy.ts"
+    "import:legacy": "tsx scripts/import-legacy.ts",
+    "import:book": "tsx scripts/import-book-of-business.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
