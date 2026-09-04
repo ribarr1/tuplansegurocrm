@@ -285,6 +285,7 @@ describe("sensitive-identity.service — documentos migratorios", () => {
     const doc = await createImmigrationDocument(admin, {
       personId: person.id,
       documentType: "OTHER",
+      documentNumber: "NODATE001",
     });
     const summary = await getSensitiveIdentitySummary(admin, person.id);
     expect(summary.documents[0].expirationDate).toBeNull();
@@ -385,7 +386,55 @@ describe("sensitive-identity.service — documentos migratorios", () => {
   it("ASSISTANT no puede crear un documento migratorio", async () => {
     const person = await makePerson();
     await expect(
-      createImmigrationDocument(assistant, { personId: person.id, documentType: "OTHER" })
+      createImmigrationDocument(assistant, {
+        personId: person.id,
+        documentType: "OTHER",
+        documentNumber: "ASSISTANT001",
+      })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  // Hallazgo #1 de UAT (Fase 023): no debe poder crearse un documento
+  // migratorio sin número, para ninguno de los 3 tipos de V1.
+  it("Hallazgo #1: rechaza crear un Permanent Resident Card sin número", async () => {
+    const person = await makePerson();
+    await expect(
+      createImmigrationDocument(admin, { personId: person.id, documentType: "PERMANENT_RESIDENT_CARD" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("Hallazgo #1: rechaza crear un EAD sin número", async () => {
+    const person = await makePerson();
+    await expect(
+      createImmigrationDocument(admin, {
+        personId: person.id,
+        documentType: "EMPLOYMENT_AUTHORIZATION_DOCUMENT",
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("Hallazgo #1: rechaza crear un documento OTHER sin número", async () => {
+    const person = await makePerson();
+    await expect(
+      createImmigrationDocument(admin, { personId: person.id, documentType: "OTHER" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("Hallazgo #1: rechaza un número de documento vacío/solo espacios", async () => {
+    const person = await makePerson();
+    await expect(
+      createImmigrationDocument(admin, { personId: person.id, documentType: "OTHER", documentNumber: "   " })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("Hallazgo #1: actualizar un documento existente sigue sin exigir documentNumber (no lo toca)", async () => {
+    const person = await makePerson();
+    const doc = await createImmigrationDocument(admin, {
+      personId: person.id,
+      documentType: "OTHER",
+      documentNumber: "KEEP_ON_EDIT",
+    });
+    await expect(updateImmigrationDocument(admin, doc.id, { expirationDate: "2030-06-01" })).resolves.toBeDefined();
+    expect(await revealImmigrationDocumentNumber(admin, doc.id)).toBe("KEEP_ON_EDIT");
   });
 });

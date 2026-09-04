@@ -195,6 +195,9 @@ export function EditPolicyForm({
             name="nextPaymentDueDate"
             defaultValue={values.nextPaymentDueDate ?? ""}
           />
+          {state?.fieldErrors?.nextPaymentDueDate && (
+            <p className="text-sm text-destructive">{state.fieldErrors.nextPaymentDueDate}</p>
+          )}
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="paymentStatus">Estado de pago</Label>

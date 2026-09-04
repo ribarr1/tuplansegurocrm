@@ -68,15 +68,22 @@ function optionalDateOnly() {
   return dateOnlySchema().optional();
 }
 
+// Hallazgo #1 de UAT (Fase 023): un documento migratorio sin número
+// no debe poder crearse — para las 3 categorías de V1
+// (PERMANENT_RESIDENT_CARD/EMPLOYMENT_AUTHORIZATION_DOCUMENT/OTHER)
+// documentNumber es obligatorio al crear. issuedDate/expirationDate
+// siguen siendo opcionales. Al EDITAR (updateImmigrationDocumentSchema
+// abajo) sigue siendo opcional — "ausente" significa "no lo toques",
+// nunca "bórralo"; un documento ya existente sin número (import
+// legacy) puede completarse después desde ahí.
 export const createImmigrationDocumentSchema = z.object({
   personId: z.uuid("Selecciona un contacto válido."),
   documentType: z.enum(IMMIGRATION_DOCUMENT_TYPE_VALUES, "Selecciona un tipo de documento válido."),
   documentNumber: z
     .string()
     .trim()
-    .max(50, "El número de documento es demasiado largo.")
-    .optional()
-    .transform((v) => (v && v.trim() !== "" ? v.trim() : undefined)),
+    .min(1, "El número de documento es obligatorio.")
+    .max(50, "El número de documento es demasiado largo."),
   issuedDate: optionalDateOnly(),
   expirationDate: optionalDateOnly(),
 });

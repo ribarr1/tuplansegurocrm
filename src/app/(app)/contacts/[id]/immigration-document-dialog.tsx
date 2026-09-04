@@ -104,7 +104,13 @@ export function ImmigrationDocumentDialog({
                 </Button>
               </div>
             ) : (
-              <Input id="doc-number" name="documentNumber" autoComplete="off" placeholder="Ej. RC9876" />
+              <Input
+                id="doc-number"
+                name="documentNumber"
+                autoComplete="off"
+                placeholder="Ej. RC9876"
+                required={!document}
+              />
             )}
             <FieldError message={state?.fieldErrors?.documentNumber} />
           </div>
