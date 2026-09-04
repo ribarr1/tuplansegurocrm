@@ -22,6 +22,7 @@ import {
   createPersonProvider,
 } from "@/services/health-records.service";
 import { createTask, completeTask } from "@/services/tasks.service";
+import { createNote } from "@/services/notes.service";
 import { updatePremiumTracking } from "@/services/premiums.service";
 import { createCommissionRule, generateExpectationForPeriod } from "@/services/commission-rules.service";
 import { updateCommissionExpectation, addCommissionPayment } from "@/services/commissions.service";
@@ -136,10 +137,15 @@ afterAll(async () => {
     },
   });
   await prisma.task.deleteMany({ where: { id: { in: createdTaskIds } } });
+  await prisma.note.deleteMany({ where: { personId: { in: createdPersonIds } } });
   await prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
   await prisma.personMedication.deleteMany({ where: { personId: { in: createdPersonIds } } });
   await prisma.personProvider.deleteMany({ where: { personId: { in: createdPersonIds } } });
   await prisma.policyDocument.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
+  // previousPolicyId es auto-referencia @unique con onDelete: Restrict
+  // — desvincular antes del deleteMany masivo (ver el mismo fix en
+  // policies.service.test.ts, Fase 024).
+  await prisma.policy.updateMany({ where: { id: { in: createdPolicyIds } }, data: { previousPolicyId: null } });
   await prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } });
   await prisma.householdMember.deleteMany({ where: { householdId: { in: createdHouseholdIds } } });
   await prisma.household.deleteMany({ where: { id: { in: createdHouseholdIds } } });
@@ -426,6 +432,104 @@ describe("history.service — eventos generados por cada módulo", () => {
     expect(events.length).toBeGreaterThan(0);
     expect(events[0].actorType).toBe("SYSTEM");
     expect(events[0].actorUserId).toBeNull();
+  });
+});
+
+// Hallazgo #4 de UAT (Fase 024): el submenú de categorías del
+// Historial visualmente cambiaba pero no filtraba de verdad. La causa
+// raíz resultó ser client-side (HistoryTimeline con useState congelado
+// + next/link cacheando la navegación por searchParams — ver
+// history-tab.tsx) — el servidor (getContactTimeline con `category`)
+// ya filtraba correctamente. Estos tests fijan esa garantía a nivel de
+// servicio, que es donde debe vivir la fuente de verdad real.
+describe("history.service — filtros de categoría del timeline (Hallazgo #4)", () => {
+  it("Todos (sin category) devuelve eventos de más de una categoría", async () => {
+    const person = await makePerson(admin);
+    await updatePerson(admin, person.id, { phone: "555-2000" });
+    const { policy } = await makePolicyFor(admin, person);
+    void policy;
+
+    const page = await getContactTimeline(admin, person.id);
+    const types = new Set(page.events.map((e) => e.entityType));
+    expect(types.has("Person")).toBe(true);
+    expect(types.has("Policy")).toBe(true);
+  });
+
+  it("category=CONTACT solo devuelve eventos de Person", async () => {
+    const person = await makePerson(admin);
+    await updatePerson(admin, person.id, { phone: "555-2001" });
+    await makePolicyFor(admin, person);
+
+    const page = await getContactTimeline(admin, person.id, { category: "CONTACT" });
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(page.events.every((e) => e.entityType === "Person")).toBe(true);
+  });
+
+  it("category=FAMILY solo devuelve eventos de Household/HouseholdMember", async () => {
+    const person = await makePerson(admin);
+    const household = await createHouseholdWithInitialMember(admin, { personId: person.id, role: "HEAD" });
+    createdHouseholdIds.push(household.id);
+    await updateHousehold(admin, household.id, { city: "Aurora" });
+    await makePolicyFor(admin, person);
+
+    const page = await getContactTimeline(admin, person.id, { category: "FAMILY" });
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(page.events.every((e) => ["Household", "HouseholdMember"].includes(e.entityType))).toBe(true);
+  });
+
+  it("category=POLICIES solo devuelve eventos de Policy/PolicyMember", async () => {
+    const person = await makePerson(admin);
+    await updatePerson(admin, person.id, { phone: "555-2002" });
+    await makePolicyFor(admin, person);
+
+    const page = await getContactTimeline(admin, person.id, { category: "POLICIES" });
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(page.events.every((e) => ["Policy", "PolicyMember"].includes(e.entityType))).toBe(true);
+  });
+
+  it("category=TASKS solo devuelve eventos de Task", async () => {
+    const person = await makePerson(admin);
+    await updatePerson(admin, person.id, { phone: "555-2003" });
+    const task = await createTask(admin, { title: uniqueName("Tarea historial"), personId: person.id });
+    createdTaskIds.push(task.id);
+
+    const page = await getContactTimeline(admin, person.id, { category: "TASKS" });
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(page.events.every((e) => e.entityType === "Task")).toBe(true);
+  });
+
+  it("category=NOTES solo devuelve eventos de Note", async () => {
+    const person = await makePerson(admin);
+    await updatePerson(admin, person.id, { phone: "555-2004" });
+    await createNote(admin, { personId: person.id, content: "Nota de prueba de filtro de historial." });
+
+    const page = await getContactTimeline(admin, person.id, { category: "NOTES" });
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(page.events.every((e) => e.entityType === "Note")).toBe(true);
+  });
+
+  it("category=HEALTH solo devuelve eventos de HealthPolicyDetail/PersonMedication/PersonProvider", async () => {
+    const person = await makePerson(admin);
+    await updatePerson(admin, person.id, { phone: "555-2005" });
+    await createPersonMedication(admin, { personId: person.id, name: "Medicamento de prueba" });
+
+    const page = await getContactTimeline(admin, person.id, { category: "HEALTH" });
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(
+      page.events.every((e) => ["HealthPolicyDetail", "PersonMedication", "PersonProvider"].includes(e.entityType))
+    ).toBe(true);
+  });
+
+  it("category=COMMISSIONS respeta la exclusión de ASSISTANT (nunca ve eventos de comisiones)", async () => {
+    const person = await makePerson(admin);
+    const page = await getContactTimeline(assistant, person.id, { category: "COMMISSIONS" });
+    expect(page.events).toHaveLength(0);
+  });
+
+  it("una categoría sin eventos para ese contacto devuelve una lista vacía, nunca un error", async () => {
+    const person = await makePerson(admin);
+    const page = await getContactTimeline(admin, person.id, { category: "DOCUMENTS" });
+    expect(page.events).toEqual([]);
   });
 });
 

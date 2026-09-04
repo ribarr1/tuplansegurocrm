@@ -132,6 +132,36 @@ describe("birthdays.service", () => {
     expect(indexLater).toBeGreaterThan(indexEarlier);
   });
 
+  // Fase 024 (Hallazgo #3 de UAT): view=nextMonth.
+  it("nextMonth: filtra por el mes calendario SIGUIENTE al actual", async () => {
+    const nextMonth = today.month === 12 ? 1 : today.month + 1;
+    const inNextMonth = await makePerson(dobFor(1985, nextMonth, 15));
+    const inCurrentMonth = await makePerson(dobFor(1985, today.month, today.day));
+
+    const results = await listBirthdays(admin, { view: "nextMonth" });
+    const ids = results.map((r) => r.person.id);
+    expect(ids).toContain(inNextMonth.id);
+    expect(ids).not.toContain(inCurrentMonth.id);
+  });
+
+  it("nextMonth: diciembre -> enero cruza correctamente de año (función pura, fecha de referencia fija)", () => {
+    // Hoy = 20 de diciembre de 2026 -> mes siguiente = enero de 2027.
+    const result = computeNextOccurrence(1, 10, 2026, 12, 20);
+    expect(result.occurrenceYear).toBe(2027);
+    expect(result.month).toBe(1);
+  });
+
+  it("nextMonth: 29-Feb en año no bisiesto se muestra como 28-Feb (misma convención que el resto)", async () => {
+    // Si hoy fuera 15 de enero de un año cuyo "mes siguiente" (febrero)
+    // no es bisiesto, alguien nacido el 29 de febrero debe listarse
+    // como 28. Se prueba contra la función pura para no depender de la
+    // fecha real del sistema al correr el test.
+    const nonLeapFebruary = computeNextOccurrence(2, 29, 2025, 1, 15);
+    expect(nonLeapFebruary).toMatchObject({ occurrenceYear: 2025, month: 2, day: 28 });
+    const leapFebruary = computeNextOccurrence(2, 29, 2024, 1, 15);
+    expect(leapFebruary).toMatchObject({ occurrenceYear: 2024, month: 2, day: 29 });
+  });
+
   it("F) próximos 30 días funciona", async () => {
     const within = addDaysToParts(today.year, today.month, today.day, 10);
     const outside = addDaysToParts(today.year, today.month, today.day, 40);

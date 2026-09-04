@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTimeUS, formatMonthDayUS } from "@/lib/business-time";
+import { formatDateTimeUS, formatMonthDayUS, getTodayBusinessRange } from "@/lib/business-time";
 import {
   CONTACT_STATUS_BADGE_VARIANT,
   CONTACT_STATUS_LABELS,
@@ -31,7 +31,15 @@ const VIEWS = [
   { key: "all", label: "Todos" },
   { key: "today", label: "Hoy" },
   { key: "month", label: "Este mes" },
+  { key: "nextMonth", label: "Mes siguiente" },
   { key: "upcoming", label: "Próximos" },
+] as const;
+
+// APP_TIME_ZONE, nunca el timezone del navegador — mismo criterio que
+// el resto de "hoy" de negocio (ver src/lib/business-time.ts).
+const MONTH_NAMES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 ] as const;
 
 const formatOccurrence = formatMonthDayUS;
@@ -51,9 +59,22 @@ export default async function BirthdaysPage({
   const results = await listBirthdays(actor, { view, search: sp.q, status });
   const isAdmin = actor.role === "ADMIN";
 
+  // Título contextual para "Este mes"/"Mes siguiente" — calculado sobre
+  // APP_TIME_ZONE (nunca el timezone del navegador), mismo criterio que
+  // el resto de "hoy" de negocio.
+  const { year: todayYear, month: todayMonth } = getTodayBusinessRange();
+  let heading = "Cumpleaños";
+  if (view === "month") {
+    heading = `Cumpleaños de ${MONTH_NAMES[todayMonth - 1]}`;
+  } else if (view === "nextMonth") {
+    const nextMonth = todayMonth === 12 ? 1 : todayMonth + 1;
+    const nextYear = todayMonth === 12 ? todayYear + 1 : todayYear;
+    heading = `Cumpleaños de ${MONTH_NAMES[nextMonth - 1]}${nextYear !== todayYear ? ` ${nextYear}` : ""}`;
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h2 className="font-heading text-lg font-semibold">Cumpleaños</h2>
+      <h2 className="font-heading text-lg font-semibold">{heading}</h2>
 
       <div className="flex flex-wrap gap-1 border-b">
         {VIEWS.map((v) => (

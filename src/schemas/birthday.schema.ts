@@ -7,7 +7,7 @@ export const BIRTHDAY_GREETING_CHANNEL_VALUES = ["WHATSAPP", "SMS", "EMAIL", "OT
 export const listBirthdaysQuerySchema = z.object({
   view: z.preprocess(
     emptyStringToUndefined,
-    z.enum(["today", "month", "upcoming", "all"]).default("all")
+    z.enum(["today", "month", "nextMonth", "upcoming", "all"]).default("all")
   ),
   search: optionalSearchFilter(),
   status: optionalEnumFilter(BIRTHDAY_GREETING_STATUS_VALUES),

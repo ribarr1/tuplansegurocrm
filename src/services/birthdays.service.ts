@@ -135,6 +135,15 @@ function computeBirthday(
 
 const UPCOMING_WINDOW_DAYS = 30;
 
+// Fase 024 (Hallazgo #3 de UAT): mes calendario siguiente al de hoy,
+// según APP_TIME_ZONE (nunca el timezone del navegador) — nunca
+// simplemente "todayMonth + 1" sin envolver diciembre -> enero, y el
+// AÑO de esa ocurrencia cambia junto con el mes (diciembre de 2026 ->
+// enero de 2027, no de 2026).
+function nextCalendarMonth(todayYear: number, todayMonth: number): { year: number; month: number } {
+  return todayMonth === 12 ? { year: todayYear + 1, month: 1 } : { year: todayYear, month: todayMonth + 1 };
+}
+
 export async function listBirthdays(actor: AuthorizedUser, rawQuery: unknown) {
   const { view, search, status } = parseOrThrow(listBirthdaysQuerySchema, rawQuery);
 
@@ -154,8 +163,16 @@ export async function listBirthdays(actor: AuthorizedUser, rawQuery: unknown) {
 
   const people = await prisma.person.findMany({ where, select: personSelect });
   const { year: todayYear, month: todayMonth, day: todayDay } = getTodayBusinessRange();
+  const nextMonthTarget = nextCalendarMonth(todayYear, todayMonth);
 
   const computed = people.map((p) => computeBirthday(p, todayYear, todayMonth, todayDay));
+
+  // "Mes siguiente": ocurrencia calculada para el AÑO del mes siguiente
+  // (relevante en diciembre -> enero, donde ese año ya no es todayYear)
+  // — nunca currentYearOccurrence (siempre calculada sobre todayYear).
+  const nextMonthOccurrence = new Map(
+    computed.map((e) => [e.person.id, effectiveBirthdayForYear(e.birthMonth, e.birthDay, nextMonthTarget.year)])
+  );
 
   let filtered: BirthdayComputation[];
   if (view === "today") {
@@ -164,6 +181,10 @@ export async function listBirthdays(actor: AuthorizedUser, rawQuery: unknown) {
     filtered = computed
       .filter((e) => e.currentYearOccurrence.month === todayMonth)
       .sort((a, b) => a.currentYearOccurrence.day - b.currentYearOccurrence.day);
+  } else if (view === "nextMonth") {
+    filtered = computed
+      .filter((e) => nextMonthOccurrence.get(e.person.id)!.month === nextMonthTarget.month)
+      .sort((a, b) => nextMonthOccurrence.get(a.person.id)!.day - nextMonthOccurrence.get(b.person.id)!.day);
   } else if (view === "upcoming") {
     filtered = computed
       .filter((e) => e.daysUntilNext >= 0 && e.daysUntilNext <= UPCOMING_WINDOW_DAYS)
@@ -176,8 +197,24 @@ export async function listBirthdays(actor: AuthorizedUser, rawQuery: unknown) {
     );
   }
 
+  // Resuelve año/mes/día/edad de la ocurrencia relevante SEGÚN la vista
+  // activa — "upcoming" usa la próxima ocurrencia real (puede caer en
+  // el año siguiente); "nextMonth" usa la ocurrencia calculada para el
+  // año del mes calendario siguiente (idem, relevante en diciembre);
+  // el resto usa el año actual.
+  function occurrenceFor(e: BirthdayComputation) {
+    if (view === "upcoming") {
+      return { year: e.nextOccurrenceYear, month: e.nextOccurrenceMonth, day: e.nextOccurrenceDay, age: e.ageAtNextOccurrence };
+    }
+    if (view === "nextMonth") {
+      const occ = nextMonthOccurrence.get(e.person.id)!;
+      return { year: nextMonthTarget.year, month: occ.month, day: occ.day, age: nextMonthTarget.year - e.birthYear };
+    }
+    return { year: todayYear, month: e.currentYearOccurrence.month, day: e.currentYearOccurrence.day, age: e.ageAtCurrentYearOccurrence };
+  }
+
   const personIds = filtered.map((e) => e.person.id);
-  const relevantYears = Array.from(new Set(filtered.map((e) => (view === "upcoming" ? e.nextOccurrenceYear : todayYear))));
+  const relevantYears = Array.from(new Set(filtered.map((e) => occurrenceFor(e).year)));
   const greetings = personIds.length
     ? await prisma.birthdayGreeting.findMany({
         where: { personId: { in: personIds }, year: { in: relevantYears } },
@@ -187,11 +224,12 @@ export async function listBirthdays(actor: AuthorizedUser, rawQuery: unknown) {
   const greetingMap = new Map(greetings.map((g) => [`${g.personId}:${g.year}`, g]));
 
   const results = filtered.map((e) => {
-    const greetingYear = view === "upcoming" ? e.nextOccurrenceYear : todayYear;
+    const occ = occurrenceFor(e);
+    const greetingYear = occ.year;
     const found = greetingMap.get(`${e.person.id}:${greetingYear}`);
-    const turningAge = view === "upcoming" ? e.ageAtNextOccurrence : e.ageAtCurrentYearOccurrence;
-    const occurrenceMonth = view === "upcoming" ? e.nextOccurrenceMonth : e.currentYearOccurrence.month;
-    const occurrenceDay = view === "upcoming" ? e.nextOccurrenceDay : e.currentYearOccurrence.day;
+    const turningAge = occ.age;
+    const occurrenceMonth = occ.month;
+    const occurrenceDay = occ.day;
 
     return {
       person: {

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { getContactTimeline, HISTORY_CATEGORY_VALUES, type HistoryCategory } from "@/services/history.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { HistoryTimeline } from "@/components/history-timeline";
@@ -38,7 +37,18 @@ export async function HistoryTab({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-1">
-        <Link
+        {/* Hallazgo #4 de UAT (Fase 024): <a> nativo a propósito, NUNCA
+            next/link aquí. El servidor SIEMPRE filtró bien (confirmado
+            navegando de forma completa a la misma URL); el bug real
+            era client-side — el Link de Next dejaba el árbol
+            (incluyendo este mismo bloque de pills, que no tiene estado
+            propio) visualmente congelado en el filtro anterior al
+            navegar solo por searchParams, ni prefetch={false} ni una
+            key en el padre lo resolvían de forma confiable. Una
+            navegación completa (recarga real de página) es la única
+            forma verificada de que el filtro se refleje siempre —
+            aceptable para un filtro de uso ocasional como este. */}
+        <a
           href={`/contacts/${personId}?tab=historial`}
           className={
             !category
@@ -47,9 +57,9 @@ export async function HistoryTab({
           }
         >
           Todos
-        </Link>
+        </a>
         {HISTORY_CATEGORY_VALUES.map((c) => (
-          <Link
+          <a
             key={c}
             href={`/contacts/${personId}?tab=historial&category=${c}`}
             className={
@@ -59,11 +69,27 @@ export async function HistoryTab({
             }
           >
             {CATEGORY_LABELS[c]}
-          </Link>
+          </a>
         ))}
       </div>
 
-      <HistoryTimeline initialEvents={events} initialCursor={page.nextCursor} loadMore={loadMore} />
+      {/* key: HistoryTimeline usa useState(initialEvents) para poder
+          agregar páginas con "Mostrar más" sin perderlas — pero eso
+          significa que React SOLO lee initialEvents en el primer
+          mount. Sin una key ligada al filtro activo, cambiar de
+          categoría re-renderiza el Server Component padre con una
+          lista `events` distinta, pero React reconcilia
+          HistoryTimeline como "la misma instancia" (mismo tipo, misma
+          posición) y el estado interno viejo gana — la lista se veía
+          congelada en el filtro anterior. Este es el bug real detrás
+          del Hallazgo #4 de UAT (Fase 024); no era un problema de
+          caché de Next ni del servidor (que sí filtraba bien). */}
+      <HistoryTimeline
+        key={category ?? "all"}
+        initialEvents={events}
+        initialCursor={page.nextCursor}
+        loadMore={loadMore}
+      />
     </div>
   );
 }
