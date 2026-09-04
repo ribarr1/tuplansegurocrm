@@ -127,7 +127,7 @@ En **Contactos** ves el listado completo de clientes y prospectos.
 ### Crear un contacto
 
 1. Presiona **+ Nuevo contacto**.
-2. Completa Nombre, Apellido y los datos que tengas disponibles (teléfono, correo, fecha de nacimiento).
+2. Completa Nombre, Apellido y los datos que tengas disponibles (teléfono, correo, fecha de nacimiento, sexo).
 3. Si corresponde, elige el Agente asignado.
 4. Presiona **Crear contacto**. El contacto queda como Prospecto — el Estado se vuelve Cliente solo, automáticamente, cuando le agregues una póliza activa.
 
@@ -401,7 +401,7 @@ Subir el mismo reporte dos veces no duplica los pagos ya aplicados.
 
 Desde **Cumpleaños** ves quién cumple años entre tus clientes y sus familiares (no solo el titular).
 
-Pestañas: **Todos**, **Hoy**, **Este mes**, **Próximos**.
+Pestañas: **Todos**, **Hoy**, **Este mes**, **Mes siguiente**, **Próximos**. "Mes siguiente" te deja adelantarte y preparar tarjetas del mes que viene (por ejemplo, revisar octubre estando en septiembre).
 
 Por cada persona puedes:
 

@@ -375,3 +375,15 @@ Columna nueva `nameNormalized` (`String`, `@default("")` a nivel Prisma — solo
 ### Sin cambios de columnas para las demás correcciones de esta fase
 
 La validación de fechas reales (`dateOnlySchema`), el ciclo Prospecto↔Cliente (`recomputePersonContactStatus`), el bug de titular-cubierto, el solapamiento de cobertura de salud, y el reset de contraseña de usuario son todos cambios de lógica de aplicación (schemas Zod / servicios) — no requirieron ninguna migración adicional.
+
+## Migración 015 — Person.sex (Fase 024)
+
+Detalle funcional completo en `docs/DECISIONS.md` ("UAT final, sexo del contacto y filtrado de catálogo").
+
+### Enum nuevo: `PersonSex`
+
+`MALE`, `FEMALE`, `OTHER`, `UNKNOWN` (default). Dato administrativo simple, nunca una determinación clínica.
+
+### `people.sex` (nueva columna en `Person`)
+
+`PersonSex NOT NULL DEFAULT 'UNKNOWN'` — el default garantiza que ninguna fila existente ni ningún `prisma.person.create({...})` que todavía no conozca este campo se rompa. Nunca se infiere de otro dato (nombre, etc.); solo se fija explícitamente por el usuario o por el importador cuando el source lo trae.
