@@ -33,7 +33,7 @@ export type ProductOption = {
   name: string;
   planYear: number | null;
   policyType: string;
-  carrier: { name: string };
+  carrier: { id: string; name: string };
 };
 
 export type CoveredCandidate = {
@@ -51,6 +51,7 @@ export function PolicyForm({
   candidates,
   showProcessedBySelect,
   activeAgents = [],
+  eligibleAgentIdsByProductId = {},
   defaultValues,
   defaultCoveredMemberIds,
   submitLabel = "Crear póliza",
@@ -62,6 +63,14 @@ export function PolicyForm({
   candidates: CoveredCandidate[];
   showProcessedBySelect: boolean;
   activeAgents?: { id: string; name: string }[];
+  // Fase 025.3 (Bloque A): productId -> ids de agentes elegibles (con
+  // licencia + contrato vigentes) para el estado del hogar del titular
+  // + carrier/tipo de ese producto. Un producto con lista NO vacía
+  // aquí significa que la póliza resultará OWN — el selector se
+  // restringe a esos agentes; entrada vacía o ausente significa "sin
+  // restricción conocida" (REFERRAL/UNKNOWN, o estado del hogar aún no
+  // determinable), nunca al revés (ver policy-business-source.service.ts).
+  eligibleAgentIdsByProductId?: Record<string, string[]>;
   // Prefill para "Renovar póliza" (Fase 019.9) — nunca incluye
   // policyNumber/effectiveDate/terminationDate (el usuario siempre debe
   // introducirlos de nuevo, ver docs/DECISIONS.md).
@@ -77,6 +86,17 @@ export function PolicyForm({
   const [selectedProductId, setSelectedProductId] = useState(values.productId ?? dv.productId ?? "");
   const selectedProduct = products.find((p) => p.id === selectedProductId);
   const isHealthSelected = selectedProduct?.policyType === "HEALTH";
+
+  // Fase 025.3 (Bloque A): lista no vacía => este producto clasificará
+  // la póliza como OWN — el selector se restringe a esos agentes,
+  // nunca al universo completo de activeAgents (defensa server-side
+  // existe igual, ver policies.service.ts, pero la UI no debe sugerir
+  // una combinación que el servidor va a rechazar).
+  const eligibleAgentIds = selectedProductId ? eligibleAgentIdsByProductId[selectedProductId] ?? [] : [];
+  const restrictToEligible = eligibleAgentIds.length > 0;
+  const selectableAgents = restrictToEligible
+    ? activeAgents.filter((a) => eligibleAgentIds.includes(a.id))
+    : activeAgents;
 
   return (
     <form key={formKey} action={formAction} className="flex max-w-2xl flex-col gap-6">
@@ -360,18 +380,42 @@ export function PolicyForm({
           <div className="flex flex-col gap-1">
             <Label htmlFor="processedById">Procesado por</Label>
             <select
+              key={`processedBy-${selectedProductId}-${restrictToEligible}`}
               id="processedById"
               name="processedById"
-              defaultValue={values.processedById ?? dv.processedById ?? ""}
+              defaultValue={
+                restrictToEligible
+                  ? selectableAgents.length === 1
+                    ? selectableAgents[0].id
+                    : (values.processedById ?? dv.processedById ?? "")
+                  : (values.processedById ?? dv.processedById ?? "")
+              }
+              required={restrictToEligible}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             >
-              <option value="">Yo (quien crea la póliza)</option>
-              {activeAgents.map((a) => (
+              {!restrictToEligible && <option value="">Yo (quien crea la póliza)</option>}
+              {restrictToEligible && selectableAgents.length === 0 && (
+                <option value="" disabled>
+                  Ningún agente elegible — no se puede guardar como Propia
+                </option>
+              )}
+              {restrictToEligible && selectableAgents.length > 1 && (
+                <option value="" disabled>
+                  Selecciona un agente elegible
+                </option>
+              )}
+              {selectableAgents.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
                 </option>
               ))}
             </select>
+            {restrictToEligible && (
+              <p className="text-xs text-muted-foreground">
+                Esta combinación de estado, compañía y tipo de póliza clasifica como Propia de la
+                agencia — solo puede procesarla un agente con licencia y contrato vigentes.
+              </p>
+            )}
           </div>
         )}
       </section>

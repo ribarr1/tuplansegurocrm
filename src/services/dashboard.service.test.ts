@@ -15,6 +15,9 @@ const createdCarrierIds: string[] = [];
 const createdProductIds: string[] = [];
 const createdPolicyIds: string[] = [];
 const createdExpectationIds: string[] = [];
+const createdHouseholdIds: string[] = [];
+const createdLicenseIds: string[] = [];
+const createdContractIds: string[] = [];
 
 function trackPerson<T extends { id: string }>(p: T): T {
   createdPersonIds.push(p.id);
@@ -116,6 +119,10 @@ afterAll(async () => {
   await prisma.task.deleteMany({ where: { id: { in: createdTaskIds } } });
   await prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
   await prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } });
+  await prisma.agentCarrierContract.deleteMany({ where: { id: { in: createdContractIds } } });
+  await prisma.agentLicense.deleteMany({ where: { id: { in: createdLicenseIds } } });
+  await prisma.householdMember.deleteMany({ where: { householdId: { in: createdHouseholdIds } } });
+  await prisma.household.deleteMany({ where: { id: { in: createdHouseholdIds } } });
   await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
   await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
   await prisma.carrier.deleteMany({ where: { id: { in: createdCarrierIds } } });
@@ -459,5 +466,51 @@ describe("dashboard.service", () => {
     await makePolicyFor(admin, holderOther, { status: "ACTIVE", effectiveDate: dateOnlyString(-10) });
     const after = await getDashboard(agent);
     expect(after.policies.activeCount).toBe(before.policies.activeCount);
+  });
+
+  // Fase 025.3 (Bloque B): conteos OWN/REFERRAL en el Dashboard.
+  // makePolicyFor crea siempre un Carrier/Product nuevos sin ningún
+  // AgentLicense/AgentCarrierContract asociado y sin household (holder
+  // sin hogar) -> businessSource siempre UNKNOWN aquí, nunca OWN ni
+  // REFERRAL — por eso estas pruebas verifican REFERRAL (household con
+  // state pero sin agente elegible, ver policy-business-source
+  // service.test.ts para la matriz completa de elegibilidad) y OWN por
+  // separado, con sus propios holders/households.
+  it("AB) conteo de pólizas REFERRAL correcto (household con state, sin agente elegible)", async () => {
+    const before = await getDashboard(admin);
+    const holder = await makePerson();
+    const household = await prisma.household.create({ data: { state: "WY" } });
+    createdHouseholdIds.push(household.id);
+    await prisma.householdMember.create({ data: { householdId: household.id, personId: holder.id, role: "HEAD" } });
+    const policy = await makePolicyFor(admin, holder);
+    expect(policy.businessSource).toBe("REFERRAL");
+    const after = await getDashboard(admin);
+    expect(after.policies.referralCount).toBe(before.policies.referralCount + 1);
+  });
+
+  it("AC) conteo de pólizas OWN correcto (agente con licencia+contrato vigentes)", async () => {
+    const before = await getDashboard(admin);
+    const holder = await makePerson();
+    const household = await prisma.household.create({ data: { state: "NV" } });
+    createdHouseholdIds.push(household.id);
+    await prisma.householdMember.create({ data: { householdId: household.id, personId: holder.id, role: "HEAD" } });
+    const carrier = await prisma.carrier.create({ data: { name: uniqueName("Carrier Dashboard OWN") } });
+    createdCarrierIds.push(carrier.id);
+    const product = await prisma.product.create({
+      data: { carrierId: carrier.id, name: uniqueName("Plan Dashboard OWN"), policyType: "HEALTH" },
+    });
+    createdProductIds.push(product.id);
+    const license = await prisma.agentLicense.create({ data: { userId: agent.id, state: "NV", status: "ACTIVE" } });
+    createdLicenseIds.push(license.id);
+    const contract = await prisma.agentCarrierContract.create({
+      data: { userId: agent.id, carrierId: carrier.id, state: "NV", policyType: "HEALTH", status: "ACTIVE" },
+    });
+    createdContractIds.push(contract.id);
+    const policy = trackPolicy(
+      await createPolicy(admin, { holderId: holder.id, productId: product.id, holderCovered: "false" })
+    );
+    expect(policy.businessSource).toBe("OWN");
+    const after = await getDashboard(admin);
+    expect(after.policies.ownCount).toBe(before.policies.ownCount + 1);
   });
 });

@@ -260,6 +260,23 @@ export default async function DashboardPage() {
             <span className="font-heading text-2xl font-semibold text-foreground">{data.policies.pendingCount}</span>
             <span className="text-sm text-muted-foreground">Pólizas pendientes</span>
           </Link>
+          {/* Fase 025.3 (Bloque B): universo = TODAS las pólizas visibles
+              para este actor, cualquier status — businessSource es un
+              hecho histórico, no depende de si la póliza sigue activa. */}
+          <Link
+            href="/policies?businessSource=OWN"
+            className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30"
+          >
+            <span className="font-heading text-2xl font-semibold text-foreground">{data.policies.ownCount}</span>
+            <span className="text-sm text-muted-foreground">Pólizas propias</span>
+          </Link>
+          <Link
+            href="/policies?businessSource=REFERRAL"
+            className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30"
+          >
+            <span className="font-heading text-2xl font-semibold text-foreground">{data.policies.referralCount}</span>
+            <span className="text-sm text-muted-foreground">Pólizas referidas</span>
+          </Link>
         </div>
 
         {/* Fase 019.9 (§28-§29): "Vencen en 30 días" — nunca incluye

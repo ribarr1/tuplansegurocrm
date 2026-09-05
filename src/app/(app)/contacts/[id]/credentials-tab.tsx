@@ -56,6 +56,9 @@ export async function CredentialsTab({ actor, personId }: { actor: AuthorizedUse
                 <ClientCredentialRow
                   credentialId={cred.id}
                   personId={personId}
+                  portalType={cred.portalType}
+                  portalName={cred.portalName}
+                  portalUrl={cred.portalUrl}
                   usernameMasked={cred.usernameMasked}
                   passwordMasked={cred.passwordMasked}
                   canReveal={canReveal}

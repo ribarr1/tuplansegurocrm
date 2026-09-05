@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/authorization";
 import { getPersonById } from "@/services/people.service";
 import { getHouseholdsForPerson } from "@/services/households.service";
 import { listActiveCarriers, listCarriersForPolicyType, listActiveProducts } from "@/services/policies.service";
+import { computeEligibleAgentIdsByProduct } from "@/services/policy-business-source.service";
 import { listActiveAgents } from "@/services/users.service";
 import { listPeople } from "@/services/people.service";
 import { AppError } from "@/services/errors";
@@ -160,6 +161,16 @@ async function HolderPolicyForm({
   const showProcessedBySelect = actor.role === "ADMIN";
   const activeAgents = showProcessedBySelect ? await listActiveAgents(actor) : [];
 
+  // Fase 025.3 (Bloque A): mismo criterio que createPolicy
+  // (policies.service.ts) para decidir el household del titular — solo
+  // se conoce un estado inequívoco cuando pertenece a exactamente un
+  // hogar. Sin eso, ningún producto puede restringirse (quedará
+  // UNKNOWN, nunca OWN, hasta que el hogar tenga estado).
+  const singleHousehold = households.length === 1 ? households[0] : null;
+  const eligibleAgentIdsByProductId = showProcessedBySelect
+    ? await computeEligibleAgentIdsByProduct(singleHousehold?.state ?? null, products)
+    : {};
+
   return (
     <>
       <PolicyCatalogFilter
@@ -177,6 +188,7 @@ async function HolderPolicyForm({
         candidates={candidates}
         showProcessedBySelect={showProcessedBySelect}
         activeAgents={activeAgents}
+        eligibleAgentIdsByProductId={eligibleAgentIdsByProductId}
       />
     </>
   );

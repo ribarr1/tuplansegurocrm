@@ -17,10 +17,10 @@ import {
   cancelPolicySchema,
   policyTypeSchema,
 } from "@/schemas/policy.schema";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type PolicyType } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
 import { getTodayBusinessRange } from "@/lib/business-time";
-import { resolvePolicyBusinessSourceAtCreation } from "@/services/policy-business-source.service";
+import { getPolicyEligibility } from "@/services/policy-business-source.service";
 import { healthDefaultTerminationDate } from "@/lib/health-coverage-year";
 
 const POLICY_AUDIT_FIELDS = [
@@ -354,6 +354,43 @@ async function resolveProcessedByIdForUpdate(
   return agent.id;
 }
 
+// Fase 025.3 (Bloque A): una póliza que resultará OWN (al menos un
+// agente de la agencia con licencia+contrato vigentes para su
+// estado/carrier/tipo) nunca puede quedar procesada por alguien fuera
+// de ese conjunto — el selector de UI ya lo restringe, pero la regla
+// real vive aquí, server-side, para que una llamada directa a la
+// action no pueda saltársela. Si la póliza es REFERRAL/UNKNOWN,
+// processedById sigue siendo un simple procesador administrativo, sin
+// restricción.
+//
+// `resolvedProcessedById` (de resolveProcessedByIdForCreate/Update) YA
+// aplicó su propio default (actor.id cuando nadie pidió otro usuario)
+// ANTES de saber si la póliza sería OWN — ese default nunca debe
+// asignar en silencio a alguien sin licencia/contrato. Por eso, cuando
+// el default no calificó y el actor no pidió explícitamente a nadie
+// (requestedByActor === undefined) y hay EXACTAMENTE un agente
+// elegible, se sustituye por ese único agente (ticket: "preseleccionar
+// cuando sea seguro y coherente") — nunca cuando el actor sí pidió a
+// alguien en particular, ni cuando hay 0 o varios elegibles (ahí se
+// rechaza, nunca se adivina).
+function resolveOwnPolicyProcessedById(
+  actor: AuthorizedUser,
+  resolvedProcessedById: string,
+  requestedByActor: string | undefined,
+  businessSource: "OWN" | "REFERRAL" | "UNKNOWN",
+  eligibleAgentIds: string[]
+): string {
+  if (businessSource !== "OWN") return resolvedProcessedById;
+  if (eligibleAgentIds.includes(resolvedProcessedById)) return resolvedProcessedById;
+  if (actor.role === "ADMIN" && requestedByActor === undefined && eligibleAgentIds.length === 1) {
+    return eligibleAgentIds[0];
+  }
+  throw new AppError(
+    "VALIDATION_ERROR",
+    "processedById: Esta póliza es Propia de la agencia — solo puede procesarla un agente con licencia y contrato vigentes para este estado, compañía y tipo de póliza."
+  );
+}
+
 export async function listActiveCarriers(actor: AuthorizedUser) {
   void actor; // lectura de catálogo: cualquier usuario activo.
   return prisma.carrier.findMany({
@@ -556,17 +593,24 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
     );
   }
 
-  const processedById = await resolveProcessedByIdForCreate(actor, input.processedById);
+  const resolvedProcessedById = await resolveProcessedByIdForCreate(actor, input.processedById);
 
   // Fase 025 (Hallazgo #7, Parte I): Propia/Referida se calcula UNA
   // VEZ aquí, en el momento de creación, a partir del estado del
   // household — nunca se recalcula después (ver
   // policy-business-source.service.ts y docs/DECISIONS.md).
-  const businessSource = await resolvePolicyBusinessSourceAtCreation({
+  const { businessSource, eligibleAgentIds } = await getPolicyEligibility({
     householdId,
     carrierId: product.carrierId,
     policyType: product.policyType,
   });
+  const processedById = resolveOwnPolicyProcessedById(
+    actor,
+    resolvedProcessedById,
+    input.processedById,
+    businessSource,
+    eligibleAgentIds
+  );
 
   const membersToCreate: { personId: string; role: "PRIMARY" | "SPOUSE" | "DEPENDENT" | "OTHER" }[] = [
     ...(input.holderCovered ? [{ personId: input.holderId, role: "PRIMARY" as const }] : []),
@@ -713,17 +757,24 @@ export async function renewPolicy(actor: AuthorizedUser, rawOldPolicyId: unknown
     );
   }
 
-  const processedById = await resolveProcessedByIdForCreate(actor, input.processedById);
+  const resolvedProcessedById = await resolveProcessedByIdForCreate(actor, input.processedById);
 
   // Fase 025 (Parte I): la renovación es una póliza NUEVA — su
   // Propia/Referida se recalcula igual que en createPolicy, nunca se
   // copia de la póliza anterior (el producto/carrier puede cambiar en
   // una renovación).
-  const businessSource = await resolvePolicyBusinessSourceAtCreation({
+  const { businessSource, eligibleAgentIds } = await getPolicyEligibility({
     householdId: oldPolicy.householdId,
     carrierId: product.carrierId,
     policyType: product.policyType,
   });
+  const processedById = resolveOwnPolicyProcessedById(
+    actor,
+    resolvedProcessedById,
+    input.processedById,
+    businessSource,
+    eligibleAgentIds
+  );
 
   const membersToCreate: { personId: string; role: "PRIMARY" | "SPOUSE" | "DEPENDENT" | "OTHER" }[] = [
     ...(input.holderCovered ? [{ personId: oldPolicy.holderId, role: "PRIMARY" as const }] : []),
@@ -837,7 +888,9 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
       paymentStatus: true,
       operationType: true,
       healthCoverageSource: true,
-      product: { select: { policyType: true, planYear: true } },
+      businessSource: true,
+      processedById: true,
+      product: { select: { carrierId: true, policyType: true, planYear: true } },
       holder: { select: { assignedAgentId: true } },
       members: { select: { personId: true, person: { select: { assignedAgentId: true } } } },
     },
@@ -853,7 +906,8 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
 
   const data: Prisma.PolicyUncheckedUpdateInput = {};
 
-  let newProductForHealthDefault: { policyType: string; planYear: number | null } | null = null;
+  let newProductForHealthDefault: { carrierId: string; policyType: PolicyType; planYear: number | null } | null =
+    null;
   if (input.productId !== undefined && input.productId !== existing.productId) {
     if (existing.status !== "PENDING") {
       throw new AppError(
@@ -917,6 +971,38 @@ export async function updatePolicy(actor: AuthorizedUser, rawId: unknown, rawInp
 
   const resolvedProcessedById = await resolveProcessedByIdForUpdate(actor, input.processedById);
   if (resolvedProcessedById !== undefined) data.processedById = resolvedProcessedById;
+
+  // Fase 025.3 (Bloque A): businessSource histórico NUNCA se
+  // recalcula aquí (ver docs/DECISIONS.md) — pero si la póliza YA es
+  // OWN y esta edición está tocando quién la procesa o su
+  // carrier/tipo (vía productId, solo posible mientras PENDING), el
+  // agente final debe seguir siendo elegible para el estado/carrier/
+  // tipo VIGENTE de la póliza. Nunca se dispara solo por guardar otros
+  // campos (premiumAmount, fechas, etc.) — eso rompería pólizas
+  // históricas ante contratos/licencias que cambiaron después, algo
+  // que el hallazgo original prohíbe explícitamente.
+  if (existing.businessSource === "OWN" && (resolvedProcessedById !== undefined || newProductForHealthDefault)) {
+    const finalProcessedById = resolvedProcessedById ?? existing.processedById;
+    if (finalProcessedById) {
+      const finalCarrierId = newProductForHealthDefault?.carrierId ?? existing.product.carrierId;
+      const finalPolicyType = newProductForHealthDefault?.policyType ?? existing.product.policyType;
+      const { eligibleAgentIds } = await getPolicyEligibility({
+        householdId: existing.householdId,
+        carrierId: finalCarrierId,
+        policyType: finalPolicyType,
+      });
+      const resolvedFinalProcessedById = resolveOwnPolicyProcessedById(
+        actor,
+        finalProcessedById,
+        input.processedById,
+        "OWN",
+        eligibleAgentIds
+      );
+      if (resolvedFinalProcessedById !== finalProcessedById) {
+        data.processedById = resolvedFinalProcessedById;
+      }
+    }
+  }
 
   const finalStatus = (data.status as string | undefined) ?? existing.status;
   const finalEffectiveDate =

@@ -4,11 +4,21 @@ import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
 import {
   createClientPortalCredential,
+  updateClientPortalCredential,
   deactivateClientPortalCredential,
   revealClientPortalCredentialField,
   recordClientPortalCredentialCopy,
 } from "@/services/client-portal-credentials.service";
 import { AppError } from "@/services/errors";
+
+// Un campo vacío ("") de username/password significa "conservar el
+// valor cifrado actual" — nunca se envía al servicio como reemplazo
+// real (ver credential-vault.schema.ts: min(1) en ambos). Se omite la
+// clave por completo (mismo criterio que el vault de agente).
+function emptyToOmitted(value: FormDataEntryValue | null): string | undefined {
+  const str = String(value ?? "");
+  return str === "" ? undefined : str;
+}
 
 // Vault de credenciales de portal del CLIENTE — Fase 025 (Parte J). Ver
 // sensitive-identity-actions.ts (Fase 021) para el mismo principio:
@@ -32,6 +42,35 @@ export async function createClientPortalCredentialAction(
       portalUrl: String(formData.get("portalUrl") ?? ""),
       username: String(formData.get("username") ?? ""),
       password: String(formData.get("password") ?? ""),
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      const sep = error.message.indexOf(": ");
+      if (error.code === "VALIDATION_ERROR" && sep > 0) {
+        return { fieldErrors: { [error.message.slice(0, sep)]: error.message.slice(sep + 2) } };
+      }
+      return { error: error.message };
+    }
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  revalidatePath(`/contacts/${personId}`);
+  return undefined;
+}
+
+export async function updateClientPortalCredentialAction(
+  credentialId: string,
+  personId: string,
+  _prevState: CredentialFormState,
+  formData: FormData
+): Promise<CredentialFormState> {
+  const actor = await requireSessionUser();
+  try {
+    await updateClientPortalCredential(actor, credentialId, {
+      portalType: String(formData.get("portalType") ?? ""),
+      portalName: String(formData.get("portalName") ?? ""),
+      portalUrl: String(formData.get("portalUrl") ?? ""),
+      username: emptyToOmitted(formData.get("username")),
+      password: emptyToOmitted(formData.get("password")),
     });
   } catch (error) {
     if (error instanceof AppError) {

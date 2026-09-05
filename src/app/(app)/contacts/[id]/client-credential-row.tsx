@@ -1,8 +1,9 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { RevealableCredentialField } from "@/components/ui/revealable-credential-field";
+import { EditClientCredentialForm } from "./edit-client-credential-form";
 import {
   revealClientPortalCredentialAction,
   copyClientPortalCredentialAction,
@@ -12,6 +13,9 @@ import {
 export function ClientCredentialRow({
   credentialId,
   personId,
+  portalType,
+  portalName,
+  portalUrl,
   usernameMasked,
   passwordMasked,
   canReveal,
@@ -19,12 +23,29 @@ export function ClientCredentialRow({
 }: {
   credentialId: string;
   personId: string;
+  portalType: string;
+  portalName: string;
+  portalUrl: string;
   usernameMasked: string;
   passwordMasked: string;
   canReveal: boolean;
   isActive: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [isEditing, setIsEditing] = useState(false);
+
+  if (isEditing) {
+    return (
+      <EditClientCredentialForm
+        credentialId={credentialId}
+        personId={personId}
+        portalType={portalType}
+        portalName={portalName}
+        portalUrl={portalUrl}
+        onDone={() => setIsEditing(false)}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2 text-sm">
@@ -47,21 +68,26 @@ export function ClientCredentialRow({
         />
       </div>
       {isActive && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="w-fit"
-          disabled={isPending}
-          onClick={() => {
-            startTransition(async () => {
-              const result = await deactivateClientPortalCredentialAction(credentialId, personId);
-              if (result.error) alert(result.error);
-            });
-          }}
-        >
-          {isPending ? "Desactivando…" : "Desactivar"}
-        </Button>
+        <div className="flex gap-2">
+          <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={() => setIsEditing(true)}>
+            Editar
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-fit"
+            disabled={isPending}
+            onClick={() => {
+              startTransition(async () => {
+                const result = await deactivateClientPortalCredentialAction(credentialId, personId);
+                if (result.error) alert(result.error);
+              });
+            }}
+          >
+            {isPending ? "Desactivando…" : "Desactivar"}
+          </Button>
+        </div>
       )}
     </div>
   );

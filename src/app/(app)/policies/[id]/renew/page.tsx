@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/authorization";
 import { getPolicyById, listActiveProducts } from "@/services/policies.service";
+import { getHouseholdById } from "@/services/households.service";
+import { computeEligibleAgentIdsByProduct } from "@/services/policy-business-source.service";
 import { AppError } from "@/services/errors";
 import { listActiveAgents } from "@/services/users.service";
 import { Button } from "@/components/ui/button";
@@ -65,6 +67,15 @@ export default async function RenewPolicyPage({ params }: { params: Promise<{ id
   const showProcessedBySelect = actor.role === "ADMIN";
   const activeAgents = showProcessedBySelect ? await listActiveAgents(actor) : [];
 
+  // Fase 025.3 (Bloque A): la renovación es una póliza NUEVA — su
+  // elegibilidad se calcula igual que en "Nueva póliza", nunca se
+  // copia de la anterior. household de la renovación siempre es el
+  // mismo de oldPolicy (renewPolicy nunca lo cambia).
+  const household = oldPolicy.householdId ? await getHouseholdById(actor, oldPolicy.householdId) : null;
+  const eligibleAgentIdsByProductId = showProcessedBySelect
+    ? await computeEligibleAgentIdsByProduct(household?.state ?? null, products)
+    : {};
+
   const action = renewPolicyAction.bind(null, oldPolicy.id);
 
   return (
@@ -84,6 +95,7 @@ export default async function RenewPolicyPage({ params }: { params: Promise<{ id
         candidates={candidates}
         showProcessedBySelect={showProcessedBySelect}
         activeAgents={activeAgents}
+        eligibleAgentIdsByProductId={eligibleAgentIdsByProductId}
         defaultValues={{
           productId: oldPolicy.product.id,
           healthCoverageSource: oldPolicy.healthCoverageSource ?? "",

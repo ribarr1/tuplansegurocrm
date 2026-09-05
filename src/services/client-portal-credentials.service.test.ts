@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import {
   listClientPortalCredentials,
   createClientPortalCredential,
+  updateClientPortalCredential,
   revealClientPortalCredentialField,
 } from "@/services/client-portal-credentials.service";
 import type { AuthorizedUser } from "@/lib/authorization";
@@ -164,5 +165,117 @@ describe("client-portal-credentials.service", () => {
     const serialized = JSON.stringify(events);
     expect(serialized).not.toContain("Fixture-Audit-Client-Password!");
     expect(serialized).not.toContain("fixture.auditclient");
+  });
+
+  // Fase 025.3 (Bloque C) — UI de edición del vault. El servicio ya
+  // existía y no cambia aquí; estas pruebas cubren específicamente lo
+  // que la nueva UI de edición depende de que sea cierto.
+  it("G) editar metadata no sensible (portalName/portalUrl) sin tocar el secreto", async () => {
+    const admin = await makeActor("ADMIN");
+    const person = await makePerson();
+    const created = await createClientPortalCredential(admin, {
+      personId: person.id,
+      portalType: "CARRIER",
+      portalName: "Portal viejo (fixture)",
+      portalUrl: "https://old.example",
+      username: "fixture.g",
+      password: "Fixture-G-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    const updated = await updateClientPortalCredential(admin, created.id, { portalName: "Portal nuevo (fixture)" });
+    expect(updated.portalName).toBe("Portal nuevo (fixture)");
+    const revealed = await revealClientPortalCredentialField(admin, created.id, "password");
+    expect(revealed).toBe("Fixture-G-Password!");
+  });
+
+  it("H) campo de password vacío (omitido) conserva el ciphertext actual", async () => {
+    const admin = await makeActor("ADMIN");
+    const person = await makePerson();
+    const created = await createClientPortalCredential(admin, {
+      personId: person.id,
+      portalType: "CARRIER",
+      portalName: "Portal H (fixture)",
+      portalUrl: "https://h.example",
+      username: "fixture.h",
+      password: "Fixture-H-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    // Mismo contrato que la action: un campo vacío NUNCA se envía al
+    // servicio como string vacío, se omite del objeto — "conservar" se
+    // expresa con ausencia de la clave, nunca con "".
+    await updateClientPortalCredential(admin, created.id, { portalUrl: "https://h2.example" });
+    const revealed = await revealClientPortalCredentialField(admin, created.id, "password");
+    expect(revealed).toBe("Fixture-H-Password!");
+  });
+
+  it("I) reemplazar username/password vuelve a cifrar y el nuevo valor se recupera correctamente", async () => {
+    const admin = await makeActor("ADMIN");
+    const person = await makePerson();
+    const created = await createClientPortalCredential(admin, {
+      personId: person.id,
+      portalType: "CARRIER",
+      portalName: "Portal I (fixture)",
+      portalUrl: "https://i.example",
+      username: "fixture.i.old",
+      password: "Fixture-I-Old-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    await updateClientPortalCredential(admin, created.id, {
+      username: "fixture.i.new",
+      password: "Fixture-I-New-Password!",
+    });
+    const revealedUsername = await revealClientPortalCredentialField(admin, created.id, "username");
+    const revealedPassword = await revealClientPortalCredentialField(admin, created.id, "password");
+    expect(revealedUsername).toBe("fixture.i.new");
+    expect(revealedPassword).toBe("Fixture-I-New-Password!");
+  });
+
+  it("J) usuario sin permiso (AGENT sin acceso operativo) recibe rechazo server-side al editar", async () => {
+    const admin = await makeActor("ADMIN");
+    const agentOwner = await makeActor("AGENT");
+    const agentOther = await makeActor("AGENT");
+    const person = await makePerson(agentOwner.id);
+    const created = await createClientPortalCredential(admin, {
+      personId: person.id,
+      portalType: "CARRIER",
+      portalName: "Portal J (fixture)",
+      portalUrl: "https://j.example",
+      username: "fixture.j",
+      password: "Fixture-J-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    await expect(
+      updateClientPortalCredential(agentOther, created.id, { portalName: "Hackeado" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("K) el AuditEvent UPDATED nunca contiene el secreto anterior ni el nuevo", async () => {
+    const admin = await makeActor("ADMIN");
+    const person = await makePerson();
+    const created = await createClientPortalCredential(admin, {
+      personId: person.id,
+      portalType: "CARRIER",
+      portalName: "Portal K (fixture)",
+      portalUrl: "https://k.example",
+      username: "fixture.k.old",
+      password: "Fixture-K-Old-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    await updateClientPortalCredential(admin, created.id, {
+      username: "fixture.k.new",
+      password: "Fixture-K-New-Password!",
+    });
+    const events = await prisma.auditEvent.findMany({ where: { entityId: created.id, action: "CREDENTIAL_UPDATED" } });
+    expect(events.length).toBeGreaterThan(0);
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain("Fixture-K-Old-Password!");
+    expect(serialized).not.toContain("Fixture-K-New-Password!");
+    expect(serialized).not.toContain("fixture.k.old");
+    expect(serialized).not.toContain("fixture.k.new");
   });
 });

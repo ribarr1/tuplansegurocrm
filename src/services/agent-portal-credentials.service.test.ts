@@ -187,4 +187,78 @@ describe("agent-portal-credentials.service", () => {
     const stillThere = await prisma.agentPortalCredential.findUnique({ where: { id: created.id } });
     expect(stillThere).not.toBeNull();
   });
+
+  // Fase 025.3 (Bloque C) — UI de edición del vault. El servicio de
+  // update ya existía (Fase 025); estas pruebas cubren lo que la nueva
+  // UI de edición depende de que sea cierto.
+  it("I) editar metadata no sensible (portalName) sin tocar el secreto", async () => {
+    const admin = await makeActor("ADMIN");
+    const agent = await makeActor("AGENT");
+    const created = await createAgentPortalCredential(admin, {
+      userId: agent.id,
+      portalName: "Portal viejo (fixture)",
+      portalUrl: "https://old.example",
+      username: "fixture.i",
+      password: "Fixture-I-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    const updated = await updateAgentPortalCredential(admin, created.id, { portalName: "Portal nuevo (fixture)" });
+    expect(updated.portalName).toBe("Portal nuevo (fixture)");
+    const revealed = await revealAgentPortalCredentialField(admin, created.id, "password");
+    expect(revealed).toBe("Fixture-I-Password!");
+  });
+
+  it("J) campo de password omitido (equivalente a vacío en el formulario) conserva el ciphertext actual", async () => {
+    const admin = await makeActor("ADMIN");
+    const agent = await makeActor("AGENT");
+    const created = await createAgentPortalCredential(admin, {
+      userId: agent.id,
+      portalName: "Portal J (fixture)",
+      portalUrl: "https://j.example",
+      username: "fixture.j",
+      password: "Fixture-J-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    await updateAgentPortalCredential(admin, created.id, { portalUrl: "https://j2.example" });
+    const revealed = await revealAgentPortalCredentialField(admin, created.id, "password");
+    expect(revealed).toBe("Fixture-J-Password!");
+  });
+
+  it("K) AGENT no puede editar credenciales de otro agente", async () => {
+    const admin = await makeActor("ADMIN");
+    const agentOwner = await makeActor("AGENT");
+    const agentOther = await makeActor("AGENT");
+    const created = await createAgentPortalCredential(admin, {
+      userId: agentOwner.id,
+      portalName: "Portal K (fixture)",
+      portalUrl: "https://k.example",
+      username: "fixture.k",
+      password: "Fixture-K-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    await expect(
+      updateAgentPortalCredential(agentOther, created.id, { portalName: "Hackeado" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("L) ASSISTANT no gana capacidad de editar credenciales de agente", async () => {
+    const admin = await makeActor("ADMIN");
+    const agent = await makeActor("AGENT");
+    const assistant = await makeActor("ASSISTANT");
+    const created = await createAgentPortalCredential(admin, {
+      userId: agent.id,
+      portalName: "Portal L (fixture)",
+      portalUrl: "https://l.example",
+      username: "fixture.l",
+      password: "Fixture-L-Password!",
+    });
+    createdCredentialIds.push(created.id);
+
+    await expect(
+      updateAgentPortalCredential(assistant, created.id, { portalName: "Hackeado" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
 });

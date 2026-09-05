@@ -32,7 +32,7 @@ export default async function ReportsPage() {
               <CardTitle className="text-sm font-medium">Pólizas</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              Listado de pólizas con filtros por estado, tipo, compañía y agente.
+              Listado de pólizas con filtros por estado, tipo, compañía, agente y Propia/Referida.
             </CardContent>
           </Card>
         </Link>

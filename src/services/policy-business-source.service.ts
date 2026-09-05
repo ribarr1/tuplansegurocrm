@@ -52,6 +52,28 @@ export function determineBusinessSource(eligibleAgentIds: string[]): "OWN" | "RE
   return eligibleAgentIds.length > 0 ? "OWN" : "REFERRAL";
 }
 
+// Fase 025.3 (Bloque A): variante que además devuelve la lista de
+// agentes elegibles — la necesita policies.service.ts para restringir
+// (server-side, nunca solo en la UI) quién puede ser processedById en
+// una póliza que resultará OWN. Nunca una segunda consulta separada:
+// resolvePolicyBusinessSourceAtCreation (abajo) es un envoltorio de
+// esta misma función para no duplicar la lógica.
+export async function getPolicyEligibility(input: {
+  householdId: string | null;
+  carrierId: string;
+  policyType: PolicyType;
+}): Promise<{ businessSource: "OWN" | "REFERRAL" | "UNKNOWN"; eligibleAgentIds: string[] }> {
+  if (!input.householdId) return { businessSource: "UNKNOWN", eligibleAgentIds: [] };
+  const household = await prisma.household.findUnique({
+    where: { id: input.householdId },
+    select: { state: true },
+  });
+  if (!household?.state) return { businessSource: "UNKNOWN", eligibleAgentIds: [] };
+
+  const eligibleAgentIds = await computeEligibleAgentIds(household.state, input.carrierId, input.policyType);
+  return { businessSource: determineBusinessSource(eligibleAgentIds), eligibleAgentIds };
+}
+
 // Resuelve businessSource para una póliza en el momento de creación,
 // a partir del estado del household (si se conoce) — nunca adivina un
 // estado. Devuelve UNKNOWN cuando el household no tiene state
@@ -63,13 +85,26 @@ export async function resolvePolicyBusinessSourceAtCreation(input: {
   carrierId: string;
   policyType: PolicyType;
 }): Promise<"OWN" | "REFERRAL" | "UNKNOWN"> {
-  if (!input.householdId) return "UNKNOWN";
-  const household = await prisma.household.findUnique({
-    where: { id: input.householdId },
-    select: { state: true },
-  });
-  if (!household?.state) return "UNKNOWN";
+  return (await getPolicyEligibility(input)).businessSource;
+}
 
-  const eligible = await computeEligibleAgentIds(household.state, input.carrierId, input.policyType);
-  return determineBusinessSource(eligible);
+// Fase 025.3 (Bloque A): calcula, para un estado de household YA
+// conocido, la lista de agentes elegibles de CADA producto de un
+// catálogo — usado únicamente para que la UI (selector de "Procesado
+// por" al crear/renovar/editar) pueda restringirse al mismo universo
+// que el servidor exigirá, sin adivinar ni duplicar la regla de
+// elegibilidad. `state` null (household desconocido o con >1 hogar,
+// mismo criterio que policies.service.ts) devuelve un mapa vacío —
+// ninguna restricción se puede aplicar sin un estado conocido.
+export async function computeEligibleAgentIdsByProduct(
+  state: string | null,
+  products: { id: string; policyType: PolicyType; carrier: { id: string } }[]
+): Promise<Record<string, string[]>> {
+  if (!state) return {};
+  const entries = await Promise.all(
+    products.map(
+      async (p) => [p.id, await computeEligibleAgentIds(state, p.carrier.id, p.policyType)] as const
+    )
+  );
+  return Object.fromEntries(entries);
 }

@@ -168,16 +168,28 @@ async function getBirthdaysBlock(actor: AuthorizedUser) {
 }
 
 async function getPoliciesBlock(actor: AuthorizedUser) {
-  const [activeResult, pendingResult, expiringSoon] = await Promise.all([
+  const [activeResult, pendingResult, expiringSoon, ownResult, referralResult] = await Promise.all([
     listPolicies(actor, { status: "ACTIVE", pageSize: 1 }),
     listPolicies(actor, { status: "PENDING", pageSize: 1 }),
     // §28-§29: "Vencen en 30 días" — nunca CANCELLED/EXPIRED (ver
     // listExpiringPolicies en policies.service.ts para el detalle).
     listExpiringPolicies(actor, 30),
+    // Fase 025.3 (Bloque B): mismo patrón que activeCount/pendingCount
+    // — reutiliza listPolicies (ya scoped por rol vía
+    // policyAgentAccessWhere) con pageSize:1 y lee .total, nunca un
+    // conteo aparte que pudiera desalinearse del resto del Dashboard.
+    // Universo: TODAS las pólizas visibles para este actor,
+    // independientemente de status (igual que el filtro de
+    // businessSource en /policies) — businessSource es un hecho
+    // histórico de la póliza, no algo que dependa de si sigue activa.
+    listPolicies(actor, { businessSource: "OWN", pageSize: 1 }),
+    listPolicies(actor, { businessSource: "REFERRAL", pageSize: 1 }),
   ]);
   return {
     activeCount: activeResult.total,
     pendingCount: pendingResult.total,
+    ownCount: ownResult.total,
+    referralCount: referralResult.total,
     expiringSoon: expiringSoon.map((p) => ({
       id: p.id,
       policyNumber: p.policyNumber,

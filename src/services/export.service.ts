@@ -10,7 +10,12 @@ import { toCsv } from "@/lib/csv";
 import { formatDateOnlyUS } from "@/lib/date-only";
 import { clientReportQuerySchema } from "@/schemas/reports.schema";
 import { buildClientReportWhere, clientReportSelect } from "@/services/reports.service";
-import { IMMIGRATION_CATEGORY_LABELS, POLICY_TYPE_LABELS, paymentModeShowsAssistanceBadge } from "@/lib/labels";
+import {
+  IMMIGRATION_CATEGORY_LABELS,
+  POLICY_TYPE_LABELS,
+  POLICY_BUSINESS_SOURCE_LABELS,
+  paymentModeShowsAssistanceBadge,
+} from "@/lib/labels";
 
 // ---------------------------------------------------------------------------
 // Exportación CSV — Fase 020 (§1 de la ficha).
@@ -87,6 +92,9 @@ export async function exportPoliciesCsv(actor: AuthorizedUser): Promise<string> 
       premiumAmount: true,
       billingFrequency: true,
       paymentStatus: true,
+      // Fase 025.3 (Bloque B): valor histórico ya almacenado — nunca se
+      // recalcula para el export (ver policy-business-source.service.ts).
+      businessSource: true,
       holder: { select: { firstName: true, lastName: true } },
       product: { select: { name: true, policyType: true, carrier: { select: { name: true } } } },
     },
@@ -107,6 +115,7 @@ export async function exportPoliciesCsv(actor: AuthorizedUser): Promise<string> 
       "Prima",
       "Frecuencia",
       "Estado de pago",
+      "Propia/Referida",
     ],
     policies.map((p) => [
       p.policyNumber,
@@ -120,6 +129,7 @@ export async function exportPoliciesCsv(actor: AuthorizedUser): Promise<string> 
       p.premiumAmount ? p.premiumAmount.toString() : "",
       p.billingFrequency ?? "",
       p.paymentStatus ?? "",
+      POLICY_BUSINESS_SOURCE_LABELS[p.businessSource],
     ])
   );
 

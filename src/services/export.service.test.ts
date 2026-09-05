@@ -88,6 +88,15 @@ describe("export.service — CSV", () => {
     expect(csv.toLowerCase()).not.toContain("ssn");
   });
 
+  // Fase 025.3 (Bloque B): businessSource es un hecho histórico
+  // (Propia/Referida) ya almacenado en Policy — el export debe
+  // mostrarlo con su label existente, nunca recalcularlo.
+  it("exporta pólizas con la columna Propia/Referida, usando el valor histórico almacenado", async () => {
+    const csv = await exportPoliciesCsv(admin);
+    expect(csv).toContain("Propia/Referida");
+    expect(csv).toMatch(/Referida|Sin clasificar|Propia/);
+  });
+
   it("ASSISTANT no puede exportar comisiones", async () => {
     await expect(exportCommissionsCsv(assistant)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });

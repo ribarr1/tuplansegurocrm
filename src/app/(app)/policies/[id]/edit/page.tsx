@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/authorization";
 import { getPolicyById, listActiveProducts } from "@/services/policies.service";
+import { getHouseholdById } from "@/services/households.service";
+import { computeEligibleAgentIdsByProduct } from "@/services/policy-business-source.service";
 import { listActiveAgents } from "@/services/users.service";
 import { AppError } from "@/services/errors";
 import { Button } from "@/components/ui/button";
@@ -64,6 +66,21 @@ export default async function EditPolicyPage({
   const showProcessedBySelect = actor.role === "ADMIN";
   const activeAgents = showProcessedBySelect ? await listActiveAgents(actor) : [];
 
+  // Fase 025.3 (Bloque A): businessSource histórico NUNCA se
+  // recalcula al editar (ver docs/DECISIONS.md) — el selector de
+  // "Procesado por" solo se restringe cuando esta póliza YA es OWN.
+  // Si no lo es, el mapa queda vacío a propósito: no hay que sugerir
+  // una reclasificación que el servidor tampoco va a hacer.
+  const eligibleAgentIdsByProductId =
+    showProcessedBySelect && policy.businessSource === "OWN"
+      ? await computeEligibleAgentIdsByProduct(
+          policy.householdId ? (await getHouseholdById(actor, policy.householdId)).state : null,
+          canChangeProduct
+            ? products
+            : [{ id: policy.product.id, policyType: policy.product.policyType, carrier: { id: policy.product.carrier.id } }]
+        )
+      : {};
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <h2 className="font-heading text-lg font-semibold">
@@ -93,6 +110,7 @@ export default async function EditPolicyPage({
         products={products}
         showProcessedBySelect={showProcessedBySelect}
         activeAgents={activeAgents}
+        eligibleAgentIdsByProductId={eligibleAgentIdsByProductId}
         isHealthPolicy={policy.product.policyType === "HEALTH"}
       />
     </div>

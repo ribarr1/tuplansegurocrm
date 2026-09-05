@@ -78,6 +78,10 @@ export default async function AgentCredentialsPage({ params }: { params: Promise
               <CredentialRow
                 credentialId={cred.id}
                 userId={id}
+                carrierId={cred.carrierId}
+                portalName={cred.portalName}
+                portalUrl={cred.portalUrl}
+                carriers={carriers}
                 usernameMasked={cred.usernameMasked}
                 passwordMasked={cred.passwordMasked}
                 canReveal={canReveal}

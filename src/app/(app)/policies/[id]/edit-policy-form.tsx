@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { USDateInput } from "@/components/ui/us-date-input";
@@ -48,6 +48,7 @@ export function EditPolicyForm({
   products,
   showProcessedBySelect,
   activeAgents = [],
+  eligibleAgentIdsByProductId = {},
   isHealthPolicy,
 }: {
   action: (state: PolicyFormState, formData: FormData) => Promise<PolicyFormState>;
@@ -56,11 +57,24 @@ export function EditPolicyForm({
   products: ProductOption[];
   showProcessedBySelect: boolean;
   activeAgents?: { id: string; name: string }[];
+  // Fase 025.3 (Bloque A): mismo contrato que policy-form.tsx, pero la
+  // página SOLO puebla este mapa cuando la póliza YA es OWN
+  // (businessSource histórico, nunca recalculado) — si no lo es, viene
+  // vacío y el selector nunca se restringe, aunque el producto elegido
+  // "luciera" OWN hoy (ver docs/DECISIONS.md: no reclasificar en
+  // silencio al editar).
+  eligibleAgentIdsByProductId?: Record<string, string[]>;
   isHealthPolicy: boolean;
 }) {
   const [state, formAction, isPending] = useActionState(action, undefined);
   const values = { ...defaultValues, ...(state?.values ?? {}) };
   const formKey = state ? "retry" : "initial";
+  const [selectedProductId, setSelectedProductId] = useState(values.productId);
+  const eligibleAgentIds = eligibleAgentIdsByProductId[selectedProductId] ?? [];
+  const restrictToEligible = eligibleAgentIds.length > 0;
+  const selectableAgents = restrictToEligible
+    ? activeAgents.filter((a) => eligibleAgentIds.includes(a.id))
+    : activeAgents;
 
   return (
     <form key={formKey} action={formAction} className="flex max-w-2xl flex-col gap-4">
@@ -77,6 +91,7 @@ export function EditPolicyForm({
             id="productId"
             name="productId"
             defaultValue={values.productId}
+            onChange={(e) => setSelectedProductId(e.target.value)}
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
           >
             {products.map((product) => (
@@ -262,18 +277,34 @@ export function EditPolicyForm({
         <div className="flex flex-col gap-1">
           <Label htmlFor="processedById">Procesado por</Label>
           <select
+            key={`processedBy-${selectedProductId}-${restrictToEligible}`}
             id="processedById"
             name="processedById"
-            defaultValue={values.processedById ?? ""}
+            defaultValue={
+              restrictToEligible && selectableAgents.length === 1
+                ? selectableAgents[0].id
+                : (values.processedById ?? "")
+            }
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="">Sin cambios</option>
-            {activeAgents.map((a) => (
+            {restrictToEligible && selectableAgents.length === 0 && (
+              <option value="" disabled>
+                Ningún agente elegible — esta póliza es Propia
+              </option>
+            )}
+            {selectableAgents.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
               </option>
             ))}
           </select>
+          {restrictToEligible && (
+            <p className="text-xs text-muted-foreground">
+              Esta póliza es Propia de la agencia — solo puede reasignarse a un agente con licencia y
+              contrato vigentes para su estado, compañía y tipo.
+            </p>
+          )}
         </div>
       )}
 
