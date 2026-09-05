@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ROLE_LABELS } from "@/lib/labels";
 import { CreateUserForm } from "./create-user-form";
 import { ToggleUserActiveButton } from "./toggle-active-button";
+import { ToggleUserIsAgentButton } from "./toggle-is-agent-button";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { formatDateUS } from "@/lib/business-time";
 
@@ -41,6 +42,7 @@ export default async function UsersPage() {
               <TableHead>Nombre</TableHead>
               <TableHead>Correo</TableHead>
               <TableHead>Rol</TableHead>
+              <TableHead>Agente</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead>Creado</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
@@ -53,16 +55,23 @@ export default async function UsersPage() {
                 <TableCell>{user.email}</TableCell>
                 <TableCell>{ROLE_LABELS[user.role]}</TableCell>
                 <TableCell>
+                  {user.isAgent ? (
+                    <Badge variant="secondary">Agente</Badge>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
                   <Badge variant={user.isActive ? "default" : "outline"}>
                     {user.isActive ? "Activo" : "Inactivo"}
                   </Badge>
                 </TableCell>
                 <TableCell>{formatDate(user.createdAt)}</TableCell>
-                <TableCell className="flex justify-end gap-2 text-right">
+                <TableCell className="flex flex-wrap justify-end gap-2 text-right">
                   <Link href={`/settings/users/${user.id}/activity`} className="text-sm underline">
                     Ver actividad
                   </Link>
-                  {(user.role === "AGENT" || user.role === "ADMIN") && (
+                  {(user.role === "AGENT" || user.isAgent) && (
                     <>
                       <Link href={`/settings/users/${user.id}/licenses`} className="text-sm underline">
                         Licencias
@@ -76,6 +85,7 @@ export default async function UsersPage() {
                     </>
                   )}
                   <ResetPasswordDialog userId={user.id} userName={user.name} />
+                  <ToggleUserIsAgentButton userId={user.id} role={user.role} isAgent={user.isAgent} />
                   <ToggleUserActiveButton
                     userId={user.id}
                     isActive={user.isActive}

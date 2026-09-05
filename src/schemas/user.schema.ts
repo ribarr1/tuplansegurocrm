@@ -8,6 +8,11 @@ export const createUserSchema = z.object({
   name: z.string().trim().min(1, "El nombre es requerido.").max(200),
   email: z.email("Correo electrónico inválido.").trim().toLowerCase(),
   role: z.enum(USER_ROLE_VALUES, "Selecciona un rol válido."),
+  // Fase 025.4 (UAT-03/07): "¿Este usuario también es agente?" —
+  // irrelevante cuando role=AGENT (siempre true, ver
+  // users.service.ts::createUser), default false para ADMIN/ASSISTANT
+  // — nunca se asume.
+  isAgent: z.boolean().default(false),
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
@@ -16,6 +21,12 @@ export const setUserActiveSchema = z.object({
   isActive: z.boolean(),
 });
 export type SetUserActiveInput = z.infer<typeof setUserActiveSchema>;
+
+export const setUserIsAgentSchema = z.object({
+  id: userIdSchema,
+  isAgent: z.boolean(),
+});
+export type SetUserIsAgentInput = z.infer<typeof setUserIsAgentSchema>;
 
 // Fase 022 (Hallazgo #4 de UAT) — Restablecer contraseña. Misma
 // política mínima ya configurada en auth.ts (minPasswordLength: 10).

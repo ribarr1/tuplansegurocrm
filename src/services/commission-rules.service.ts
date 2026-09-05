@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
-import { assertCanAccessPolicy } from "@/services/policies.service";
+import { assertCanAccessPolicy, assertPolicyIsMutable } from "@/services/policies.service";
 import {
   commissionRuleIdSchema,
   createCommissionRuleSchema,
@@ -76,12 +76,18 @@ export async function createCommissionRule(actor: AuthorizedUser, rawInput: unkn
   if (input.policyId) {
     const policy = await prisma.policy.findUnique({
       where: { id: input.policyId },
-      select: { id: true, productId: true, holderId: true, householdId: true },
+      select: { id: true, productId: true, status: true, holderId: true, householdId: true },
     });
     if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
     if (policy.productId !== input.productId) {
       throw new AppError("VALIDATION_ERROR", "policyId: Esta póliza no pertenece al producto seleccionado.");
     }
+    // Fase 025.4 (UAT-01): un override de comisión POR PÓLIZA es una
+    // mutación derivada de esa póliza — nunca se crea/reemplaza contra
+    // una CANCELLED/EXPIRED. Una regla a nivel de Product (policyId
+    // null) no está sujeta a esto, no pertenece a ninguna póliza en
+    // particular.
+    assertPolicyIsMutable(policy.status);
     policyHolderId = policy.holderId;
     policyHouseholdId = policy.householdId;
   }
@@ -139,9 +145,17 @@ export async function deactivateCommissionRule(actor: AuthorizedUser, rawId: unk
   const id = parseOrThrow(commissionRuleIdSchema, rawId);
   const existing = await prisma.commissionRule.findUnique({
     where: { id },
-    select: { id: true, policyId: true, policy: { select: { holderId: true, householdId: true } } },
+    select: {
+      id: true,
+      policyId: true,
+      policy: { select: { status: true, holderId: true, householdId: true } },
+    },
   });
   if (!existing) throw new AppError("NOT_FOUND", "Regla no encontrada.");
+  // Fase 025.4 (UAT-01): solo aplica a un override de póliza
+  // (existing.policy no-null); una regla de Product no tiene póliza
+  // que revisar.
+  if (existing.policy) assertPolicyIsMutable(existing.policy.status);
 
   return prisma.$transaction(async (tx) => {
     const updated = await tx.commissionRule.update({
@@ -371,12 +385,16 @@ export async function generateExpectationForPeriod(actor: AuthorizedUser, rawInp
     where: { id: input.policyId },
     select: {
       id: true,
+      status: true,
       holder: { select: { assignedAgentId: true } },
       members: { select: { person: { select: { assignedAgentId: true } } } },
     },
   });
   if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+  // Fase 025.4 (UAT-01): generar una expectativa manual es una
+  // mutación derivada — nunca contra una CANCELLED/EXPIRED.
+  assertPolicyIsMutable(policy.status);
 
   return generateExpectationCore(policy.id, input.period, actor);
 }
@@ -405,4 +423,141 @@ export async function autoGenerateCurrentPeriodExpectation(
     // Efecto secundario best-effort — un fallo aquí nunca debe romper
     // la operación que lo disparó (crear póliza, agregar miembro, etc.).
   }
+}
+
+// Fase 025.4 (UAT-04) — calendario automático completo para HEALTH
+// con regla mensual aplicable: genera TODOS los meses desde
+// effectiveDate hasta terminationDate (ambos inclusive), no solo el
+// mes de negocio actual. Reutiliza generateExpectationCore mes a mes
+// — ya es idempotente ((policyId, period) es UNIQUE) y ya respeta la
+// periodicidad real de la regla (ONE_TIME/ANNUAL se SKIPPEA solos en
+// los meses que no correspondan, ver computeExpectedAmount) — nunca
+// se duplica esa lógica aquí, esta función solo decide EL RANGO de
+// meses a intentar.
+//
+// Nunca genera un rango abierto: requiere effectiveDate Y
+// terminationDate no-nulos. Solo aplica a HEALTH (ver ficha de UAT) y
+// solo mientras la póliza está ACTIVE (mismo criterio que
+// autoGenerateCurrentPeriodExpectation) — no tiene sentido generar
+// expectativas futuras para una PENDING que todavía no empezó de
+// verdad. Best-effort: nunca lanza, nunca bloquea la operación que la
+// disparó (crear/renovar/editar póliza, asignar regla).
+const MAX_SYNC_MONTHS = 240; // 20 años — salvaguarda contra datos corruptos, nunca un límite de negocio real.
+
+export async function syncCommissionExpectationsForPolicy(
+  policyId: string,
+  actor?: AuthorizedUser
+): Promise<void> {
+  try {
+    const policy = await prisma.policy.findUnique({
+      where: { id: policyId },
+      select: {
+        id: true,
+        status: true,
+        effectiveDate: true,
+        terminationDate: true,
+        product: { select: { policyType: true } },
+      },
+    });
+    if (!policy) return;
+    if (policy.status !== "ACTIVE") return;
+    if (policy.product.policyType !== "HEALTH") return;
+    if (!policy.effectiveDate || !policy.terminationDate) return;
+
+    let year = policy.effectiveDate.getUTCFullYear();
+    let month = policy.effectiveDate.getUTCMonth() + 1;
+    const endYear = policy.terminationDate.getUTCFullYear();
+    const endMonth = policy.terminationDate.getUTCMonth() + 1;
+
+    for (let i = 0; i < MAX_SYNC_MONTHS; i++) {
+      if (year > endYear || (year === endYear && month > endMonth)) break;
+      const period = new Date(Date.UTC(year, month - 1, 1));
+      await generateExpectationCore(policyId, period, actor ?? null, { requireActiveStatus: true });
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
+    }
+  } catch {
+    // Efecto secundario best-effort — nunca rompe la operación que lo
+    // disparó, mismo criterio que autoGenerateCurrentPeriodExpectation.
+  }
+}
+
+// Fase 025.4 (UAT-04) — limpieza de expectativas al cancelar una
+// póliza. Se llama desde la capa de Server Actions DESPUÉS de que
+// cancelPolicy ya dejó la Policy en CANCELLED (mismo motivo que
+// autoGenerateCurrentPeriodExpectation: evitar un import circular con
+// policies.service.ts, y porque UAT-01 exige que la póliza ya esté
+// bloqueada antes de considerar terminados sus efectos derivados).
+//
+// Regla: expectativas ACTIVE cuyo período sea >= el mes de la fecha
+// de cancelación REAL (terminationDate, nunca updatedAt) se procesan:
+//   - Sin CommissionPayment asociado -> se retiran (delete real, nunca
+//     representaron dinero recibido, no hay nada que preservar).
+//   - Con CommissionPayment asociado -> NUNCA se borran (ver
+//     CLAUDE.md §31 y la instrucción explícita de este hallazgo);
+//     se marcan CANCELLED (el mismo estado que ya usa
+//     cancelCommissionExpectation) y se audita el conflicto para
+//     revisión administrativa — la cancelación de la póliza en sí
+//     nunca se bloquea por esto.
+// Los CommissionPayment, AuditEvent y meses ANTERIORES al de
+// cancelación nunca se tocan.
+export async function removeCommissionExpectationsAfterCancellation(
+  policyId: string,
+  cancellationDate: Date,
+  actor: AuthorizedUser | null
+): Promise<{ removed: number; flaggedWithPayments: number }> {
+  const cancellationMonth = new Date(
+    Date.UTC(cancellationDate.getUTCFullYear(), cancellationDate.getUTCMonth(), 1)
+  );
+
+  const candidates = await prisma.commissionExpectation.findMany({
+    where: { policyId, status: "ACTIVE", period: { gte: cancellationMonth } },
+    select: {
+      id: true,
+      policy: { select: { holderId: true, householdId: true } },
+      payments: { select: { id: true } },
+    },
+  });
+
+  let removed = 0;
+  let flaggedWithPayments = 0;
+  for (const exp of candidates) {
+    if (exp.payments.length === 0) {
+      await prisma.$transaction(async (tx) => {
+        await tx.commissionExpectation.delete({ where: { id: exp.id } });
+        await recordAuditEvent(tx, {
+          actor,
+          entityType: "CommissionExpectation",
+          entityId: exp.id,
+          action: "COMMISSION_EXPECTATION_REMOVED_ON_CANCEL",
+          policyId,
+          householdId: exp.policy.householdId,
+          contactPersonId: exp.policy.holderId,
+          summary: "Expectativa de comisión retirada — mes posterior/igual al de cancelación, sin pagos asociados",
+        });
+      });
+      removed++;
+    } else {
+      await prisma.$transaction(async (tx) => {
+        await tx.commissionExpectation.update({ where: { id: exp.id }, data: { status: "CANCELLED" } });
+        await recordAuditEvent(tx, {
+          actor,
+          entityType: "CommissionExpectation",
+          entityId: exp.id,
+          action: "COMMISSION_EXPECTATION_UPDATE",
+          policyId,
+          householdId: exp.policy.householdId,
+          contactPersonId: exp.policy.holderId,
+          summary:
+            "Expectativa de comisión marcada CANCELLED (mes posterior/igual al de cancelación) — NO se elimina porque ya tiene pagos/conciliación asociados; requiere revisión administrativa.",
+          metadata: { reason: "post_cancellation_conflict_has_payments" },
+        });
+      });
+      flaggedWithPayments++;
+    }
+  }
+  return { removed, flaggedWithPayments };
 }

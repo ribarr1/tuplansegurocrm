@@ -3,9 +3,18 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
-import { createPolicy, updatePolicy, renewPolicy, cancelPolicy } from "@/services/policies.service";
+import {
+  createPolicy,
+  updatePolicy,
+  renewPolicy,
+  cancelPolicy,
+  reclassifyPolicyBusinessSource,
+} from "@/services/policies.service";
 import { AppError } from "@/services/errors";
-import { autoGenerateCurrentPeriodExpectation } from "@/services/commission-rules.service";
+import {
+  syncCommissionExpectationsForPolicy,
+  removeCommissionExpectationsAfterCancellation,
+} from "@/services/commission-rules.service";
 import {
   formDataToCreatePolicyInput,
   formDataToUpdatePolicyInput,
@@ -34,11 +43,14 @@ export async function createPolicyAction(
     return toPolicyFormState(error, scalarValues);
   }
 
-  // Hallazgo #14 de UAT (Fase 019.7): si la póliza nace ACTIVE y tiene
-  // una CommissionRule aplicable, genera la expectativa del mes de
-  // negocio actual automáticamente — best effort, nunca bloquea la
-  // creación de la póliza si algo falla aquí.
-  await autoGenerateCurrentPeriodExpectation(created.id, actor);
+  // Fase 025.4 (UAT-04): si la póliza nace ACTIVE, es HEALTH y tiene
+  // una CommissionRule mensual aplicable, genera TODAS las
+  // expectativas desde effectiveDate hasta terminationDate (inclusive)
+  // automáticamente — best effort, nunca bloquea la creación de la
+  // póliza si algo falla aquí. Reemplaza el generador de "solo el mes
+  // actual" de Fase 019.7 (Hallazgo #14), que syncCommissionExpectationsForPolicy
+  // ya cubre como caso particular.
+  await syncCommissionExpectationsForPolicy(created.id, actor);
 
   // Una póliza nueva puede afectar los conteos de Cartera del
   // Dashboard (Fase 018) — status inicial PENDING casi siempre.
@@ -68,7 +80,7 @@ export async function renewPolicyAction(
     return toPolicyFormState(error, scalarValues);
   }
 
-  await autoGenerateCurrentPeriodExpectation(created.id, actor);
+  await syncCommissionExpectationsForPolicy(created.id, actor);
   revalidatePath("/dashboard");
   redirect(`/policies/${created.id}`);
 }
@@ -87,10 +99,10 @@ export async function updatePolicyAction(
     return toPolicyFormState(error, values);
   }
 
-  // Hallazgo #14: activar la póliza (o cambiar la prima, si la regla
-  // depende de ella) puede habilitar una expectativa nueva del mes
-  // actual — best effort, ver comentario en createPolicyAction.
-  await autoGenerateCurrentPeriodExpectation(id, actor);
+  // Fase 025.4 (UAT-04): activar la póliza, cambiar effectiveDate/
+  // terminationDate, o cambiar la prima, puede habilitar/ampliar el
+  // rango de expectativas — ver comentario en createPolicyAction.
+  await syncCommissionExpectationsForPolicy(id, actor);
 
   // status/effectiveDate pueden cambiar aquí — afecta directamente los
   // conteos Activas/Pendientes del Dashboard.
@@ -112,10 +124,20 @@ export async function cancelPolicyAction(
 ): Promise<CancelPolicyFormState> {
   const actor = await requireSessionUser();
   try {
-    await cancelPolicy(actor, policyId, {
+    const cancelled = await cancelPolicy(actor, policyId, {
       terminationDate: formData.get("terminationDate"),
       reason: formData.get("reason") || undefined,
     });
+    // Fase 025.4 (UAT-04): efectos financieros de la cancelación —
+    // retira/marca las expectativas del mes de cancelación en
+    // adelante. Corre DESPUÉS de que la Policy ya quedó CANCELLED
+    // (UAT-01: debe quedar inmutable primero) — best effort, un fallo
+    // aquí nunca debe revertir la cancelación ya confirmada.
+    if (cancelled.terminationDate) {
+      await removeCommissionExpectationsAfterCancellation(policyId, cancelled.terminationDate, actor).catch(
+        () => {}
+      );
+    }
   } catch (error) {
     if (error instanceof AppError) {
       if (error.code === "VALIDATION_ERROR") {
@@ -131,4 +153,21 @@ export async function cancelPolicyAction(
   revalidatePath(`/policies/${policyId}`);
   revalidatePath("/dashboard");
   return { success: true };
+}
+
+// Fase 025.4 (UAT-03) — reclasificación explícita de una póliza
+// Sin clasificar (UNKNOWN), NUNCA de una ya OWN/REFERRAL (el servicio
+// lo rechaza). Botón visible solo para ADMIN en el detalle de póliza.
+export async function reclassifyPolicyBusinessSourceAction(
+  policyId: string
+): Promise<{ error?: string }> {
+  const actor = await requireSessionUser();
+  try {
+    await reclassifyPolicyBusinessSource(actor, policyId);
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  revalidatePath(`/policies/${policyId}`);
+  return {};
 }

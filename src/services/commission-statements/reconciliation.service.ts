@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
 import { recordAuditEvent } from "@/services/audit.service";
-import { looksLikeZipArchive } from "@/lib/file-sniff";
+import { looksLikeZipArchive, sniffMimeType } from "@/lib/file-sniff";
 import {
   commissionStatementIdSchema,
   commissionStatementRowIdSchema,
@@ -147,6 +147,12 @@ export async function uploadCommissionStatement(
   // orange-oscar-adapter.ts), que ya rechaza contenido no conforme.
   if (lowerName.endsWith(".xlsx") && !looksLikeZipArchive(buffer)) {
     throw new AppError("VALIDATION_ERROR", "file: El archivo no es un XLSX válido.");
+  }
+  // Fase 025.4 (UAT-05): PDF real por firma %PDF-, nunca solo la
+  // extensión .pdf — mismo rigor que el resto de uploads del CRM
+  // (ver sniffMimeType, ya usado por PolicyDocument).
+  if (lowerName.endsWith(".pdf") && sniffMimeType(buffer) !== "application/pdf") {
+    throw new AppError("VALIDATION_ERROR", "file: El archivo no es un PDF válido.");
   }
 
   let parsed;

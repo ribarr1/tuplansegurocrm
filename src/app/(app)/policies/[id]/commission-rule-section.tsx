@@ -14,9 +14,14 @@ import { GenerateExpectationForm } from "./generate-expectation-form";
 export async function CommissionRuleSection({
   actor,
   policyId,
+  isMutable,
 }: {
   actor: AuthorizedUser;
   policyId: string;
+  // Fase 025.4 (UAT-01): generar una expectativa manual nueva contra
+  // una CANCELLED/EXPIRED se rechaza server-side (commission-rules
+  // .service.ts) — esto solo evita ofrecer el formulario.
+  isMutable: boolean;
 }) {
   const rule = await getApplicableRuleForPolicy(actor, policyId);
 
@@ -50,7 +55,7 @@ export async function CommissionRuleSection({
           </p>
         )}
 
-        <GenerateExpectationForm policyId={policyId} />
+        {isMutable && <GenerateExpectationForm policyId={policyId} />}
       </CardContent>
     </Card>
   );

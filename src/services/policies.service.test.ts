@@ -1329,6 +1329,96 @@ describe("policies.service", () => {
     });
   });
 
+  // Fase 025.4 (UAT-01): CANCELLED/EXPIRED deben ser completamente
+  // inmutables — cada mutación derivada de Policy se rechaza
+  // server-side, nunca solo ocultando controles en la UI. Las
+  // consultas (getPolicyById, getPolicyMembersDetailed) siguen
+  // funcionando sin restricción.
+  describe("UAT-01 — inmutabilidad total de CANCELLED/EXPIRED", () => {
+    async function makeCancelledPolicyWithMember() {
+      const holder = await makePerson();
+      const other = await makePerson();
+      const household = await makeHouseholdWithMembers(holder.id, [{ personId: other.id, role: "SPOUSE" }]);
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          coveredMembers: [{ personId: other.id, role: "SPOUSE" }],
+          effectiveDate: new Date("2025-01-01"),
+        })
+      );
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+      const members = await prisma.policyMember.findMany({ where: { policyId: policy.id } });
+      const memberRow = members.find((m) => m.personId === other.id)!;
+      return { policy, holder, other, household, memberRow };
+    }
+
+    it("addPolicyMember rechaza agregar un miembro a una póliza CANCELLED", async () => {
+      const { policy } = await makeCancelledPolicyWithMember();
+      const extra = await makePerson();
+      await expect(
+        addPolicyMember(admin, policy.id, { personId: extra.id, role: "OTHER" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("removePolicyMember rechaza quitar un miembro de una póliza CANCELLED", async () => {
+      const { policy, memberRow } = await makeCancelledPolicyWithMember();
+      await expect(removePolicyMember(admin, policy.id, memberRow.id)).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+
+    it("linkPolicyToHousehold rechaza vincular hogar a una póliza CANCELLED", async () => {
+      const holder = await makePerson();
+      const household = await prisma.household.create({ data: { state: "IL" } });
+      createdHouseholdIds.push(household.id);
+      await prisma.householdMember.create({ data: { householdId: household.id, personId: holder.id, role: "HEAD" } });
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "false",
+          effectiveDate: new Date("2025-01-01"),
+        })
+      );
+      // householdId ya se resolvió automáticamente al crear (un solo
+      // hogar) — forzamos null para probar el guard de linkPolicyToHousehold
+      // igual que si la vinculación tuviera que hacerse después.
+      await prisma.policy.update({ where: { id: policy.id }, data: { householdId: null } });
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      await expect(linkPolicyToHousehold(admin, policy.id, household.id)).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+
+    it("addPolicyMember/removePolicyMember también rechazan sobre una póliza EXPIRED", async () => {
+      const holder = await makePerson();
+      const other = await makePerson();
+      await makeHouseholdWithMembers(holder.id, [{ personId: other.id, role: "SPOUSE" }]);
+      const policy = trackPolicy(
+        await createPolicy(admin, {
+          holderId: holder.id,
+          productId: activeProductId,
+          holderCovered: "true",
+          effectiveDate: new Date("2025-01-01"),
+        })
+      );
+      await prisma.policy.update({ where: { id: policy.id }, data: { status: "EXPIRED" } });
+
+      await expect(
+        addPolicyMember(admin, policy.id, { personId: other.id, role: "SPOUSE" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("las consultas de solo lectura siguen funcionando sobre una póliza CANCELLED", async () => {
+      const { policy } = await makeCancelledPolicyWithMember();
+      await expect(getPolicyById(admin, policy.id)).resolves.toMatchObject({ status: "CANCELLED" });
+      await expect(getPolicyMembersDetailed(admin, policy.id)).resolves.toHaveLength(2);
+    });
+  });
+
   // Fase 025 (Hallazgo #3 de UAT, Parte C): paymentManagementMode es la
   // única fuente de escritura; autopay/needsPaymentAssistance quedan
   // como espejo derivado, siempre en sincronía.

@@ -2,12 +2,13 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
-import { canAccessPolicy, type PolicyAccessPersons } from "@/services/policies.service";
+import { canAccessPolicy, assertPolicyIsMutable, type PolicyAccessPersons } from "@/services/policies.service";
 import { policyIdSchema } from "@/schemas/policy.schema";
 import {
   commissionExpectationIdSchema,
   listCommissionExpectationsQuerySchema,
   commissionTotalsQuerySchema,
+  commissionExpectationTotalsQuerySchema,
   createCommissionExpectationSchema,
   updateCommissionExpectationSchema,
   addCommissionPaymentSchema,
@@ -46,6 +47,7 @@ function assertAdminOnly(actor: AuthorizedUser): void {
 const policySummarySelect = {
   id: true,
   policyNumber: true,
+  status: true,
   holder: { select: { id: true, firstName: true, lastName: true, assignedAgentId: true } },
   members: { select: { person: { select: { assignedAgentId: true } } } },
   product: {
@@ -196,6 +198,45 @@ async function loadPolicyForCommissions(policyId: string) {
   return policy;
 }
 
+function monthStart(year: number, month: number): Date {
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+function parsePeriodString(period: string): Date {
+  const [year, month] = period.split("-").map(Number);
+  return monthStart(year, month);
+}
+
+// Fase 025.4 (UAT-06): filtros COMUNES a la lista y a los totales
+// agregados — nunca duplicados entre listCommissionExpectations y
+// getCommissionExpectationTotals, para que ambos midan exactamente el
+// mismo universo bajo los mismos filtros. `period` aquí es una fecha
+// ya normalizada (mes exacto) o un rango (para "año") — cada caller
+// decide cuál construir, esta función solo compone el resto.
+function buildCommissionExpectationFilterWhere(filters: {
+  search?: string;
+  agentId?: string | null;
+  carrierId?: string;
+  status?: "ACTIVE" | "CANCELLED";
+}): Prisma.CommissionExpectationWhereInput {
+  return {
+    ...(filters.agentId ? { agentId: filters.agentId } : {}),
+    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.carrierId ? { policy: { product: { carrierId: filters.carrierId } } } : {}),
+    ...(filters.search
+      ? {
+          policy: {
+            OR: [
+              { policyNumber: { contains: filters.search, mode: "insensitive" } },
+              { holder: { firstName: { contains: filters.search, mode: "insensitive" } } },
+              { holder: { lastName: { contains: filters.search, mode: "insensitive" } } },
+            ],
+          },
+        }
+      : {}),
+  };
+}
+
 export async function listCommissionExpectations(actor: AuthorizedUser, rawQuery: unknown) {
   assertModuleAccess(actor);
   const { page, pageSize, search, period, agentId, carrierId, status } = parseOrThrow(
@@ -203,29 +244,11 @@ export async function listCommissionExpectations(actor: AuthorizedUser, rawQuery
     rawQuery
   );
 
-  const periodFilter = period
-    ? (() => {
-        const [year, month] = period.split("-").map(Number);
-        return new Date(Date.UTC(year, month - 1, 1));
-      })()
-    : undefined;
+  const periodFilter = period ? parsePeriodString(period) : undefined;
 
   const where: Prisma.CommissionExpectationWhereInput = {
+    ...buildCommissionExpectationFilterWhere({ search, agentId, carrierId, status }),
     ...(periodFilter ? { period: periodFilter } : {}),
-    ...(agentId ? { agentId } : {}),
-    ...(status ? { status } : {}),
-    ...(carrierId ? { policy: { product: { carrierId } } } : {}),
-    ...(search
-      ? {
-          policy: {
-            OR: [
-              { policyNumber: { contains: search, mode: "insensitive" } },
-              { holder: { firstName: { contains: search, mode: "insensitive" } } },
-              { holder: { lastName: { contains: search, mode: "insensitive" } } },
-            ],
-          },
-        }
-      : {}),
   };
 
   const agentWhere = agentCommissionAccessWhere(actor);
@@ -261,6 +284,35 @@ export async function listCommissionExpectations(actor: AuthorizedUser, rawQuery
 // SUM(CommissionPayment.amount) son dos consultas de agregación
 // separadas (la segunda filtrando por la relación commissionExpectation),
 // ambas devuelven Prisma.Decimal, nunca Number.
+// Núcleo de agregación reutilizado por getCommissionTotalsForPeriod
+// (Dashboard, un solo mes) y getCommissionExpectationTotals (UAT-06,
+// cualquier combinación de filtros) — SIEMPRE agrega en la base de
+// datos (Prisma aggregate), nunca carga filas a memoria para sumar.
+async function aggregateExpectationTotals(
+  where: Prisma.CommissionExpectationWhereInput
+): Promise<
+  | { hasData: false }
+  | { hasData: true; expected: Prisma.Decimal; received: Prisma.Decimal; difference: Prisma.Decimal }
+> {
+  const [count, expectedAgg, paymentAgg] = await Promise.all([
+    prisma.commissionExpectation.count({ where }),
+    prisma.commissionExpectation.aggregate({ where, _sum: { expectedAmount: true } }),
+    prisma.commissionPayment.aggregate({
+      where: { commissionExpectation: where },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  // Distingue "sin expectativas registradas" de "expectedAmount
+  // realmente es 0" — count() es la única forma confiable, ya que
+  // ambos _sum resultarían en 0/null en cualquier caso sin filas.
+  if (count === 0) return { hasData: false };
+
+  const expected = new Prisma.Decimal(expectedAgg._sum.expectedAmount ?? 0);
+  const received = new Prisma.Decimal(paymentAgg._sum.amount ?? 0);
+  return { hasData: true, expected, received, difference: expected.minus(received) };
+}
+
 export async function getCommissionTotalsForPeriod(actor: AuthorizedUser, rawQuery: unknown) {
   assertModuleAccess(actor);
   const { period } = parseOrThrow(commissionTotalsQuerySchema, rawQuery);
@@ -270,36 +322,62 @@ export async function getCommissionTotalsForPeriod(actor: AuthorizedUser, rawQue
     ? { AND: [{ period }, agentWhere] }
     : { period };
 
-  const [count, expectedAgg, paymentAgg] = await Promise.all([
-    prisma.commissionExpectation.count({ where: expectationWhere }),
-    prisma.commissionExpectation.aggregate({
-      where: expectationWhere,
-      _sum: { expectedAmount: true },
-    }),
-    prisma.commissionPayment.aggregate({
-      where: { commissionExpectation: expectationWhere },
-      _sum: { amount: true },
-    }),
-  ]);
+  const result = await aggregateExpectationTotals(expectationWhere);
+  if (!result.hasData) return { hasData: false as const, period };
+  return { period, ...result };
+}
 
-  // Distingue "sin expectativas registradas este período" de
-  // "expectedAmount realmente es 0" — count() es la única forma
-  // confiable de saberlo, ya que ambos _sum resultarían en 0/null en
-  // cualquier caso cuando no hay filas.
-  if (count === 0) {
-    return { hasData: false as const, period };
+// Fase 025.4 (UAT-06) — totales encima del listado de Comisiones.
+// Reutiliza EXACTAMENTE los mismos filtros que listCommissionExpectations
+// (buildCommissionExpectationFilterWhere + agentCommissionAccessWhere)
+// para que el total nunca pueda desalinearse de lo que la tabla
+// muestra — nunca se suma solo la página visible.
+//
+// Granularidad (ver commissions/page.tsx, selector Mes/Año/Todo):
+//   - `period` (mes exacto): totales de ese mes, igual que
+//     getCommissionTotalsForPeriod pero con el resto de filtros
+//     también aplicados.
+//   - `year`: totales del año completo + desglose por mes (12
+//     consultas agregadas, una por mes — nunca agrupa en memoria).
+//   - Ninguno de los dos: todo el histórico accesible, sin desglose
+//     mensual (un año es la unidad más fina que se desglosa).
+export async function getCommissionExpectationTotals(actor: AuthorizedUser, rawQuery: unknown) {
+  assertModuleAccess(actor);
+  const { search, period, year, agentId, carrierId, status } = parseOrThrow(
+    commissionExpectationTotalsQuerySchema,
+    rawQuery
+  );
+
+  const baseFilterWhere = buildCommissionExpectationFilterWhere({ search, agentId, carrierId, status });
+  const agentWhere = agentCommissionAccessWhere(actor);
+
+  function withPeriod(periodClause: Prisma.CommissionExpectationWhereInput): Prisma.CommissionExpectationWhereInput {
+    const where: Prisma.CommissionExpectationWhereInput = { ...baseFilterWhere, ...periodClause };
+    return agentWhere ? { AND: [where, agentWhere] } : where;
   }
 
-  const expected = new Prisma.Decimal(expectedAgg._sum.expectedAmount ?? 0);
-  const received = new Prisma.Decimal(paymentAgg._sum.amount ?? 0);
+  if (period) {
+    const overall = await aggregateExpectationTotals(withPeriod({ period: parsePeriodString(period) }));
+    return { granularity: "MONTH" as const, period, overall, monthly: null };
+  }
 
-  return {
-    hasData: true as const,
-    period,
-    expected,
-    received,
-    difference: expected.minus(received),
-  };
+  if (year) {
+    const yearStart = monthStart(year, 1);
+    const yearEnd = monthStart(year + 1, 1);
+    const [overall, monthly] = await Promise.all([
+      aggregateExpectationTotals(withPeriod({ period: { gte: yearStart, lt: yearEnd } })),
+      Promise.all(
+        Array.from({ length: 12 }, (_, i) => i + 1).map(async (month) => ({
+          month,
+          ...(await aggregateExpectationTotals(withPeriod({ period: monthStart(year, month) }))),
+        }))
+      ),
+    ]);
+    return { granularity: "YEAR" as const, year, overall, monthly };
+  }
+
+  const overall = await aggregateExpectationTotals(withPeriod({}));
+  return { granularity: "ALL" as const, overall, monthly: null };
 }
 
 export async function getCommissionExpectationById(actor: AuthorizedUser, rawId: unknown) {
@@ -341,6 +419,11 @@ export async function createCommissionExpectation(actor: AuthorizedUser, rawInpu
   const input = parseOrThrow(createCommissionExpectationSchema, rawInput);
 
   const policy = await loadPolicyForCommissions(input.policyId);
+  // Fase 025.4 (UAT-01): una póliza CANCELLED/EXPIRED es de solo
+  // lectura — nunca se genera una expectativa NUEVA manualmente contra
+  // ella (las ya existentes de meses previos a la cancelación se
+  // conservan intactas, ver UAT-04/cancelPolicy).
+  assertPolicyIsMutable(policy.status);
   if (input.agentId) await assertActiveAgentId(input.agentId);
 
   let created;

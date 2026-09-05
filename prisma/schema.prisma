@@ -66,6 +66,17 @@ model User {
   image         String?
   role          UserRole @default(AGENT)
   isActive      Boolean  @default(true)
+  // Fase 025.4 (UAT-03/07): independiente de `role`. `role` es
+  // autorización (qué puede HACER en el CRM); `isAgent` es una
+  // condición de negocio (si puede tener licencias/contratos/pólizas/
+  // comisiones propias). Un ADMIN puede además ser agente (ej. el
+  // dueño de la agencia que también vende) sin dejar de ser ADMIN —
+  // nunca se exige role=AGENT para esto. Default false: un ADMIN o
+  // ASSISTANT nuevo NUNCA se asume agente. Backfill de la migración
+  // 017: todo User con role=AGENT existente pasa a isAgent=true (ese
+  // rol siempre implicó ser agente); ADMIN/ASSISTANT existentes NUNCA
+  // se tocan automáticamente. Ver docs/DECISIONS.md.
+  isAgent       Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

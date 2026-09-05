@@ -276,13 +276,13 @@ export default async function PoliciesPage({
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {policy.businessSource === "UNKNOWN" ? (
-                        <span className="text-muted-foreground">—</span>
-                      ) : (
-                        <Badge variant={policy.businessSource === "OWN" ? "secondary" : "outline"}>
-                          {POLICY_BUSINESS_SOURCE_LABELS[policy.businessSource]}
-                        </Badge>
-                      )}
+                      {/* Fase 025.4 (UAT-03): siempre un badge con
+                          texto legible, incluida UNKNOWN ("Sin
+                          clasificar") — nunca solo un guion o un color
+                          sin etiqueta. */}
+                      <Badge variant={policy.businessSource === "OWN" ? "secondary" : "outline"}>
+                        {POLICY_BUSINESS_SOURCE_LABELS[policy.businessSource]}
+                      </Badge>
                     </TableCell>
                     <TableCell>{formatDate(policy.effectiveDate)}</TableCell>
                     <TableCell>{formatMoney(policy.premiumAmount)}</TableCell>

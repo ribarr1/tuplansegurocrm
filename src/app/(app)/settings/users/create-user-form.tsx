@@ -22,6 +22,8 @@ export function CreateUserForm() {
     if (state && "success" in state) setResetCount((c) => c + 1);
   }
 
+  const [selectedRole, setSelectedRole] = useState("AGENT");
+
   return (
     <div className="flex flex-col gap-3">
       {state && "success" in state && (
@@ -69,6 +71,7 @@ export function CreateUserForm() {
             <select
               name="role"
               defaultValue="AGENT"
+              onChange={(e) => setSelectedRole(e.target.value)}
               className="rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               {USER_ROLE_VALUES.map((value) => (
@@ -79,6 +82,17 @@ export function CreateUserForm() {
             </select>
           </label>
         </div>
+
+        {/* Fase 025.4 (UAT-03/07): role e "isAgent" son conceptos
+            independientes — un AGENT siempre es agente (el checkbox no
+            aporta nada ahí), pero un ADMIN o ASSISTANT puede además
+            serlo (ej. el dueño de la agencia que también vende). */}
+        {selectedRole !== "AGENT" && (
+          <label className="flex w-fit items-center gap-2 text-sm">
+            <input type="checkbox" name="isAgent" />
+            ¿Este usuario también es agente? (puede tener licencias, contratos y pólizas propias)
+          </label>
+        )}
 
         <Button type="submit" size="sm" disabled={isPending} className="w-fit">
           {isPending ? "Creando…" : "Crear usuario"}

@@ -53,10 +53,17 @@ function deriveLegacyPaymentFlags(mode: "AUTOPAY" | "ASSISTED" | "CLIENT_MANAGED
   };
 }
 
-// Fase 025 (Hallazgo #4 de UAT, Parte D): CANCELLED/EXPIRED son estados
-// puramente históricos — nunca se puede confiar solo en ocultar
-// Editar/Cancelar en la UI, se rechaza también aquí server-side.
-function assertPolicyIsMutable(status: string) {
+// Fase 025 (Hallazgo #4 de UAT, Parte D) / Fase 025.4 (UAT-01):
+// CANCELLED/EXPIRED son estados puramente históricos — de solo
+// lectura, sin excepción. Guard CENTRAL reutilizado por TODA mutación
+// derivada de una Policy (miembros, detalle de salud, primas,
+// comisiones, regla de comisión por póliza) — nunca se confía solo en
+// ocultar botones en la UI, ni se duplica esta condición ad hoc en
+// cada servicio (ver docs/DECISIONS.md). La transacción que cancela o
+// expira la póliza SÍ puede completar sus propios efectos derivados
+// (ver cancelPolicy, policy-lifecycle-core.ts) porque esas escrituras
+// ocurren ANTES de que el nuevo status quede persistido, nunca después.
+export function assertPolicyIsMutable(status: string) {
   if (status === "CANCELLED" || status === "EXPIRED") {
     throw new AppError(
       "VALIDATION_ERROR",
@@ -1145,6 +1152,66 @@ export async function cancelPolicy(actor: AuthorizedUser, rawId: unknown, rawInp
   return getPolicyById(actor, id);
 }
 
+// Fase 025.4 (UAT-03): businessSource=UNKNOWN significa "no se pudo
+// clasificar en el momento de creación" (el hogar del titular no
+// tenía estado registrado) — NUNCA "REFERRAL por defecto". Cuando esa
+// condición se resuelve después (el hogar ya tiene estado), un ADMIN
+// puede reclasificarla explícitamente UNA vez. Esto NUNCA reclasifica
+// una póliza ya OWN/REFERRAL — esa clasificación es histórica y no se
+// recalcula jamás (ver policy-business-source.service.ts), esto solo
+// resuelve el caso "todavía no se sabe".
+export async function reclassifyPolicyBusinessSource(actor: AuthorizedUser, rawId: unknown) {
+  if (actor.role !== "ADMIN") {
+    throw new AppError("FORBIDDEN", "Solo un administrador puede reclasificar Propia/Referida.");
+  }
+  const id = parseOrThrow(policyIdSchema, rawId);
+  const existing = await prisma.policy.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      householdId: true,
+      businessSource: true,
+      holderId: true,
+      product: { select: { carrierId: true, policyType: true } },
+    },
+  });
+  if (!existing) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
+  if (existing.businessSource !== "UNKNOWN") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Solo se puede reclasificar una póliza todavía Sin clasificar — Propia/Referida ya asignada es histórica y no se recalcula."
+    );
+  }
+
+  const { businessSource, eligibleAgentIds } = await getPolicyEligibility({
+    householdId: existing.householdId,
+    carrierId: existing.product.carrierId,
+    policyType: existing.product.policyType,
+  });
+  if (businessSource === "UNKNOWN") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Sigue sin poder clasificarse: el hogar del titular todavía no tiene un estado registrado."
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.policy.update({ where: { id }, data: { businessSource } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "Policy",
+      entityId: id,
+      action: "POLICY_BUSINESS_SOURCE_RECLASSIFIED",
+      policyId: id,
+      contactPersonId: existing.holderId,
+      summary: `Propia/Referida reclasificada de Sin clasificar a ${businessSource === "OWN" ? "Propia" : "Referida"}`,
+      metadata: { from: "UNKNOWN", to: businessSource, eligibleAgentCount: eligibleAgentIds.length },
+    });
+  });
+
+  return getPolicyById(actor, id);
+}
+
 // ---------------------------------------------------------------------------
 // Gestión de PolicyMember tras la creación — Fase 019.7 (hallazgo #12)
 //
@@ -1262,6 +1329,7 @@ export async function addPolicyMember(actor: AuthorizedUser, rawPolicyId: unknow
   const input = parseOrThrow(addPolicyMemberSchema, rawInput);
   const policy = await loadPolicyForMemberManagement(policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+  assertPolicyIsMutable(policy.status);
 
   // Fase 022 (Hallazgo #3 de UAT): defensa en profundidad — el titular
   // nunca se agrega por este camino (siempre PRIMARY, vía "¿El titular
@@ -1327,6 +1395,7 @@ export async function removePolicyMember(actor: AuthorizedUser, rawPolicyId: unk
   const memberId = parseOrThrow(policyMemberIdSchema, rawMemberId);
   const policy = await loadPolicyForMemberManagement(policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+  assertPolicyIsMutable(policy.status);
 
   const member = await prisma.policyMember.findUnique({
     where: { id: memberId },
@@ -1415,6 +1484,7 @@ export async function linkPolicyToHousehold(
   const householdId = parseOrThrow(householdIdSchema, rawHouseholdId);
   const policy = await loadPolicyForMemberManagement(policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+  assertPolicyIsMutable(policy.status);
 
   if (policy.householdId) {
     throw new AppError("CONFLICT", "Esta póliza ya está vinculada a un hogar.");

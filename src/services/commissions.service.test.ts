@@ -11,9 +11,14 @@ import {
   computeCommissionStatus,
   sumPayments,
   getCommissionTotalsForPeriod,
+  getCommissionExpectationTotals,
 } from "@/services/commissions.service";
-import { createPolicy, getPolicyById } from "@/services/policies.service";
-import { createCommissionRule, generateExpectationForPeriod } from "@/services/commission-rules.service";
+import { createPolicy, cancelPolicy, getPolicyById } from "@/services/policies.service";
+import {
+  createCommissionRule,
+  deactivateCommissionRule,
+  generateExpectationForPeriod,
+} from "@/services/commission-rules.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -814,5 +819,229 @@ describe("commissions.service", () => {
     const updated = await updateCommissionExpectation(admin, exp.id, { expectedAmount: "150.00" });
     expect(updated.isManualOverride).toBe(false);
     expect(updated.calculatedAmount).toBeNull();
+  });
+
+  // Fase 025.4 (UAT-01): CANCELLED es de solo lectura — no se puede
+  // generar una expectativa NUEVA (manual o vía regla) contra ella, ni
+  // crear/desactivar un override de comisión de esa póliza. Los pagos
+  // sobre expectativas YA existentes de meses previos a la cancelación
+  // (addCommissionPayment) se tratan aparte — ver docs/DECISIONS.md,
+  // ese flujo se mantiene disponible a propósito para reconciliación
+  // financiera real, nunca bloqueado por el estado actual de la póliza.
+  describe("UAT-01 — inmutabilidad de comisiones en CANCELLED", () => {
+    it("createCommissionExpectation rechaza contra una póliza CANCELLED", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      await expect(
+        createCommissionExpectation(admin, { policyId: policy.id, period: nextPeriod(), expectedAmount: "10.00" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("generateExpectationForPeriod rechaza contra una póliza CANCELLED", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      await expect(
+        generateExpectationForPeriod(admin, { policyId: policy.id, period: nextPeriod() })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("createCommissionRule (override de póliza) rechaza contra una póliza CANCELLED", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+      const fullPolicy = await getPolicyById(admin, policy.id);
+
+      await expect(
+        createCommissionRule(admin, {
+          productId: fullPolicy.product.id,
+          policyId: policy.id,
+          method: "FIXED_AMOUNT",
+          base: "FIXED",
+          initialAmount: "25.00",
+          initialPeriodicity: "MONTHLY",
+        })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("deactivateCommissionRule rechaza un override de póliza cuando la póliza ya es CANCELLED", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      const fullPolicy = await getPolicyById(admin, policy.id);
+      const rule = await createCommissionRule(admin, {
+        productId: fullPolicy.product.id,
+        policyId: policy.id,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "25.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      await expect(deactivateCommissionRule(admin, rule.id)).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+
+    it("las consultas de comisiones (listar/leer) siguen funcionando sobre una póliza CANCELLED", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      const exp = trackExpectation(
+        await createCommissionExpectation(admin, { policyId: policy.id, period: nextPeriod(), expectedAmount: "10.00" })
+      );
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      await expect(getCommissionExpectationById(admin, exp.id)).resolves.toMatchObject({ id: exp.id });
+      await expect(getCommissionsForPolicy(admin, policy.id)).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: exp.id })])
+      );
+    });
+  });
+
+  // Fase 025.4 (UAT-06) — totales agregados sobre TODO el universo
+  // filtrado (nunca solo la página visible), granularidad Mes/Año/Todo.
+  // Año 2077 fijo (nunca 2077 en ningún otro test de este archivo) para
+  // no colisionar con nextPeriod(), que avanza desde "ahora".
+  describe("UAT-06 — totales de comisiones (getCommissionExpectationTotals)", () => {
+    const TOTALS_YEAR = 2077;
+
+    it("granularidad MONTH agrega expected/received/difference de un mes específico", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      const exp = trackExpectation(
+        await createCommissionExpectation(admin, {
+          policyId: policy.id,
+          period: `${TOTALS_YEAR}-03`,
+          expectedAmount: "100.00",
+        })
+      );
+      await addCommissionPayment(admin, exp.id, { type: "PAYMENT", amount: "40.00", receivedAt: new Date() });
+
+      const totals = await getCommissionExpectationTotals(admin, { period: `${TOTALS_YEAR}-03` });
+      expect(totals.granularity).toBe("MONTH");
+      expect(totals.overall.hasData).toBe(true);
+      if (totals.overall.hasData) {
+        expect(totals.overall.expected.greaterThanOrEqualTo(100)).toBe(true);
+        expect(totals.overall.received.greaterThanOrEqualTo(40)).toBe(true);
+      }
+    });
+
+    it("granularidad YEAR agrega el año completo Y desglosa por mes, meses sin datos hasData:false", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      trackExpectation(
+        await createCommissionExpectation(admin, {
+          policyId: policy.id,
+          period: `${TOTALS_YEAR + 1}-05`,
+          expectedAmount: "200.00",
+        })
+      );
+      trackExpectation(
+        await createCommissionExpectation(admin, {
+          policyId: policy.id,
+          period: `${TOTALS_YEAR + 1}-09`,
+          expectedAmount: "50.00",
+        })
+      );
+
+      const totals = await getCommissionExpectationTotals(admin, { year: String(TOTALS_YEAR + 1) });
+      expect(totals.granularity).toBe("YEAR");
+      expect(totals.overall.hasData).toBe(true);
+      if (totals.overall.hasData) {
+        expect(totals.overall.expected.greaterThanOrEqualTo(250)).toBe(true);
+      }
+      expect(totals.monthly).toHaveLength(12);
+      const may = totals.monthly!.find((m) => m.month === 5)!;
+      const sept = totals.monthly!.find((m) => m.month === 9)!;
+      const jan = totals.monthly!.find((m) => m.month === 1)!;
+      expect(may.hasData).toBe(true);
+      expect(sept.hasData).toBe(true);
+      expect(jan.hasData).toBe(false);
+    });
+
+    it("granularidad ALL (sin period ni year) incluye histórico accesible, no solo un mes", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      const period = nextPeriod();
+      trackExpectation(
+        await createCommissionExpectation(admin, { policyId: policy.id, period, expectedAmount: "33.00" })
+      );
+
+      const totals = await getCommissionExpectationTotals(admin, {});
+      expect(totals.granularity).toBe("ALL");
+      expect(totals.overall.hasData).toBe(true);
+      if (totals.overall.hasData) {
+        expect(totals.overall.expected.greaterThanOrEqualTo(33)).toBe(true);
+      }
+    });
+
+    it("period tiene prioridad sobre year si ambos vinieran", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      trackExpectation(
+        await createCommissionExpectation(admin, {
+          policyId: policy.id,
+          period: `${TOTALS_YEAR + 2}-06`,
+          expectedAmount: "70.00",
+        })
+      );
+
+      const totals = await getCommissionExpectationTotals(admin, {
+        period: `${TOTALS_YEAR + 2}-06`,
+        year: String(TOTALS_YEAR + 2),
+      });
+      expect(totals.granularity).toBe("MONTH");
+    });
+
+    it("totales respetan filtros combinados (agentId + status)", async () => {
+      const holder = await makePerson();
+      const policy = await makePolicyFor(admin, holder);
+      const period = `${TOTALS_YEAR + 3}-01`;
+      const expOther = trackExpectation(
+        await createCommissionExpectation(admin, { policyId: policy.id, period, expectedAmount: "500.00" })
+      );
+      const policy2 = await makePolicyFor(admin, await makePerson());
+      trackExpectation(
+        await createCommissionExpectation(admin, {
+          policyId: policy2.id,
+          period,
+          expectedAmount: "60.00",
+          agentId: agent.id,
+        })
+      );
+      await cancelCommissionExpectation(admin, expOther.id);
+
+      const totals = await getCommissionExpectationTotals(admin, { year: String(TOTALS_YEAR + 3), agentId: agent.id });
+      expect(totals.overall.hasData).toBe(true);
+      if (totals.overall.hasData) {
+        // Solo debe contar la de agent.id (60.00), nunca la de expOther
+        // (sin agente, ni siquiera importa que esté CANCELLED — el
+        // filtro por agentId ya la excluye).
+        expect(totals.overall.expected.toString()).toBe("60");
+      }
+    });
+
+    it("AGENT ve totales acotados a su propia cartera, nunca la de otro agente", async () => {
+      const holderMine = await makePerson(agent.id);
+      const policyMine = await makePolicyFor(admin, holderMine);
+      const period = `${TOTALS_YEAR + 4}-02`;
+      trackExpectation(
+        await createCommissionExpectation(admin, { policyId: policyMine.id, period, expectedAmount: "10.00" })
+      );
+      const holderOther = await makePerson(agentB.id);
+      const policyOther = await makePolicyFor(admin, holderOther);
+      trackExpectation(
+        await createCommissionExpectation(admin, { policyId: policyOther.id, period, expectedAmount: "999.00" })
+      );
+
+      const totals = await getCommissionExpectationTotals(agent, { year: String(TOTALS_YEAR + 4) });
+      expect(totals.overall.hasData).toBe(true);
+      if (totals.overall.hasData) {
+        expect(totals.overall.expected.lessThan(999)).toBe(true);
+      }
+    });
   });
 });

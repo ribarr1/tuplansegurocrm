@@ -5,7 +5,13 @@ import {
   createHealthPolicyDetail,
   updateHealthPolicyDetail,
 } from "@/services/health-policies.service";
-import { createPolicy, getPolicyById, listPolicies, getPoliciesForPerson } from "@/services/policies.service";
+import {
+  createPolicy,
+  cancelPolicy,
+  getPolicyById,
+  listPolicies,
+  getPoliciesForPerson,
+} from "@/services/policies.service";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -313,5 +319,41 @@ describe("health-policies.service", () => {
     await createHealthPolicyDetail(admin, { policyId: policy.id, incomeUsed: "1" });
     const fetched = await getPolicyById(admin, policy.id);
     expect(Object.keys(fetched)).not.toContain("healthDetail");
+  });
+
+  // Fase 025.4 (UAT-01): CANCELLED es de solo lectura — nunca se puede
+  // crear/editar HealthPolicyDetail contra ella, aunque el detail ya
+  // existiera antes de cancelar.
+  describe("UAT-01 — inmutabilidad de HealthPolicyDetail en CANCELLED", () => {
+    it("createHealthPolicyDetail rechaza contra una póliza CANCELLED", async () => {
+      const holder = await makePerson();
+      const policy = await makeHealthPolicy(admin, holder);
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      await expect(createHealthPolicyDetail(admin, { policyId: policy.id })).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+
+    it("updateHealthPolicyDetail rechaza contra una póliza CANCELLED, aunque el detail ya existiera", async () => {
+      const holder = await makePerson();
+      const policy = await makeHealthPolicy(admin, holder);
+      await createHealthPolicyDetail(admin, { policyId: policy.id, incomeUsed: "1000" });
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      await expect(
+        updateHealthPolicyDetail(admin, policy.id, { incomeUsed: "9999" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("getHealthPolicyDetail (consulta) sigue funcionando sobre una póliza CANCELLED", async () => {
+      const holder = await makePerson();
+      const policy = await makeHealthPolicy(admin, holder);
+      await createHealthPolicyDetail(admin, { policyId: policy.id, incomeUsed: "1000" });
+      await cancelPolicy(admin, policy.id, { terminationDate: "2026-06-15" });
+
+      const detail = await getHealthPolicyDetail(admin, policy.id);
+      expect(detail?.policyId).toBe(policy.id);
+    });
   });
 });

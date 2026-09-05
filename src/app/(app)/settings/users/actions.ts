@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
-import { createUser, setUserActive, resetUserPassword } from "@/services/users.service";
+import { createUser, setUserActive, setUserIsAgent, resetUserPassword } from "@/services/users.service";
 import { AppError } from "@/services/errors";
 
 export type CreateUserFormState =
@@ -18,9 +18,10 @@ export async function createUserAction(
   const name = String(formData.get("name") ?? "");
   const email = String(formData.get("email") ?? "");
   const role = String(formData.get("role") ?? "");
+  const isAgent = formData.get("isAgent") === "on";
 
   try {
-    const { user, temporaryPassword } = await createUser(actor, { name, email, role });
+    const { user, temporaryPassword } = await createUser(actor, { name, email, role, isAgent });
     revalidatePath("/settings/users");
     return { success: true, email: user.email, temporaryPassword };
   } catch (error) {
@@ -40,6 +41,21 @@ export async function toggleUserActiveAction(
   const actor = await requireSessionUser();
   try {
     await setUserActive(actor, { id, isActive });
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  revalidatePath("/settings/users");
+  return {};
+}
+
+export async function toggleUserIsAgentAction(
+  id: string,
+  isAgent: boolean
+): Promise<{ error?: string }> {
+  const actor = await requireSessionUser();
+  try {
+    await setUserIsAgent(actor, { id, isAgent });
   } catch (error) {
     if (error instanceof AppError) return { error: error.message };
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };

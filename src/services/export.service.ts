@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError } from "@/services/errors";
 import { recordAuditEvent } from "@/services/audit.service";
@@ -170,22 +171,43 @@ export async function exportCommissionsCsv(actor: AuthorizedUser): Promise<strin
     take: EXPORT_ROW_LIMIT,
   });
 
+  // Fase 025.4 (UAT-06): fila de totales al final, sumando exactamente
+  // las filas incluidas en ESTE export (nunca una consulta de
+  // agregación aparte que pudiera desalinearse) — mismo signo que la
+  // columna "Diferencia" de cada fila (Recibido - Esperado) para no
+  // introducir dos convenciones distintas dentro del mismo archivo.
+  let totalExpected = new Prisma.Decimal(0);
+  let totalReceived = new Prisma.Decimal(0);
+  const rows = expectations.map((e) => {
+    const received = sumPayments(e.payments);
+    const difference = received.minus(e.expectedAmount);
+    totalExpected = totalExpected.plus(e.expectedAmount);
+    totalReceived = totalReceived.plus(received);
+    return [
+      `${e.period.getUTCFullYear()}-${String(e.period.getUTCMonth() + 1).padStart(2, "0")}`,
+      `${e.policy.holder.firstName} ${e.policy.holder.lastName}`,
+      e.policy.policyNumber,
+      e.policy.product.carrier.name,
+      e.expectedAmount.toString(),
+      received.toString(),
+      difference.toString(),
+      e.status,
+    ];
+  });
+  rows.push([
+    "TOTAL",
+    "",
+    "",
+    "",
+    totalExpected.toString(),
+    totalReceived.toString(),
+    totalReceived.minus(totalExpected).toString(),
+    expectations.length >= EXPORT_ROW_LIMIT ? "TRUNCADO" : "",
+  ]);
+
   const csv = toCsv(
     ["Período", "Titular", "Póliza", "Compañía", "Esperado", "Recibido", "Diferencia", "Estado"],
-    expectations.map((e) => {
-      const received = sumPayments(e.payments);
-      const difference = received.minus(e.expectedAmount);
-      return [
-        `${e.period.getUTCFullYear()}-${String(e.period.getUTCMonth() + 1).padStart(2, "0")}`,
-        `${e.policy.holder.firstName} ${e.policy.holder.lastName}`,
-        e.policy.policyNumber,
-        e.policy.product.carrier.name,
-        e.expectedAmount.toString(),
-        received.toString(),
-        difference.toString(),
-        e.status,
-      ];
-    })
+    rows
   );
 
   await recordAuditEvent(prisma, {

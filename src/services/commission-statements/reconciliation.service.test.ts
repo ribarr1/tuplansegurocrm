@@ -8,6 +8,7 @@ import {
   manualMatchStatementRow,
   applyCommissionStatement,
 } from "./reconciliation.service";
+import { listStatementSources } from "./registry";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 // ---------------------------------------------------------------------------
@@ -366,5 +367,61 @@ describe("reconciliation.service — pipeline de conciliación", () => {
     });
     expect(paymentEvent).toBeTruthy();
     expect(JSON.stringify(paymentEvent?.changes ?? {})).not.toContain("25");
+  });
+
+  // Fase 025.4 (UAT-05) — subida segura de PDF, adaptadores "pendientes"
+  // que nunca fabrican un parser falso, apply bloqueado por construcción.
+  describe("UAT-05 — adaptadores PDF pendientes", () => {
+    function makePdfFile(name: string): File {
+      // Firma real %PDF- (mínimo válido para sniffMimeType) + relleno.
+      const bytes = new TextEncoder().encode("%PDF-1.4\n%fake content for test\n");
+      return new File([bytes], name, { type: "application/pdf" });
+    }
+
+    it("las fuentes *_PDF aparecen en el catálogo de fuentes disponibles", () => {
+      const sources = listStatementSources();
+      const sourceIds = sources.map((s) => s.source);
+      expect(sourceIds).toContain("ORANGE_OSCAR_PDF");
+      expect(sourceIds).toContain("AMBETTER_PDF");
+      expect(sourceIds).toContain("BCBS_PDF");
+      expect(sourceIds).toContain("KAISER_PDF");
+      expect(sourceIds).toContain("ELITE_PDF");
+    });
+
+    it("un PDF real (firma válida) es aceptado en la subida pero el parseo se rechaza explícitamente (adaptador pendiente)", async () => {
+      await expect(
+        uploadCommissionStatement(admin, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("el mensaje de rechazo nombra la fuente y nunca finge soporte", async () => {
+      await expect(
+        uploadCommissionStatement(admin, "BCBS_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+      ).rejects.toThrow(/BCBS/);
+    });
+
+    it("un archivo que NO es un PDF real (firma inválida) se rechaza ANTES de llegar al adaptador", async () => {
+      const fakeBytes = new TextEncoder().encode("esto no es un pdf de verdad");
+      const fake = new File([fakeBytes], uniqueName("r") + ".pdf", { type: "application/pdf" });
+      await expect(uploadCommissionStatement(admin, "AMBETTER_PDF", fake)).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: expect.stringContaining("no es un PDF válido"),
+      });
+    });
+
+    it("nunca se crea un CommissionStatement para un adaptador PDF pendiente (apply queda bloqueado por construcción)", async () => {
+      const before = await prisma.commissionStatement.count({ where: { source: "KAISER_PDF" } });
+      await expect(
+        uploadCommissionStatement(admin, "KAISER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      const after = await prisma.commissionStatement.count({ where: { source: "KAISER_PDF" } });
+      expect(after).toBe(before);
+    });
+
+    it("ASSISTANT sigue sin acceso, ni siquiera para intentar un PDF", async () => {
+      await expect(
+        uploadCommissionStatement(assistant, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
   });
 });

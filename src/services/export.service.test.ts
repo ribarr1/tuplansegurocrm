@@ -105,6 +105,12 @@ describe("export.service — CSV", () => {
     await expect(exportCommissionsCsv(admin)).resolves.toBeTruthy();
   });
 
+  // Fase 025.4 (UAT-06): fila de totales al final del CSV.
+  it("exporta comisiones con una fila TOTAL final", async () => {
+    const csv = await exportCommissionsCsv(admin);
+    expect(csv).toContain("TOTAL");
+  });
+
   it("registra un AuditEvent EXPORT_CONTACTS sin guardar el contenido exportado", async () => {
     await exportContactsCsv(admin);
     const event = await prisma.auditEvent.findFirst({

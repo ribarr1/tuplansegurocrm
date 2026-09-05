@@ -21,25 +21,30 @@ export async function PolicyMembersSection({
   actor,
   policyId,
   holderIsCovered,
+  isMutable,
 }: {
   actor: AuthorizedUser;
   policyId: string;
   holderIsCovered: boolean;
+  // Fase 025.4 (UAT-01): CANCELLED/EXPIRED son de solo lectura — el
+  // servicio ya rechaza estas mutaciones server-side (defensa real),
+  // esto solo evita ofrecer un control que el servidor va a rechazar.
+  isMutable: boolean;
 }) {
   const [members, candidates, householdLinkCandidates] = await Promise.all([
     getPolicyMembersDetailed(actor, policyId),
-    getEligibleHouseholdMembersForPolicy(actor, policyId),
-    getHouseholdLinkCandidates(actor, policyId),
+    isMutable ? getEligibleHouseholdMembersForPolicy(actor, policyId) : Promise.resolve([]),
+    isMutable ? getHouseholdLinkCandidates(actor, policyId) : Promise.resolve([]),
   ]);
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle className="text-sm font-medium text-muted-foreground">Miembros cubiertos</CardTitle>
-        <AddPolicyMemberDialog policyId={policyId} candidates={candidates} />
+        {isMutable && <AddPolicyMemberDialog policyId={policyId} candidates={candidates} />}
       </CardHeader>
       <CardContent className="flex flex-col gap-2 text-sm">
-        <LinkHouseholdForm policyId={policyId} candidates={householdLinkCandidates} />
+        {isMutable && <LinkHouseholdForm policyId={policyId} candidates={householdLinkCandidates} />}
         {!holderIsCovered && (
           <p className="text-xs text-muted-foreground">El titular no está cubierto por esta póliza.</p>
         )}
@@ -70,11 +75,13 @@ export async function PolicyMembersSection({
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">{POLICY_MEMBER_ROLE_LABELS[member.role]}</Badge>
-                  <RemovePolicyMemberButton
-                    policyId={policyId}
-                    policyMemberId={member.id}
-                    personName={`${member.person.firstName} ${member.person.lastName}`}
-                  />
+                  {isMutable && (
+                    <RemovePolicyMemberButton
+                      policyId={policyId}
+                      policyMemberId={member.id}
+                      personName={`${member.person.firstName} ${member.person.lastName}`}
+                    />
+                  )}
                 </div>
               </div>
             ))}

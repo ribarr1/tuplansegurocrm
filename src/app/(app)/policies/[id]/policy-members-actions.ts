@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
 import { addPolicyMember, removePolicyMember, linkPolicyToHousehold } from "@/services/policies.service";
-import { autoGenerateCurrentPeriodExpectation } from "@/services/commission-rules.service";
+import { syncCommissionExpectationsForPolicy } from "@/services/commission-rules.service";
 import { AppError } from "@/services/errors";
 
 export type AddPolicyMemberFormState =
@@ -34,10 +34,11 @@ export async function addPolicyMemberAction(
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
   }
 
-  // Hallazgo #14: si la regla de comisión de esta póliza es PER_MEMBER,
-  // agregar un miembro puede habilitar la expectativa del mes actual
-  // (nunca recalcula meses ya generados/pagados) — best effort.
-  await autoGenerateCurrentPeriodExpectation(policyId, actor);
+  // Fase 025.4 (UAT-04): si la regla de comisión de esta póliza es
+  // PER_MEMBER, agregar un miembro puede habilitar/ampliar el rango de
+  // expectativas (nunca recalcula meses ya generados/pagados) — best
+  // effort.
+  await syncCommissionExpectationsForPolicy(policyId, actor);
 
   revalidatePath(`/policies/${policyId}`);
   return { success: true };

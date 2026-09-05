@@ -16,9 +16,14 @@ function formatMoney(amount: unknown): string {
 export async function HealthPolicySection({
   actor,
   policyId,
+  isMutable,
 }: {
   actor: AuthorizedUser;
   policyId: string;
+  // Fase 025.4 (UAT-01): CANCELLED/EXPIRED son de solo lectura — el
+  // servicio (health-policies.service.ts) ya lo rechaza, esto solo
+  // evita ofrecer un botón que llevaría a un error.
+  isMutable: boolean;
 }) {
   const detail = await getHealthPolicyDetail(actor, policyId);
 
@@ -28,14 +33,16 @@ export async function HealthPolicySection({
         <CardTitle className="text-sm font-medium text-muted-foreground">
           Información del plan de salud
         </CardTitle>
-        <Button
-          variant="outline"
-          size="sm"
-          nativeButton={false}
-          render={<Link href={`/policies/${policyId}/health`} />}
-        >
-          {detail ? "Editar" : "Agregar información de salud"}
-        </Button>
+        {isMutable && (
+          <Button
+            variant="outline"
+            size="sm"
+            nativeButton={false}
+            render={<Link href={`/policies/${policyId}/health`} />}
+          >
+            {detail ? "Editar" : "Agregar información de salud"}
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-2 text-sm">
         {!detail ? (

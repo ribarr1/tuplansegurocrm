@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError, parseOrThrow } from "@/services/errors";
-import { assertCanAccessPolicy } from "@/services/policies.service";
+import { assertCanAccessPolicy, assertPolicyIsMutable } from "@/services/policies.service";
 import {
   policyIdForHealthSchema,
   createHealthPolicyDetailSchema,
@@ -97,6 +97,7 @@ async function loadPolicyForHealth(policyId: string) {
     where: { id: policyId },
     select: {
       id: true,
+      status: true,
       holderId: true,
       householdId: true,
       holder: { select: { assignedAgentId: true } },
@@ -134,6 +135,7 @@ export async function createHealthPolicyDetail(actor: AuthorizedUser, rawInput: 
   const input = parseOrThrow(createHealthPolicyDetailSchema, rawInput);
   const policy = await loadPolicyForHealth(input.policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+  assertPolicyIsMutable(policy.status);
   assertIsHealthPolicy(policy.product.policyType);
   assertNoRestrictedFieldsForAssistant(actor, input);
 
@@ -178,6 +180,7 @@ export async function updateHealthPolicyDetail(
   const input = parseOrThrow(updateHealthPolicyDetailSchema, rawInput);
   const policy = await loadPolicyForHealth(policyId);
   assertCanAccessPolicy(actor, [policy.holder, ...policy.members.map((m) => m.person)]);
+  assertPolicyIsMutable(policy.status);
   assertIsHealthPolicy(policy.product.policyType);
   assertNoRestrictedFieldsForAssistant(actor, input);
 

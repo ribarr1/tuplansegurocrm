@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { forbidden } from "next/navigation";
 import { requireUser } from "@/lib/authorization";
-import { listCommissionExpectations } from "@/services/commissions.service";
+import { listCommissionExpectations, getCommissionExpectationTotals } from "@/services/commissions.service";
 import { listActiveCarriers } from "@/services/policies.service";
 import { listActiveAgents } from "@/services/users.service";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,7 @@ import { COMMISSION_EXPECTATION_STATUS_VALUES } from "@/schemas/commission.schem
 type SearchParams = {
   q?: string;
   period?: string;
+  year?: string;
   agentId?: string;
   carrierId?: string;
   status?: string;
@@ -37,6 +38,7 @@ function buildHref(current: SearchParams, overrides: Partial<SearchParams>): str
   const params = new URLSearchParams();
   if (merged.q) params.set("q", merged.q);
   if (merged.period) params.set("period", merged.period);
+  if (merged.year) params.set("year", merged.year);
   if (merged.agentId) params.set("agentId", merged.agentId);
   if (merged.carrierId) params.set("carrierId", merged.carrierId);
   if (merged.status) params.set("status", merged.status);
@@ -71,7 +73,7 @@ export default async function CommissionsPage({
     ? sp.status
     : undefined;
 
-  const [{ items, total, pageSize }, carriers, agents] = await Promise.all([
+  const [{ items, total, pageSize }, carriers, agents, totals] = await Promise.all([
     listCommissionExpectations(actor, {
       search: sp.q || undefined,
       period: sp.period || undefined,
@@ -82,6 +84,18 @@ export default async function CommissionsPage({
     }),
     listActiveCarriers(actor),
     actor.role === "ADMIN" ? listActiveAgents(actor) : Promise.resolve([]),
+    // Fase 025.4 (UAT-06): mismos filtros que la lista de arriba (menos
+    // paginación) — el total nunca puede reflejar solo la página
+    // visible. `period` gana sobre `year` si ambos vinieran (ver
+    // commission.schema.ts).
+    getCommissionExpectationTotals(actor, {
+      search: sp.q || undefined,
+      period: sp.period || undefined,
+      year: sp.period ? undefined : sp.year || undefined,
+      agentId: sp.agentId || undefined,
+      carrierId: sp.carrierId || undefined,
+      status,
+    }),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -117,8 +131,23 @@ export default async function CommissionsPage({
           />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="period">Período</Label>
+          <Label htmlFor="period">Mes</Label>
           <Input key={sp.period ?? ""} id="period" name="period" type="month" defaultValue={sp.period ?? ""} />
+        </div>
+        {/* Fase 025.4 (UAT-06): Mes/Año/Todo — "Mes" arriba tiene
+            prioridad si ambos vienen llenos (ver commission.schema.ts).
+            Dejar "Año" vacío y "Mes" vacío = Todo el histórico accesible. */}
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="year">Año</Label>
+          <Input
+            key={sp.year ?? ""}
+            id="year"
+            name="year"
+            type="number"
+            placeholder="Ej. 2026"
+            defaultValue={sp.year ?? ""}
+            className="w-24"
+          />
         </div>
         {actor.role === "ADMIN" && (
           <div className="flex flex-col gap-1">
@@ -173,12 +202,70 @@ export default async function CommissionsPage({
         <Button type="submit" variant="secondary">
           Filtrar
         </Button>
-        {(sp.q || sp.period || sp.agentId || sp.carrierId || sp.status) && (
+        {(sp.q || sp.period || sp.year || sp.agentId || sp.carrierId || sp.status) && (
           <Button variant="ghost" nativeButton={false} render={<Link href="/commissions" />}>
             Limpiar
           </Button>
         )}
       </form>
+
+      {/* Fase 025.4 (UAT-06): totales agregados server-side sobre TODO
+          el universo filtrado (nunca solo la página visible), con la
+          misma semántica que la lista — Recibido es bruto/Subtotal
+          (nunca netea Assistance), Diferencia = Recibido - Esperado. */}
+      <div className="rounded-md border p-4">
+        <p className="mb-2 text-xs font-medium text-muted-foreground">
+          Totales —{" "}
+          {totals.granularity === "MONTH"
+            ? `mes ${sp.period}`
+            : totals.granularity === "YEAR"
+              ? `año ${totals.year}`
+              : "todo el histórico accesible con estos filtros"}
+        </p>
+        {!totals.overall.hasData ? (
+          <p className="text-sm text-muted-foreground">Sin comisiones esperadas para este alcance.</p>
+        ) : (
+          <div className="flex flex-wrap gap-6 text-sm">
+            <span>
+              <span className="text-muted-foreground">Total esperado: </span>
+              <span className="font-medium">{formatMoney(totals.overall.expected)}</span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">Total recibido: </span>
+              <span className="font-medium">{formatMoney(totals.overall.received)}</span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">Diferencia: </span>
+              <span className="font-medium">{formatMoney(totals.overall.difference)}</span>
+            </span>
+          </div>
+        )}
+
+        {totals.granularity === "YEAR" && totals.monthly && (
+          <div className="mt-3 overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Mes</TableHead>
+                  <TableHead className="text-right">Esperado</TableHead>
+                  <TableHead className="text-right">Recibido</TableHead>
+                  <TableHead className="text-right">Diferencia</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {totals.monthly.map((m) => (
+                  <TableRow key={m.month}>
+                    <TableCell>{formatPeriod(new Date(Date.UTC(totals.year, m.month - 1, 1)))}</TableCell>
+                    <TableCell className="text-right">{m.hasData ? formatMoney(m.expected) : "—"}</TableCell>
+                    <TableCell className="text-right">{m.hasData ? formatMoney(m.received) : "—"}</TableCell>
+                    <TableCell className="text-right">{m.hasData ? formatMoney(m.difference) : "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
 
       {items.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-md border border-dashed py-16 text-center">

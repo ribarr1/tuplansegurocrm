@@ -8,6 +8,7 @@ import {
   userIdSchema,
   createUserSchema,
   setUserActiveSchema,
+  setUserIsAgentSchema,
   resetUserPasswordSchema,
 } from "@/schemas/user.schema";
 import { recordAuditEvent } from "@/services/audit.service";
@@ -16,12 +17,18 @@ import { recordAuditEvent } from "@/services/audit.service";
 // crear/editar un contacto, o "responsable" al crear/editar una tarea
 // — Fase 014, donde ASSISTANT también necesita esta lista para poder
 // asignar tareas a agentes). No expone email ni otros campos.
+//
+// Fase 025.4 (UAT-03/07): filtra por `isAgent`, NUNCA por `role`. Un
+// ADMIN que también es agente (ej. el dueño de la agencia) debe
+// aparecer aquí igual que cualquier User con role=AGENT — `role` es
+// autorización, `isAgent` es la condición de negocio real. Ver
+// docs/DECISIONS.md.
 export async function listActiveAgents(actor: AuthorizedUser) {
   if (actor.role !== "ADMIN" && actor.role !== "ASSISTANT") {
     throw new AppError("FORBIDDEN", "No tienes permiso para consultar la lista de agentes.");
   }
   return prisma.user.findMany({
-    where: { role: "AGENT", isActive: true },
+    where: { isAgent: true, isActive: true },
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
@@ -33,6 +40,7 @@ const userSelect = {
   email: true,
   role: true,
   isActive: true,
+  isAgent: true,
   createdAt: true,
 } as const;
 
@@ -83,7 +91,17 @@ export async function createUser(actor: AuthorizedUser, rawInput: unknown) {
 
   const user = await prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
-      data: { name: input.name, email: input.email, role: input.role, isActive: true },
+      data: {
+        name: input.name,
+        email: input.email,
+        role: input.role,
+        isActive: true,
+        // Fase 025.4: AGENT siempre implica isAgent=true (mismo
+        // criterio del backfill de la migración 017); para ADMIN/
+        // ASSISTANT se respeta el checkbox explícito del formulario,
+        // nunca se asume.
+        isAgent: input.role === "AGENT" ? true : input.isAgent,
+      },
       select: userSelect,
     });
     await tx.account.create({
@@ -151,6 +169,49 @@ export async function setUserActive(actor: AuthorizedUser, rawInput: unknown) {
       entityId: input.id,
       action: input.isActive ? "USER_ACTIVATE" : "USER_DEACTIVATE",
       summary: input.isActive ? `Usuario activado: ${updated.name}` : `Usuario desactivado: ${updated.name}`,
+    });
+    return updated;
+  });
+}
+
+// Fase 025.4 (UAT-03/07): "¿Este usuario también es agente?" —
+// independiente de `role`. Un AGENT SIEMPRE es agente (no tiene
+// sentido desmarcarlo sin cambiar su rol primero) — se rechaza
+// explícitamente para evitar un estado inconsistente (role=AGENT,
+// isAgent=false) que rompería el resto del sistema en silencio.
+export async function setUserIsAgent(actor: AuthorizedUser, rawInput: unknown) {
+  assertAdminOnly(actor);
+  const input = parseOrThrow(setUserIsAgentSchema, rawInput);
+
+  const target = await prisma.user.findUnique({
+    where: { id: input.id },
+    select: { id: true, name: true, role: true, isAgent: true },
+  });
+  if (!target) throw new AppError("NOT_FOUND", "Usuario no encontrado.");
+
+  if (target.role === "AGENT" && !input.isAgent) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "isAgent: Un usuario con rol Agente siempre es agente — cambia primero su rol si ya no debe serlo."
+    );
+  }
+
+  if (target.isAgent === input.isAgent) return target;
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: input.id },
+      data: { isAgent: input.isAgent },
+      select: userSelect,
+    });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "User",
+      entityId: input.id,
+      action: input.isAgent ? "USER_MARKED_AGENT" : "USER_UNMARKED_AGENT",
+      summary: input.isAgent
+        ? `${updated.name} marcado como agente (independiente de su rol)`
+        : `${updated.name} ya no está marcado como agente`,
     });
     return updated;
   });

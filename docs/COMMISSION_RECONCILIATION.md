@@ -108,11 +108,24 @@ Al final, el `CommissionStatement` pasa a `status: "APPLIED"` con un `AuditEvent
 - Extensión validada contra `adapter.acceptedExtensions` (nunca se confía en el nombre del archivo).
 - Tamaño máximo `MAX_STATEMENT_SIZE_BYTES = 5 MB`.
 - Para `.xlsx`: verificación de firma binaria (`looksLikeZipArchive`, magic bytes `PK\x03\x04`) antes de pasarlo a `exceljs` — una señal más débil que las firmas PDF/PNG/JPEG/WEBP ya existentes (muchos formatos comparten la firma ZIP), pero suficiente para rechazar contenido obviamente no-XLSX. Alcance explícitamente limitado a subida de reportes de comisión — nunca se aplicó a `PolicyDocument` (que sigue solo PDF/PNG/JPEG/WEBP).
+- Para `.pdf` (Fase 025.4): verificación de firma real `%PDF-` vía `sniffMimeType` (la misma función que ya usa `PolicyDocument`) — nunca solo la extensión `.pdf`.
 - El archivo original **nunca se guarda en Postgres** — si en el futuro se necesita conservar el binario para trazabilidad, debe usarse `FileStorage` (no implementado en esta fase, no es obligatorio).
 
 ## Pendiente / fuera de alcance de esta fase
 
-- Adaptadores para otras agencias/carriers — solo Orange/Oscar está implementado; nunca se asumió que todas las agencias comparten su formato.
-- Adaptador PDF para Orange/Oscar — diferido, CSV/XLSX cubre el caso real analizado.
+- Adaptadores para otras agencias/carriers — solo Orange/Oscar (CSV/XLSX) está implementado; nunca se asumió que todas las agencias comparten su formato.
 - Filas de tipo chargeback/ajuste — el adaptador actual solo produce `PAYMENT`.
 - Persistencia del archivo binario original (`FileStorage`).
+
+## Fase 025.4 (UAT-05) — adaptadores PDF "pendientes"
+
+Los reportes reales que llegan hoy son PDF, no CSV/XLSX (lo asumido en Fase 020 ya no aplica). Se habilitó:
+
+- Subida segura de `.pdf` (extensión + firma real `%PDF-`, mismo rigor que XLSX/CSV) para las fuentes `ORANGE_OSCAR_PDF`, `AMBETTER_PDF`, `BCBS_PDF`, `KAISER_PDF`, `ELITE_PDF` (`src/services/commission-statements/pending-pdf-adapter.ts`).
+- El **contrato** de adaptador ya existente (`CommissionStatementAdapter`) se reutiliza sin cambios — un adaptador PDF real es una entrada más en `registry.ts`, nunca requiere tocar `reconciliation.service.ts`.
+
+Lo que **NO** se implementó, y por qué: el parseo real del contenido de cada PDF. No existe en este entorno ningún PDF de muestra real de ninguno de esos carriers/agencias para verificar contra qué estructura exacta programar (columnas, si el texto es seleccionable o es un escaneo que requeriría OCR, headers, formato de fecha/monto). Escribir un parser sin esa evidencia sería inventar un layout — la ficha de UAT-05 lo prohíbe explícitamente ("no inventar layouts ni afirmar soporte para un PDF que no se haya probado").
+
+Por eso cada adaptador `*_PDF` **acepta el upload** (confirma que es un PDF real) pero su `parse()` siempre lanza un error explícito nombrando qué falta ("un PDF representativo real de {fuente}") — `reconciliation.service.ts` convierte ese error en un `VALIDATION_ERROR` visible para el ADMIN. Nunca se llega a crear un `CommissionStatement` en `PREVIEW`, así que `applyCommissionStatement` (que solo actúa sobre filas `MATCHED` de un preview existente) queda bloqueado **por construcción** para estos formatos, no por una bandera aparte que alguien pudiera desactivar por error.
+
+**Para completar un adaptador real** cuando exista una muestra: reemplazar la entrada correspondiente en `registry.ts` por una implementación real de `parse()` (probablemente necesitará una librería de extracción de texto de PDF — añadirla ENTONCES, nunca antes de tener con qué probarla, ver CLAUDE.md "no agregar librerías innecesariamente"), siguiendo el mismo patrón de `orange-oscar-adapter.ts` (columnas requeridas explícitas, `receivedAmount` mapeado a la columna confirmada por el negocio — nunca asumida, matching conservador vía `matcher.ts` sin cambios).

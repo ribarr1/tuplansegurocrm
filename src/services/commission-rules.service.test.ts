@@ -6,8 +6,11 @@ import {
   computeExpectedAmount,
   autoGenerateCurrentPeriodExpectation,
   listCommissionRulesForProduct,
+  syncCommissionExpectationsForPolicy,
+  removeCommissionExpectationsAfterCancellation,
 } from "@/services/commission-rules.service";
-import { createPolicy, addPolicyMember } from "@/services/policies.service";
+import { createPolicy, addPolicyMember, cancelPolicy } from "@/services/policies.service";
+import { addCommissionPayment } from "@/services/commissions.service";
 import { getTodayBusinessRange } from "@/lib/business-time";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -58,16 +61,38 @@ beforeAll(async () => {
   createdProductIds.push(productId);
 });
 
+// Fase 025.4 (UAT-08, parte 3): cada paso se aísla — si uno falla (ej.
+// un id de CommissionExpectation que quedó sin rastrear por un
+// assertion que cortó el test antes de trackearlo), los SIGUIENTES
+// pasos igual se intentan, en vez de abortar el afterAll completo y
+// dejar usuarios/carriers huérfanos en DEV (esto pasó de verdad
+// durante el desarrollo de esta fase — ver docs/DECISIONS.md).
+async function safeCleanupStep(label: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (error) {
+    console.error(`[cleanup] falló "${label}" — revisar manualmente:`, error);
+  }
+}
+
 afterAll(async () => {
-  await prisma.commissionPayment.deleteMany({ where: { commissionExpectationId: { in: createdExpectationIds } } });
-  await prisma.commissionExpectation.deleteMany({ where: { id: { in: createdExpectationIds } } });
-  await prisma.commissionRule.deleteMany({ where: { id: { in: createdRuleIds } } });
-  await prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } });
-  await prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } });
-  await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
-  await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
-  await prisma.carrier.deleteMany({ where: { id: { in: createdCarrierIds } } });
-  await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  await safeCleanupStep("commissionPayment", () =>
+    prisma.commissionPayment.deleteMany({ where: { commissionExpectationId: { in: createdExpectationIds } } })
+  );
+  await safeCleanupStep("commissionExpectation", () =>
+    prisma.commissionExpectation.deleteMany({ where: { id: { in: createdExpectationIds } } })
+  );
+  await safeCleanupStep("commissionRule", () =>
+    prisma.commissionRule.deleteMany({ where: { id: { in: createdRuleIds } } })
+  );
+  await safeCleanupStep("policyMember", () =>
+    prisma.policyMember.deleteMany({ where: { policyId: { in: createdPolicyIds } } })
+  );
+  await safeCleanupStep("policy", () => prisma.policy.deleteMany({ where: { id: { in: createdPolicyIds } } }));
+  await safeCleanupStep("person", () => prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } }));
+  await safeCleanupStep("product", () => prisma.product.deleteMany({ where: { id: { in: createdProductIds } } }));
+  await safeCleanupStep("carrier", () => prisma.carrier.deleteMany({ where: { id: { in: createdCarrierIds } } }));
+  await safeCleanupStep("user", () => prisma.user.deleteMany({ where: { id: { in: createdUserIds } } }));
 });
 
 async function makePolicy(overrides: Record<string, unknown> = {}) {
@@ -460,6 +485,254 @@ describe("commission-rules.service", () => {
         const exp = await prisma.commissionExpectation.findUnique({ where: { id: result.expectationId } });
         expect(exp?.expectedAmount.toString()).toBe("75");
       }
+    });
+  });
+
+  // Fase 025.4 (UAT-04) — calendario automático completo de
+  // expectativas (effectiveDate -> terminationDate, inclusive) y
+  // limpieza al cancelar.
+  describe("UAT-04 — sincronización automática de expectativas", () => {
+    async function trackAllExpectationsFor(policyId: string) {
+      const rows = await prisma.commissionExpectation.findMany({ where: { policyId }, select: { id: true } });
+      for (const r of rows) createdExpectationIds.push(r.id);
+      return rows;
+    }
+
+    it("genera exactamente octubre, noviembre y diciembre para un rango 10/01-12/31", async () => {
+      const policy = await makePolicy({
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-10-01"),
+        terminationDate: new Date("2026-12-31"),
+      });
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "10.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      const rows = await trackAllExpectationsFor(policy.id);
+      const months = rows.length;
+      expect(months).toBe(3);
+
+      const full = await prisma.commissionExpectation.findMany({
+        where: { policyId: policy.id },
+        select: { period: true },
+        orderBy: { period: "asc" },
+      });
+      expect(full.map((f) => f.period.getUTCMonth() + 1)).toEqual([10, 11, 12]);
+    });
+
+    it("es idempotente — correr dos veces no duplica ni cambia nada", async () => {
+      const policy = await makePolicy({
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-01-01"),
+        terminationDate: new Date("2026-03-31"),
+      });
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "5.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      await trackAllExpectationsFor(policy.id);
+      const before = await prisma.commissionExpectation.findMany({ where: { policyId: policy.id } });
+
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      const after = await prisma.commissionExpectation.findMany({ where: { policyId: policy.id } });
+      expect(after).toHaveLength(before.length);
+      expect(after.map((a) => a.id).sort()).toEqual(before.map((b) => b.id).sort());
+    });
+
+    it("prioriza el override de póliza sobre la regla del producto, nunca suma ambas", async () => {
+      const policy = await makePolicy({
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-05-01"),
+        terminationDate: new Date("2026-05-31"),
+      });
+      const productRule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "20.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(productRule.id);
+      const override = await createCommissionRule(admin, {
+        productId,
+        policyId: policy.id,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "99.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(override.id);
+
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      const rows = await trackAllExpectationsFor(policy.id);
+      expect(rows).toHaveLength(1);
+      const exp = await prisma.commissionExpectation.findUnique({ where: { id: rows[0].id } });
+      expect(exp?.expectedAmount.toString()).toBe("99");
+    });
+
+    it("no genera nada si la póliza no está ACTIVE (ej. PENDING)", async () => {
+      const policy = await makePolicy({
+        status: "PENDING",
+        effectiveDate: new Date("2026-06-01"),
+        terminationDate: new Date("2026-06-30"),
+      });
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "10.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      const rows = await trackAllExpectationsFor(policy.id);
+      expect(rows).toHaveLength(0);
+    });
+
+    it("no genera nada sin terminationDate (nunca un rango abierto)", async () => {
+      const policy = await makePolicy({
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-06-01"),
+      });
+      // HEALTH auto-completa terminationDate al crear (Fase 025.1) —
+      // se fuerza a null aquí para probar específicamente el guard de
+      // "nunca un rango abierto" de syncCommissionExpectationsForPolicy.
+      await prisma.policy.update({ where: { id: policy.id }, data: { terminationDate: null } });
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "10.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      const rows = await trackAllExpectationsFor(policy.id);
+      expect(rows).toHaveLength(0);
+    });
+
+    it("cancelación: retira expectativas desde el mes de cancelación inclusive, conserva meses previos", async () => {
+      const policy = await makePolicy({
+        status: "ACTIVE",
+        effectiveDate: new Date("2026-10-01"),
+        terminationDate: new Date("2026-12-31"),
+      });
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "10.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      await trackAllExpectationsFor(policy.id);
+
+      const cancelled = await cancelPolicy(admin, policy.id, { terminationDate: "2026-11-15" });
+      const result = await removeCommissionExpectationsAfterCancellation(
+        policy.id,
+        cancelled.terminationDate!,
+        admin
+      );
+      expect(result.removed).toBe(2); // noviembre y diciembre
+      expect(result.flaggedWithPayments).toBe(0);
+
+      const remaining = await prisma.commissionExpectation.findMany({
+        where: { policyId: policy.id },
+        select: { period: true },
+      });
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].period.getUTCMonth() + 1).toBe(10); // octubre se conserva
+    });
+
+    it("cancelación: NUNCA borra una expectativa con pagos asociados — la marca CANCELLED en su lugar", async () => {
+      const policy = await makePolicy({
+        status: "ACTIVE",
+        effectiveDate: new Date("2027-01-01"),
+        terminationDate: new Date("2027-02-28"),
+      });
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "10.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      const rows = await trackAllExpectationsFor(policy.id);
+      const january = await prisma.commissionExpectation.findFirst({
+        where: { policyId: policy.id, period: new Date(Date.UTC(2027, 0, 1)) },
+      });
+      // Simula un pago YA recibido para enero, antes de la cancelación.
+      await addCommissionPayment(admin, january!.id, {
+        type: "PAYMENT",
+        amount: "10.00",
+        receivedAt: new Date(),
+      });
+
+      const cancelled = await cancelPolicy(admin, policy.id, { terminationDate: "2027-01-20" });
+      const result = await removeCommissionExpectationsAfterCancellation(
+        policy.id,
+        cancelled.terminationDate!,
+        admin
+      );
+      // Enero tiene pago -> NUNCA se borra, se marca CANCELLED.
+      // Febrero no tiene pago -> se retira (delete real).
+      expect(result.removed).toBe(1);
+      expect(result.flaggedWithPayments).toBe(1);
+
+      const januaryAfter = await prisma.commissionExpectation.findUnique({ where: { id: january!.id } });
+      expect(januaryAfter).not.toBeNull();
+      expect(januaryAfter?.status).toBe("CANCELLED");
+      const payment = await prisma.commissionPayment.findFirst({ where: { commissionExpectationId: january!.id } });
+      expect(payment).not.toBeNull();
+
+      void rows;
+    });
+
+    it("cancelación nunca toca meses anteriores al mes de cancelación", async () => {
+      const policy = await makePolicy({
+        status: "ACTIVE",
+        effectiveDate: new Date("2028-01-01"),
+        terminationDate: new Date("2028-03-31"),
+      });
+      const rule = await createCommissionRule(admin, {
+        productId,
+        method: "FIXED_AMOUNT",
+        base: "FIXED",
+        initialAmount: "10.00",
+        initialPeriodicity: "MONTHLY",
+      });
+      createdRuleIds.push(rule.id);
+      await syncCommissionExpectationsForPolicy(policy.id, admin);
+      await trackAllExpectationsFor(policy.id);
+
+      const cancelled = await cancelPolicy(admin, policy.id, { terminationDate: "2028-03-10" });
+      await removeCommissionExpectationsAfterCancellation(policy.id, cancelled.terminationDate!, admin);
+
+      const januaryStillThere = await prisma.commissionExpectation.findFirst({
+        where: { policyId: policy.id, period: new Date(Date.UTC(2028, 0, 1)) },
+      });
+      const februaryStillThere = await prisma.commissionExpectation.findFirst({
+        where: { policyId: policy.id, period: new Date(Date.UTC(2028, 1, 1)) },
+      });
+      expect(januaryStillThere).not.toBeNull();
+      expect(februaryStillThere).not.toBeNull();
     });
   });
 });

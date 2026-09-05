@@ -28,15 +28,19 @@ export function UploadStatementForm({ sources }: { sources: { source: string; la
         </select>
       </div>
       <div className="flex flex-col gap-1">
-        <Label htmlFor="file">Archivo (.csv o .xlsx)</Label>
+        <Label htmlFor="file">Archivo (.csv, .xlsx o .pdf según la fuente elegida)</Label>
         <input
           id="file"
           name="file"
           type="file"
-          accept=".csv,.xlsx"
+          accept=".csv,.xlsx,.pdf"
           required
           className="text-sm"
         />
+        <p className="text-xs text-muted-foreground">
+          Las fuentes marcadas &quot;PDF — pendiente&quot; todavía no procesan el contenido del PDF — sube
+          igual para confirmar el archivo, pero verás un aviso indicando que el adaptador está pendiente.
+        </p>
       </div>
       <Button type="submit" disabled={isPending} className="w-fit">
         {isPending ? "Subiendo…" : "Subir y previsualizar"}

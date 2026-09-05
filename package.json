@@ -12,7 +12,8 @@
     "seed:dev": "tsx scripts/seed-dev.ts",
     "import:legacy": "tsx scripts/import-legacy.ts",
     "import:book": "tsx scripts/import-book-of-business.ts",
-    "jobs:policy-lifecycle": "tsx scripts/policy-lifecycle-job.ts"
+    "jobs:policy-lifecycle": "tsx scripts/policy-lifecycle-job.ts",
+    "check:test-fixtures": "tsx scripts/check-test-fixture-leftovers.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

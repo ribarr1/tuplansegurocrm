@@ -1,7 +1,9 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { usDateToIso, isoToUsDate } from "@/lib/date-only";
 import {
   combineUsDateTimeToIsoLocal,
   splitIsoLocalToUsDateTime,
@@ -28,6 +30,8 @@ interface USDateTimeInputProps {
 // proceso Node) — ver zonedTimeToUtc en business-time.ts.
 export function USDateTimeInput({ id, name, defaultValue, required }: USDateTimeInputProps) {
   const baseId = useId();
+  const nativeDateId = useId();
+  const nativeDateRef = useRef<HTMLInputElement>(null);
   const initial = splitIsoLocalToUsDateTime(defaultValue);
   const [dateDisplay, setDateDisplay] = useState(initial.dateUs);
   const [hourDisplay, setHourDisplay] = useState(initial.hour12);
@@ -36,20 +40,59 @@ export function USDateTimeInput({ id, name, defaultValue, required }: USDateTime
 
   const iso = combineUsDateTimeToIsoLocal(dateDisplay, hourDisplay, minuteDisplay, meridiem);
 
+  // Fase 025.4 (UAT-02): mismo mecanismo de calendario real que
+  // USDateInput — un <input type="date"> nativo oculto, abierto solo
+  // vía el botón, nunca la fuente de verdad del envío (eso sigue
+  // siendo el hidden "YYYY-MM-DDTHH:mm" combinado más abajo).
+  function openCalendar() {
+    const el = nativeDateRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === "function") {
+      try {
+        el.showPicker();
+        return;
+      } catch {
+        // Fallback abajo para navegadores sin soporte/gesto bloqueado.
+      }
+    }
+    el.focus();
+    el.click();
+  }
+
   return (
     <div className="flex items-center gap-2">
-      <Input
-        id={id}
-        type="text"
-        inputMode="numeric"
-        autoComplete="off"
-        placeholder="MM/DD/AAAA"
-        maxLength={10}
-        required={required}
-        value={dateDisplay}
-        onChange={(e) => setDateDisplay(maskUsDate(e.target.value))}
-        className="w-32"
-      />
+      <div className="relative flex items-center">
+        <Input
+          id={id}
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="MM/DD/AAAA"
+          maxLength={10}
+          required={required}
+          value={dateDisplay}
+          onChange={(e) => setDateDisplay(maskUsDate(e.target.value))}
+          className="w-32 pr-9"
+        />
+        <button
+          type="button"
+          aria-label="Abrir calendario"
+          onClick={openCalendar}
+          className="absolute right-2 flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          <CalendarIcon className="h-4 w-4" />
+        </button>
+        <input
+          ref={nativeDateRef}
+          id={nativeDateId}
+          type="date"
+          tabIndex={-1}
+          aria-hidden="true"
+          value={usDateToIso(dateDisplay)}
+          onChange={(e) => setDateDisplay(isoToUsDate(e.target.value))}
+          className="pointer-events-none absolute h-0 w-0 opacity-0"
+        />
+      </div>
       <Input
         type="text"
         inputMode="numeric"

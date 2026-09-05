@@ -57,22 +57,45 @@ function nullableAgentId() {
 // qué mes, nunca "todos los períodos".
 export const commissionTotalsQuerySchema = z.object({ period: periodSchema });
 
+const periodFilterSchema = z.preprocess(
+  (v) => (v === "" ? undefined : v),
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, "Período inválido.")
+    .optional()
+);
+
+const yearFilterSchema = z.preprocess(
+  (v) => (v === "" ? undefined : v),
+  z.coerce.number().int().min(2000).max(2100).optional()
+);
+
 export const listCommissionExpectationsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   search: optionalSearchFilter(),
-  period: z.preprocess(
-    (v) => (v === "" ? undefined : v),
-    z
-      .string()
-      .regex(/^\d{4}-\d{2}$/, "Período inválido.")
-      .optional()
-  ),
+  period: periodFilterSchema,
   agentId: optionalUuidFilter(),
   carrierId: optionalUuidFilter(),
   status: optionalEnumFilter(COMMISSION_EXPECTATION_STATUS_VALUES),
 });
 export type ListCommissionExpectationsQuery = z.infer<typeof listCommissionExpectationsQuerySchema>;
+
+// Fase 025.4 (UAT-06) — totales agregados sobre el MISMO universo
+// filtrado que la lista (nunca solo la página visible). `period`
+// (mes exacto) y `year` son mutuamente excluyentes en la UI (ver
+// commissions/page.tsx) — si ambos llegaran, `period` gana (más
+// específico). Ninguno de los dos presente = todo el histórico
+// accesible.
+export const commissionExpectationTotalsQuerySchema = z.object({
+  search: optionalSearchFilter(),
+  period: periodFilterSchema,
+  year: yearFilterSchema,
+  agentId: optionalUuidFilter(),
+  carrierId: optionalUuidFilter(),
+  status: optionalEnumFilter(COMMISSION_EXPECTATION_STATUS_VALUES),
+});
+export type CommissionExpectationTotalsQuery = z.infer<typeof commissionExpectationTotalsQuerySchema>;
 
 // Solo ADMIN crea (ver commissions.service.ts) — policyId nunca es
 // editable después de creada: es la identidad de la expectativa.

@@ -5,7 +5,7 @@ import { requireSessionUser } from "@/lib/authorization";
 import {
   createCommissionRule,
   deactivateCommissionRule,
-  autoGenerateCurrentPeriodExpectation,
+  syncCommissionExpectationsForPolicy,
 } from "@/services/commission-rules.service";
 import { AppError } from "@/services/errors";
 
@@ -53,7 +53,7 @@ export async function createCommissionRuleAction(
   // ese producto sin override recibe la regla en su próximo evento
   // propio (activarse, cambiar prima, etc.), no retroactivamente aquí.
   if (created.policyId) {
-    await autoGenerateCurrentPeriodExpectation(created.policyId, actor);
+    await syncCommissionExpectationsForPolicy(created.policyId, actor);
   }
 
   revalidatePath(`/settings/products/${productId}/edit`);

@@ -22,6 +22,7 @@ import { PolicyDocumentsSection } from "./documents-section";
 import { CommissionRuleSection } from "./commission-rule-section";
 import { PolicyHistorySection } from "./history-section";
 import { CancelPolicyDialog } from "./cancel-policy-dialog";
+import { ReclassifyBusinessSourceButton } from "./reclassify-business-source-button";
 import { formatDateOnlyUS } from "@/lib/date-only";
 
 const formatDate = formatDateOnlyUS;
@@ -72,13 +73,17 @@ export default async function PolicyDetailPage({
           <Badge variant={POLICY_STATUS_BADGE_VARIANT[policy.status]}>
             {POLICY_STATUS_LABELS[policy.status]}
           </Badge>
-          {/* Fase 025 (Parte I): Propia/Referida — UNKNOWN (pólizas
-              históricas sin clasificar todavía) no muestra badge, para
-              no afirmar algo que no se sabe. */}
-          {policy.businessSource !== "UNKNOWN" && (
-            <Badge variant={policy.businessSource === "OWN" ? "secondary" : "outline"}>
-              {POLICY_BUSINESS_SOURCE_LABELS[policy.businessSource]}
-            </Badge>
+          {/* Fase 025.4 (UAT-03): UNKNOWN ahora SIEMPRE muestra un
+              badge con texto legible ("Sin clasificar") — ocultarlo
+              (como antes) dejaba solo el badge de Estado visible,
+              fácil de confundir con "el badge de Propia/Referida sin
+              etiqueta". Nunca depender solo del color: las tres
+              variantes llevan texto explícito. */}
+          <Badge variant={policy.businessSource === "OWN" ? "secondary" : "outline"}>
+            {POLICY_BUSINESS_SOURCE_LABELS[policy.businessSource]}
+          </Badge>
+          {policy.businessSource === "UNKNOWN" && actor.role === "ADMIN" && (
+            <ReclassifyBusinessSourceButton policyId={policy.id} />
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -180,17 +185,32 @@ export default async function PolicyDetailPage({
 
       <PremiumSection actor={actor} policyId={policy.id} />
 
-      <PolicyMembersSection actor={actor} policyId={policy.id} holderIsCovered={holderIsCovered} />
+      <PolicyMembersSection
+        actor={actor}
+        policyId={policy.id}
+        holderIsCovered={holderIsCovered}
+        isMutable={policy.status !== "CANCELLED" && policy.status !== "EXPIRED"}
+      />
 
       {policy.product.policyType === "HEALTH" && (
-        <HealthPolicySection actor={actor} policyId={policy.id} />
+        <HealthPolicySection
+          actor={actor}
+          policyId={policy.id}
+          isMutable={policy.status !== "CANCELLED" && policy.status !== "EXPIRED"}
+        />
       )}
 
       {actor.role !== "ASSISTANT" && (
         <PolicyCommissionsSection actor={actor} policyId={policy.id} />
       )}
 
-      {actor.role === "ADMIN" && <CommissionRuleSection actor={actor} policyId={policy.id} />}
+      {actor.role === "ADMIN" && (
+        <CommissionRuleSection
+          actor={actor}
+          policyId={policy.id}
+          isMutable={policy.status !== "CANCELLED" && policy.status !== "EXPIRED"}
+        />
+      )}
 
       <PolicyDocumentsSection actor={actor} policyId={policy.id} />
 

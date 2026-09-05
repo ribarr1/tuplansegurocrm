@@ -10,7 +10,7 @@ import {
   markPaymentDue,
   markPaymentPastDue,
 } from "@/services/premiums.service";
-import { autoGenerateCurrentPeriodExpectation } from "@/services/commission-rules.service";
+import { syncCommissionExpectationsForPolicy } from "@/services/commission-rules.service";
 import {
   formDataToUpdatePremiumInput,
   toPremiumFormState,
@@ -33,10 +33,11 @@ export async function updatePremiumTrackingAction(
     return toPremiumFormState(error, values);
   }
 
-  // Hallazgo #14: si la regla de comisión de esta póliza depende de la
-  // prima (PREMIUM_MONTHLY/PREMIUM_ANNUALIZED), cambiarla puede
-  // habilitar la expectativa del mes actual — best effort.
-  await autoGenerateCurrentPeriodExpectation(policyId, actor);
+  // Fase 025.4 (UAT-04): si la regla de comisión de esta póliza
+  // depende de la prima (PREMIUM_MONTHLY/PREMIUM_ANNUALIZED),
+  // cambiarla puede habilitar/ampliar el rango de expectativas — best
+  // effort.
+  await syncCommissionExpectationsForPolicy(policyId, actor);
 
   revalidatePath("/premiums");
   revalidatePath("/dashboard");
