@@ -53,5 +53,39 @@ describe("toFormState", () => {
   it("nunca deja pasar un error no controlado (Prisma/interno) tal cual", () => {
     const state = toFormState(new Error("relation \"people\" does not exist"), {});
     expect(state?.error).toBe("Ocurrió un error inesperado. Intenta de nuevo.");
+    // Nunca hay una lectura ambigua: un error real siempre produce
+    // `error` o `fieldErrors`, jamás un estado vacío que la UI pudiera
+    // confundir con éxito.
+    expect(state?.error || state?.fieldErrors).toBeTruthy();
+  });
+
+  // Fase 025.5.2 (Corrección 7) — los tres motivos de rechazo de
+  // assertActiveAgent (people.service.ts) usan el prefijo
+  // "assignedAgentId: " para que SIEMPRE lleguen como error DEL CAMPO
+  // (bajo el selector), nunca como un banner genérico ni, mucho menos,
+  // en silencio.
+  it("un agente inactivo rechazado por el servicio llega como fieldErrors.assignedAgentId", () => {
+    const state = toFormState(
+      new AppError("VALIDATION_ERROR", "assignedAgentId: El agente seleccionado está inactivo."),
+      { firstName: "Ana", assignedAgentId: "some-id" }
+    );
+    expect(state?.fieldErrors).toEqual({ assignedAgentId: "El agente seleccionado está inactivo." });
+    expect(state?.values?.assignedAgentId).toBe("some-id"); // el valor elegido no se pierde
+  });
+
+  it("un usuario sin isAgent=true rechazado por el servicio llega como fieldErrors.assignedAgentId", () => {
+    const state = toFormState(
+      new AppError("VALIDATION_ERROR", "assignedAgentId: El usuario seleccionado no tiene la condición de agente (isAgent)."),
+      { firstName: "Ana" }
+    );
+    expect(state?.fieldErrors?.assignedAgentId).toMatch(/isAgent/);
+  });
+
+  it("un agente inexistente (ID inválido) rechazado por el servicio llega como fieldErrors.assignedAgentId", () => {
+    const state = toFormState(
+      new AppError("VALIDATION_ERROR", "assignedAgentId: El agente seleccionado ya no existe."),
+      { firstName: "Ana" }
+    );
+    expect(state?.fieldErrors?.assignedAgentId).toBe("El agente seleccionado ya no existe.");
   });
 });

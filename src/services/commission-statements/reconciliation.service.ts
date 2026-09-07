@@ -456,7 +456,21 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
     };
   });
 
-  return { statement, rows: enriched };
+  // Fase 025.5.2 (Corrección 3) — invariante de integridad: la misma
+  // colección de filas normalizadas alimenta la tabla del preview, los
+  // conteos y los totales (nunca colecciones distintas para cada cosa),
+  // así que por construcción cada fila aporta a exactamente un estado y
+  // `detectedRows` (lo que se guardó al subir) debe coincidir con la
+  // cantidad de filas realmente recuperada aquí. Si alguna vez
+  // divergieran (ej. una fila se borró fuera del flujo normal), se
+  // reporta como error de integridad explícito — nunca se declara el
+  // reporte como "validado correctamente" en ese caso.
+  const integrityError =
+    statement.totalRows !== rows.length
+      ? `Inconsistencia de integridad: el reporte registra ${statement.totalRows} fila(s) pero se encontraron ${rows.length} — revisión manual requerida antes de aplicar.`
+      : null;
+
+  return { statement, rows: enriched, integrityError };
 }
 
 // Candidatos elegibles para un match manual (filas UNMATCHED/AMBIGUOUS)
@@ -617,11 +631,21 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
 
   const statement = await prisma.commissionStatement.findUnique({
     where: { id },
-    select: { id: true, status: true, payerAgency: true },
+    select: { id: true, status: true, payerAgency: true, totalRows: true },
   });
   if (!statement) throw new AppError("NOT_FOUND", "Reporte no encontrado.");
   if (statement.status === "DUPLICATE_BLOCKED") {
     throw new AppError("VALIDATION_ERROR", "Este reporte está bloqueado por ser un posible duplicado.");
+  }
+  // Fase 025.5.2 (Corrección 3) — mismo invariante que
+  // getCommissionStatementPreview: nunca se aplica un reporte cuya
+  // cantidad real de filas no coincide con lo registrado al subirlo.
+  const actualRowCount = await prisma.commissionStatementRow.count({ where: { statementId: id } });
+  if (actualRowCount !== statement.totalRows) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      `Error de integridad: el reporte registra ${statement.totalRows} fila(s) pero se encontraron ${actualRowCount} — no se puede aplicar hasta revisar manualmente.`
+    );
   }
   // payerAgency solo lo fijan los 3 adaptadores PDF reales (Fase 025.5),
   // que son EXCLUSIVAMENTE HEALTH — los adaptadores CSV/XLSX genéricos

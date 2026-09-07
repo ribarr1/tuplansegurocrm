@@ -14,6 +14,15 @@ import fs from "node:fs/promises";
 
 const tempFiles: string[] = [];
 const createdPersonIds: string[] = [];
+// Fase 025.5.2 — un titular importado con CONYUGUE/DEPENDIENTE crea
+// households con VARIAS Person (no solo el titular). Trackear solo el
+// id del titular (como se hacía antes) dejaba huérfanos el cónyuge y
+// los dependientes: nunca se borraban porque el cleanup solo conocía
+// `createdPersonIds` (el titular). Registrar el household completo
+// aquí permite expandir el cleanup a TODOS sus miembros reales, sin
+// depender de un texto visible ("Spouse") que también podría coincidir
+// con un contacto real legítimo.
+const createdHouseholdIds: string[] = [];
 const createdCarrierNames: string[] = [];
 
 async function planFromRows(
@@ -35,15 +44,34 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  // Fase 025.5.2 (Corrección 8) — nunca basarse solo en los IDs de
+  // titular capturados a mano: se expande a TODOS los miembros reales
+  // de cada household registrado (cónyuge, dependientes) vía FK técnica
+  // (HouseholdMember.householdId), nunca por texto visible. Esto corre
+  // en `finally` de cada test vía afterAll de Vitest, así que se ejecuta
+  // incluso si una aserción anterior falló.
+  const householdMemberPersonIds = createdHouseholdIds.length
+    ? (
+        await prisma.householdMember.findMany({
+          where: { householdId: { in: createdHouseholdIds } },
+          select: { personId: true },
+        })
+      ).map((m) => m.personId)
+    : [];
+  const allPersonIds = [...new Set([...createdPersonIds, ...householdMemberPersonIds])];
+
   await prisma.commissionPayment.deleteMany({
-    where: { commissionExpectation: { policy: { holder: { id: { in: createdPersonIds } } } } },
+    where: { commissionExpectation: { policy: { holder: { id: { in: allPersonIds } } } } },
   });
-  await prisma.commissionExpectation.deleteMany({ where: { policy: { holderId: { in: createdPersonIds } } } });
-  await prisma.healthPolicyDetail.deleteMany({ where: { policy: { holderId: { in: createdPersonIds } } } });
-  await prisma.policyMember.deleteMany({ where: { policy: { holderId: { in: createdPersonIds } } } });
-  await prisma.policy.deleteMany({ where: { holderId: { in: createdPersonIds } } });
-  await prisma.householdMember.deleteMany({ where: { personId: { in: createdPersonIds } } });
-  await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
+  await prisma.commissionExpectation.deleteMany({ where: { policy: { holderId: { in: allPersonIds } } } });
+  await prisma.healthPolicyDetail.deleteMany({ where: { policy: { holderId: { in: allPersonIds } } } });
+  await prisma.policyMember.deleteMany({ where: { policy: { holderId: { in: allPersonIds } } } });
+  await prisma.policy.deleteMany({ where: { holderId: { in: allPersonIds } } });
+  await prisma.householdMember.deleteMany({
+    where: { OR: [{ personId: { in: allPersonIds } }, { householdId: { in: createdHouseholdIds } }] },
+  });
+  await prisma.person.deleteMany({ where: { id: { in: allPersonIds } } });
+  await prisma.household.deleteMany({ where: { id: { in: createdHouseholdIds } } });
   await prisma.product.deleteMany({ where: { carrier: { name: { in: createdCarrierNames } } } });
   await prisma.carrier.deleteMany({ where: { name: { in: createdCarrierNames } } });
 });
@@ -664,6 +692,11 @@ describe("import pipeline", () => {
     createdPersonIds.push(person!.id);
 
     const membership = await prisma.householdMember.findFirst({ where: { personId: person!.id, role: "HEAD" } });
+    // Fase 025.5.2 (Corrección 8): esta fila trae CONYUGUE, así que
+    // apply.ts crea una SEGUNDA Person (el cónyuge) dentro de este mismo
+    // household — trackear el household completo (no solo el titular)
+    // es lo que permite al afterAll de arriba borrar también al cónyuge.
+    createdHouseholdIds.push(membership!.householdId);
     const household = await prisma.household.findUnique({ where: { id: membership!.householdId } });
     expect(household?.addressLine1).toBe("789 Fixture Blvd");
     expect(household?.county).toBe("AT COUNTY");

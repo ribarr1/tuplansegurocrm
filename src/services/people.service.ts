@@ -147,11 +147,19 @@ async function assertActiveAgent(userId: string): Promise<string> {
     where: { id: userId },
     select: { id: true, isAgent: true, isActive: true },
   });
-  if (!agent || !agent.isAgent || !agent.isActive) {
-    throw new AppError(
-      "VALIDATION_ERROR",
-      "assignedAgentId debe ser un usuario activo con isAgent=true."
-    );
+  // Fase 025.5.2 (Corrección 7): mensaje con el prefijo "campo: mensaje"
+  // (misma convención que el resto de errores de este servicio, ver
+  // services/errors.ts::parseOrThrow) para que llegue a la UI como error
+  // DEL CAMPO assignedAgentId (bajo el selector), nunca como un banner
+  // genérico ni, mucho menos, en silencio — ver contacts/form-helpers.ts.
+  if (!agent) {
+    throw new AppError("VALIDATION_ERROR", "assignedAgentId: El agente seleccionado ya no existe.");
+  }
+  if (!agent.isActive) {
+    throw new AppError("VALIDATION_ERROR", "assignedAgentId: El agente seleccionado está inactivo.");
+  }
+  if (!agent.isAgent) {
+    throw new AppError("VALIDATION_ERROR", "assignedAgentId: El usuario seleccionado no tiene la condición de agente (isAgent).");
   }
   return agent.id;
 }

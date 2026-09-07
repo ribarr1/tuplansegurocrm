@@ -58,7 +58,7 @@ export default async function ReconciliationDetailPage({
     throw error;
   }
 
-  const { statement, rows } = preview;
+  const { statement, rows, integrityError } = preview;
   const pendingCount = rows.filter((r) => r.matchStatus === "MATCHED" && !r.alreadyApplied).length;
   const stateCounts: Record<string, number> = {};
   for (const row of rows) stateCounts[row.reviewState] = (stateCounts[row.reviewState] ?? 0) + 1;
@@ -127,10 +127,20 @@ export default async function ReconciliationDetailPage({
         </p>
       )}
 
+      {integrityError && (
+        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {integrityError}
+        </p>
+      )}
+
       {statement.status === "APPLIED" ? (
         <p className="rounded-md bg-secondary/40 px-3 py-2 text-sm">
           Este reporte ya fue aplicado el {statement.appliedAt ? formatDateOnlyUS(statement.appliedAt) : "—"}.
         </p>
+      ) : integrityError ? (
+        <span className="text-xs text-destructive">
+          Aplicar está bloqueado hasta resolver el error de integridad de arriba.
+        </span>
       ) : (
         <div className="flex items-center gap-3">
           <ApplyStatementButton statementId={statement.id} pendingCount={pendingCount} />

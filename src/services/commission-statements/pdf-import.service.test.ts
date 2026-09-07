@@ -6,6 +6,7 @@ import { uploadCommissionStatement, getCommissionStatementPreview, applyCommissi
 import { OrangeOscarPdfAdapter } from "./orange-oscar-pdf-adapter";
 import { OrangeKaiserPdfAdapter } from "./orange-kaiser-pdf-adapter";
 import { EliteBcbsPdfAdapter } from "./elite-bcbs-pdf-adapter";
+import { buildTestTablePdf, makePdfFile } from "./test-pdf-builder";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 // ---------------------------------------------------------------------------
@@ -13,66 +14,10 @@ import type { AuthorizedUser } from "@/lib/authorization";
 // Oscar propia, Orange/Kaiser referida, Elite/BCBS referida). Todos los
 // datos aquí son SINTÉTICOS (nombres, Member ID, DOB fabricados) — nunca
 // se usa contenido de los PDF reales aportados fuera de este repo (ver
-// docs/COMMISSION_RECONCILIATION.md).
-//
-// Los PDF de prueba se generan a mano (texto posicionado vía Tm/Tj,
-// fuente estándar Helvetica, sin dependencias externas) reproduciendo
-// ÚNICAMENTE la estructura de columnas confirmada — nunca el contenido
-// real.
+// docs/COMMISSION_RECONCILIATION.md). Los PDF se generan con
+// test-pdf-builder.ts (texto posicionado vía Tm/Tj, Helvetica estándar)
+// reproduciendo ÚNICAMENTE la estructura de columnas confirmada.
 // ---------------------------------------------------------------------------
-
-// Construye un PDF mínimo válido con una tabla de texto posicionado —
-// cada celda es un Tj independiente con Tm absoluto, igual que los PDF
-// reales analizados (nunca se concatena texto por caracter).
-function buildTestTablePdf(table: string[][]): Buffer {
-  const colWidth = 90;
-  const startX = 40;
-  const startY = 750;
-  const lineHeight = 16;
-
-  function escape(text: string): string {
-    return text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-  }
-
-  let content = "BT\n/F1 9 Tf\n";
-  table.forEach((row, rowIndex) => {
-    const y = startY - rowIndex * lineHeight;
-    row.forEach((cell, colIndex) => {
-      if (!cell) return;
-      const x = startX + colIndex * colWidth;
-      content += `1 0 0 1 ${x} ${y} Tm\n(${escape(cell)}) Tj\n`;
-    });
-  });
-  content += "ET";
-
-  const maxCols = Math.max(...table.map((r) => r.length));
-  const pageWidth = startX * 2 + maxCols * colWidth;
-
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    `<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 ${pageWidth} 792] /Contents 5 0 R >>`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
-  ];
-
-  let pdf = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objects.forEach((obj, i) => {
-    offsets.push(Buffer.byteLength(pdf, "latin1"));
-    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
-  });
-  const xrefOffset = Buffer.byteLength(pdf, "latin1");
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const off of offsets) pdf += `${off.toString().padStart(10, "0")} 00000 n \n`;
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-  return Buffer.from(pdf, "latin1");
-}
-
-function makePdfFile(buffer: Buffer, name: string): File {
-  return new File([new Uint8Array(buffer)], name, { type: "application/pdf" });
-}
 
 function uniqueName(label: string) {
   return `${label}${Date.now()}${Math.random().toString(36).slice(2)}`;

@@ -288,19 +288,57 @@ describe("people.service", () => {
     it("un ADMIN sin isAgent=true (no vende) NUNCA puede recibir contactos asignados", async () => {
       await expect(
         createPerson(admin, { firstName: "Bad", lastName: "AdminNonAgent", assignedAgentId: adminNonAgent.id })
-      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        // Fase 025.5.2 (Corrección 7): el prefijo "assignedAgentId: " es
+        // lo que permite a la UI (toFormState) mostrar el error BAJO el
+        // selector, nunca como un banner genérico ni en silencio.
+        message: expect.stringContaining("assignedAgentId:"),
+      });
     });
 
     it("un AGENT inactivo (isActive=false) nunca puede recibir contactos asignados", async () => {
       await expect(
         createPerson(admin, { firstName: "Bad", lastName: "InactiveAgent", assignedAgentId: inactiveAgent.id })
-      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "assignedAgentId: El agente seleccionado está inactivo.",
+      });
+    });
+
+    it("un ID de agente inexistente se rechaza con un mensaje claro (nunca un error interno crudo)", async () => {
+      await expect(
+        createPerson(admin, { firstName: "Bad", lastName: "GhostAgent", assignedAgentId: "00000000-0000-0000-0000-000000000000" })
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "assignedAgentId: El agente seleccionado ya no existe.",
+      });
     });
 
     it("ASSISTANT sigue excluido del selector de agente", async () => {
       await expect(
         createPerson(admin, { firstName: "Bad", lastName: "AssistantCase", assignedAgentId: assistant.id })
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("un AGENT activo válido se guarda correctamente (caso feliz, no solo ADMIN+isAgent)", async () => {
+      const p = track(
+        await createPerson(admin, { firstName: "ValidAgent", lastName: "Case", assignedAgentId: agent.id })
+      );
+      expect(p.assignedAgentId).toBe(agent.id);
+    });
+
+    it("un fallo al reasignar no deja cambios parciales — el contacto conserva su agente anterior", async () => {
+      const p = track(
+        await createPerson(admin, { firstName: "NoPartial", lastName: "Case", assignedAgentId: agent.id })
+      );
+      await expect(
+        updatePerson(admin, p.id, { assignedAgentId: inactiveAgent.id, firstName: "ShouldNotApply" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+      const unchanged = await getPersonById(admin, p.id);
+      expect(unchanged.assignedAgentId).toBe(agent.id); // nunca cambió
+      expect(unchanged.firstName).toBe("NoPartial"); // el resto del update tampoco se aplicó a medias
     });
 
     it("enviar assignedAgentId='' desasigna explícitamente un contacto que ya tenía agente", async () => {
