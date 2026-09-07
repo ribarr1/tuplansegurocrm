@@ -369,65 +369,76 @@ describe("reconciliation.service — pipeline de conciliación", () => {
     expect(JSON.stringify(paymentEvent?.changes ?? {})).not.toContain("25");
   });
 
-  // Fase 025.4 (UAT-05) — subida segura de PDF. Fase 025.5: Oscar/
-  // Kaiser/Elite-BCBS ya tienen adaptador REAL; Ambetter sigue
-  // pendiente (sin PDF de muestra real) y sirve para probar el
-  // contrato "nunca finge soporte" de forma genérica.
-  describe("UAT-05 — subida segura de PDF y adaptador pendiente (Ambetter)", () => {
+  // Fase 025.4 (UAT-05) — subida segura de PDF. Fase 025.5.3: el
+  // catálogo de fuentes es exclusivamente AGENCIA+MODALIDAD
+  // (ORANGE_OWN, ORANGE_REFERRAL, ELITE_REFERRAL) — nunca un carrier;
+  // ya no existe ningún adaptador "pendiente" (Ambetter y cualquier
+  // otro carrier bajo una modalidad ya soportada usan el mismo adapter
+  // genérico, ver orange-pdf-shared.ts).
+  describe("UAT-05 — subida segura de PDF (Fase 025.5.3: fuentes = agencia+modalidad, nunca carrier)", () => {
     function makePdfFile(name: string): File {
-      // Firma real %PDF- (mínimo válido para sniffMimeType) + relleno.
+      // Firma real %PDF- (mínimo válido para sniffMimeType) + relleno
+      // sin las columnas esperadas — el archivo SÍ es un PDF real, pero
+      // su contenido no tiene la estructura de ningún adapter.
       const bytes = new TextEncoder().encode("%PDF-1.4\n%fake content for test\n");
       return new File([bytes], name, { type: "application/pdf" });
     }
 
-    it("las fuentes PDF reales y pendientes aparecen en el catálogo", () => {
+    it("el catálogo de reportes PDF reales contiene EXACTAMENTE 3 fuentes agencia+modalidad, ninguna nombrada por carrier", () => {
       const sources = listStatementSources();
-      const sourceIds = sources.map((s) => s.source);
-      expect(sourceIds).toContain("ORANGE_OSCAR_PDF");
-      expect(sourceIds).toContain("ORANGE_KAISER_PDF");
-      expect(sourceIds).toContain("ELITE_BCBS_PDF");
-      expect(sourceIds).toContain("AMBETTER_PDF");
+      const pdfModalitySources = sources.filter((s) => ["ORANGE_OWN", "ORANGE_REFERRAL", "ELITE_REFERRAL"].includes(s.source));
+      expect(pdfModalitySources.map((s) => s.source).sort()).toEqual(["ELITE_REFERRAL", "ORANGE_OWN", "ORANGE_REFERRAL"]);
+      // Ningún carrier (Oscar/Kaiser/BCBS/Ambetter/Cigna) aparece como
+      // id ni en la etiqueta visible de estas 3 fuentes — son datos
+      // detectados del contenido, nunca opciones del selector. (El
+      // adapter CSV legacy de Fase 020, ORANGE_OSCAR, queda deliberadamente
+      // fuera de esta verificación: es un flujo previo no alcanzado por
+      // esta corrección de UI.)
+      const carrierNames = ["OSCAR", "KAISER", "BCBS", "AMBETTER", "CIGNA"];
+      for (const s of pdfModalitySources) {
+        for (const carrierName of carrierNames) {
+          expect(s.source.toUpperCase()).not.toContain(carrierName);
+          expect(s.label.toUpperCase()).not.toContain(carrierName);
+        }
+      }
     });
 
-    it("un PDF real (firma válida) es aceptado en la subida pero el parseo se rechaza explícitamente (adaptador Ambetter pendiente)", async () => {
+    it("un PDF con firma válida pero sin estructura real de PDF es aceptado en la subida y rechazado con un mensaje claro al parsear", async () => {
+      // Firma %PDF- real, pero no un PDF bien formado (sin xref/objetos)
+      // — pasa la validación de firma pero pdfjs no puede leerlo; en
+      // cualquier caso nunca se llega a crear un CommissionStatement.
       await expect(
-        uploadCommissionStatement(admin, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
-      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-    });
-
-    it("el mensaje de rechazo del adaptador pendiente nombra la fuente y nunca finge soporte", async () => {
-      await expect(
-        uploadCommissionStatement(admin, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
-      ).rejects.toThrow(/Ambetter/);
+        uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(uniqueName("r") + ".pdf"))
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("file:") });
     });
 
     it("un archivo que NO es un PDF real (firma inválida) se rechaza ANTES de llegar a cualquier adaptador", async () => {
       const fakeBytes = new TextEncoder().encode("esto no es un pdf de verdad");
       const fake = new File([fakeBytes], uniqueName("r") + ".pdf", { type: "application/pdf" });
-      await expect(uploadCommissionStatement(admin, "AMBETTER_PDF", fake)).rejects.toMatchObject({
+      await expect(uploadCommissionStatement(admin, "ORANGE_OWN", fake)).rejects.toMatchObject({
         code: "VALIDATION_ERROR",
         message: expect.stringContaining("no es un PDF válido"),
       });
     });
 
-    it("nunca se crea un CommissionStatement para el adaptador pendiente (apply queda bloqueado por construcción)", async () => {
-      const before = await prisma.commissionStatement.count({ where: { source: "AMBETTER_PDF" } });
+    it("nunca se crea un CommissionStatement cuando el parseo falla (contenido sin las columnas esperadas)", async () => {
+      const before = await prisma.commissionStatement.count({ where: { source: "ORANGE_OWN" } });
       await expect(
-        uploadCommissionStatement(admin, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+        uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(uniqueName("r") + ".pdf"))
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-      const after = await prisma.commissionStatement.count({ where: { source: "AMBETTER_PDF" } });
+      const after = await prisma.commissionStatement.count({ where: { source: "ORANGE_OWN" } });
       expect(after).toBe(before);
     });
 
-    it("un source retirado del registro (ej. un stub genérico ya reemplazado) se rechaza como fuente no soportada", async () => {
+    it("una fuente inexistente/retirada (ej. un id acoplado a carrier ya reemplazado) se rechaza como no soportada", async () => {
       await expect(
-        uploadCommissionStatement(admin, "BCBS_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+        uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(uniqueName("r") + ".pdf"))
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("no soportada") });
     });
 
     it("ASSISTANT sigue sin acceso, ni siquiera para intentar un PDF", async () => {
       await expect(
-        uploadCommissionStatement(assistant, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+        uploadCommissionStatement(assistant, "ORANGE_OWN", makePdfFile(uniqueName("r") + ".pdf"))
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
   });

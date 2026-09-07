@@ -14,6 +14,7 @@ import {
 } from "@/schemas/commission-statement.schema";
 import { getStatementAdapter } from "./registry";
 import { matchStatementRow, findExpectationForPolicy, inferPeriod, type MatchResult } from "./matcher";
+import { normalizeCarrierForComparison } from "./carrier-detection";
 import type { NormalizedCommissionRow } from "./types";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -100,6 +101,8 @@ const statementSelect = {
   netTotal: true,
   declaredFooterTotal: true,
   footerMatchesNet: true,
+  detectedCarrierName: true,
+  carrierRecognized: true,
   uploadedBy: { select: { id: true, name: true } },
 } satisfies Prisma.CommissionStatementSelect;
 
@@ -193,6 +196,19 @@ export async function uploadCommissionStatement(
 
   if (parsed.rows.length === 0) {
     throw new AppError("VALIDATION_ERROR", "file: El archivo no contiene filas reconocibles.");
+  }
+
+  // Fase 025.5.3: el carrier se DETECTA del contenido (nunca se
+  // selecciona en la UI) y se busca en el catálogo existente por nombre
+  // normalizado — NUNCA se crea un Carrier automáticamente. Un carrier
+  // no reconocido no bloquea la subida (el ADMIN debe poder ver qué se
+  // detectó en el preview), pero sí bloquea el apply (ver
+  // applyCommissionStatement, más abajo).
+  let carrierRecognized: boolean | null = null;
+  if (parsed.detectedCarrierRaw) {
+    const normalizedDetected = normalizeCarrierForComparison(parsed.detectedCarrierRaw);
+    const existingCarriers = await prisma.carrier.findMany({ select: { name: true } });
+    carrierRecognized = existingCarriers.some((c) => normalizeCarrierForComparison(c.name) === normalizedDetected);
   }
 
   const fingerprint = computeFingerprint(source, parsed.rows);
@@ -325,6 +341,8 @@ export async function uploadCommissionStatement(
         declaredFooterTotal: declaredFooterTotal ? declaredFooterTotal.toFixed(2) : null,
         footerMatchesNet,
         adapterVersion: parsed.adapterVersion ?? "1",
+        detectedCarrierName: parsed.detectedCarrierRaw ?? null,
+        carrierRecognized,
       },
     });
     for (const rowData of rowsData) {
@@ -631,11 +649,20 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
 
   const statement = await prisma.commissionStatement.findUnique({
     where: { id },
-    select: { id: true, status: true, payerAgency: true, totalRows: true },
+    select: { id: true, status: true, payerAgency: true, totalRows: true, carrierRecognized: true },
   });
   if (!statement) throw new AppError("NOT_FOUND", "Reporte no encontrado.");
   if (statement.status === "DUPLICATE_BLOCKED") {
     throw new AppError("VALIDATION_ERROR", "Este reporte está bloqueado por ser un posible duplicado.");
+  }
+  // Fase 025.5.3: un carrier detectado que no existe en el catálogo
+  // (nunca se crea uno automáticamente) bloquea el apply — el preview
+  // sigue disponible para que el ADMIN revise qué se detectó.
+  if (statement.carrierRecognized === false) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "El carrier detectado en este reporte no existe en el catálogo — no se puede aplicar hasta que un ADMIN lo revise."
+    );
   }
   // Fase 025.5.2 (Corrección 3) — mismo invariante que
   // getCommissionStatementPreview: nunca se aplica un reporte cuya

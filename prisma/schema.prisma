@@ -1272,6 +1272,17 @@ model CommissionStatement {
   declaredFooterTotal  Decimal?                    @db.Decimal(12, 2)
   footerMatchesNet     Boolean?
   adapterVersion       String                      @default("1")
+  // Fase 025.5.3: el carrier real se DETECTA del contenido del PDF,
+  // nunca se selecciona en la UI (esa selección es solo agencia+
+  // modalidad, ver payerAgency/businessModality arriba). Texto tal como
+  // aparece en el archivo (ej. "Oscar ( ACA)"), para mostrarlo en el
+  // preview — nunca se usa como fuente de verdad de OWN/REFERRAL.
+  // carrierRecognized=false bloquea el apply (nunca el preview) cuando
+  // el carrier detectado no existe en el catálogo de carriers del CRM;
+  // null para statements que no fijan agencia/modalidad (CSV/XLSX de
+  // Fase 020, fuera de alcance de esta validación).
+  detectedCarrierName  String?
+  carrierRecognized    Boolean?
 
   uploadedBy User?                    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
   rows       CommissionStatementRow[]

@@ -1,10 +1,17 @@
 import { Prisma } from "@/generated/prisma/client";
 import { extractPdfRows, tableFromRows, rowToRecord } from "./pdf-table-extract";
+import { detectSingleCarrier } from "./carrier-detection";
 import type { CommissionStatementAdapter, NormalizedCommissionRow, ParsedStatement } from "./types";
 
 // ---------------------------------------------------------------------------
-// Fase 025.5 — Elite / BCBS, pólizas REFERIDAS (ELITE_REFERRAL). Formato
-// real analizado (DISTINTO del estilo Orange, nunca reutiliza
+// Fase 025.5.3 — Elite, pólizas REFERIDAS (ELITE_REFERRAL). El ADMIN
+// elige esta fuente por AGENCIA+MODALIDAD, nunca por carrier — Elite en
+// este proyecto solo paga referidas (nunca propias), pero el carrier
+// real (BCBS, u otro que Elite llegue a pagar) se detecta del contenido
+// de cada fila y se muestra por separado en el preview, nunca se
+// mezcla con la selección de agencia/modalidad.
+//
+// Formato real analizado (DISTINTO del estilo Orange, nunca reutiliza
 // orange-pdf-shared.ts): REPORT, CARRIER, MEMBER ID, Agent,
 // CLIENT/TITLE, CLIENT DOB, STATE, RATE, EFFECTIVE DATE, APPLICANTS,
 // SUBTOTAL, ASISTENCIA, TOTAL, MONTH PAID. Sin columna Status.
@@ -14,10 +21,6 @@ import type { CommissionStatementAdapter, NormalizedCommissionRow, ParsedStateme
 // estado, ver matcher.ts) y NUNCA se persiste en CommissionStatementRow
 // ni en ningún log/AuditEvent — `dateOfBirth` en NormalizedCommissionRow
 // existe solo para ese propósito transitorio.
-//
-// Elite en esta fase se trata ÚNICAMENTE como fuente de pagos
-// referidos (ver ficha de UAT) — este adapter siempre fija
-// businessModality=REFERRAL, nunca OWN.
 // ---------------------------------------------------------------------------
 
 const REQUIRED_HEADERS = [
@@ -71,16 +74,16 @@ function parseIsoDate(raw: string | undefined): Date | null {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
-export const EliteBcbsPdfAdapter: CommissionStatementAdapter = {
-  source: "ELITE_BCBS_PDF",
-  label: "Elite — BCBS (PDF, referida)",
+export const EliteReferralPdfAdapter: CommissionStatementAdapter = {
+  source: "ELITE_REFERRAL",
+  label: "Elite — Referidas",
   acceptedExtensions: [".pdf"],
   async parse(buffer: Buffer): Promise<ParsedStatement> {
     const extracted = await extractPdfRows(buffer);
     const table = tableFromRows(extracted.rows, REQUIRED_HEADERS);
     if (!table) {
       throw new Error(
-        `El PDF no tiene el formato esperado de Elite/BCBS — faltan columnas requeridas (${REQUIRED_HEADERS.join(", ")}).`
+        `El PDF no tiene el formato esperado de Elite — faltan columnas requeridas (${REQUIRED_HEADERS.join(", ")}).`
       );
     }
     const headerCells = extracted.rows[table.headerRowIndex].cells;
@@ -118,7 +121,7 @@ export const EliteBcbsPdfAdapter: CommissionStatementAdapter = {
       }
 
       rows.push({
-        source: "ELITE_BCBS_PDF",
+        source: "ELITE_REFERRAL",
         externalMemberId: col(record, "MEMBER ID") || null,
         memberName: col(record, "CLIENT/TITLE") || null,
         agentName: col(record, "Agent") || null,
@@ -138,13 +141,16 @@ export const EliteBcbsPdfAdapter: CommissionStatementAdapter = {
       });
     });
 
+    const detectedCarrierRaw = detectSingleCarrier(rows);
+
     return {
       rows,
       declaredTotal: declaredFooterTotal,
       payerAgency: "ELITE",
       businessModality: "REFERRAL",
-      adapterVersion: "1",
+      adapterVersion: "2",
       policyType: "HEALTH",
+      detectedCarrierRaw,
     };
   },
 };

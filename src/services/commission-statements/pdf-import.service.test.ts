@@ -3,9 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { createPolicy } from "@/services/policies.service";
 import { createCommissionRule, generateExpectationForPeriod } from "@/services/commission-rules.service";
 import { uploadCommissionStatement, getCommissionStatementPreview, applyCommissionStatement } from "./reconciliation.service";
-import { OrangeOscarPdfAdapter } from "./orange-oscar-pdf-adapter";
-import { OrangeKaiserPdfAdapter } from "./orange-kaiser-pdf-adapter";
-import { EliteBcbsPdfAdapter } from "./elite-bcbs-pdf-adapter";
+import { OrangeOwnPdfAdapter } from "./orange-own-pdf-adapter";
+import { OrangeReferralPdfAdapter } from "./orange-referral-pdf-adapter";
+import { EliteReferralPdfAdapter } from "./elite-referral-pdf-adapter";
 import { buildTestTablePdf, makePdfFile } from "./test-pdf-builder";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -139,8 +139,8 @@ afterAll(async () => {
 const PAID_AT = "2026-08-15";
 const PAID_PERIOD = new Date(Date.UTC(2026, 7, 1));
 
-describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, Elite/BCBS", () => {
-  describe("OrangeOscarPdfAdapter (ORANGE_OWN)", () => {
+describe("Adaptadores PDF reales (Fase 025.5.3) — agencia+modalidad, nunca carrier", () => {
+  describe("OrangeOwnPdfAdapter (ORANGE_OWN — carrier-agnóstico)", () => {
     const headers = [
       "Member ID", "Name", "Agent", "State", "Carrier", "Status", "Rate", "Members",
       "Subtotal", "Asistencia", "Total", "Effective Date", "Paid At",
@@ -152,7 +152,7 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
         headers,
         [memberId, "Firstname Lastname", "Agent A", "IL", "Oscar", "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
       ]);
-      const result = await OrangeOscarPdfAdapter.parse(pdf, "oscar.pdf");
+      const result = await OrangeOwnPdfAdapter.parse(pdf, "oscar.pdf");
       expect(result.payerAgency).toBe("ORANGE");
       expect(result.businessModality).toBe("OWN");
       expect(result.policyType).toBe("HEALTH");
@@ -164,13 +164,19 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
       expect(row.netAmount).toBe("44.00");
     });
 
-    it("B) exige Member ID como columna requerida — sin ella, rechaza con mensaje claro", async () => {
+    // Fase 025.5.3: "Member ID" es una variante ESTRUCTURAL del layout
+    // (algunos reportes reales la traen, otros no) — nunca una columna
+    // obligatoria ni una opción de negocio. El mismo adapter acepta
+    // ambos casos sin que el ADMIN elija nada al respecto.
+    it("B) Member ID es opcional — un archivo sin esa columna se parsea igual, sin exigirla", async () => {
       const withoutMemberId = headers.filter((h) => h !== "Member ID");
       const pdf = buildTestTablePdf([
         withoutMemberId,
         ["Firstname Lastname", "Agent A", "IL", "Oscar", "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
       ]);
-      await expect(OrangeOscarPdfAdapter.parse(pdf, "oscar.pdf")).rejects.toThrow(/columnas requeridas/);
+      const result = await OrangeOwnPdfAdapter.parse(pdf, "oscar.pdf");
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].externalMemberId).toBeNull();
     });
 
     it("C) valida Subtotal - Asistencia = Total por fila; una discrepancia genera warning, nunca bloquea", async () => {
@@ -178,7 +184,7 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
         headers,
         [uniqueName("OSC"), "Otra Persona", "Agent A", "IL", "Oscar", "ACTIVE", "25.00", "2", "50.00", "6.00", "40.00", "2026-08-01", PAID_AT],
       ]);
-      const result = await OrangeOscarPdfAdapter.parse(pdf, "oscar.pdf");
+      const result = await OrangeOwnPdfAdapter.parse(pdf, "oscar.pdf");
       expect(result.rows[0].warnings?.some((w) => w.includes("no coincide"))).toBe(true);
     });
 
@@ -188,13 +194,45 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
         [uniqueName("OSC"), "Persona Uno", "Agent A", "IL", "Oscar", "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
         ["Total", "", "", "", "", "", "", "", "", "", "44.00", "", ""],
       ]);
-      const result = await OrangeOscarPdfAdapter.parse(pdf, "oscar.pdf");
+      const result = await OrangeOwnPdfAdapter.parse(pdf, "oscar.pdf");
       expect(result.rows).toHaveLength(1); // la fila de pie nunca se cuenta como fila de datos
       expect(result.declaredTotal).toBe("44.00");
     });
+
+    // CORRECCIÓN ADICIONAL: "Orange propia acepta archivos
+    // estructuralmente válidos de diferentes carriers" — el mismo
+    // adapter, sin ninguna opción distinta, procesa Oscar Y Ambetter
+    // (u otro carrier) igual, porque el carrier nunca fue parte de la
+    // selección — solo del contenido.
+    it("acepta archivos de carriers DISTINTOS (Oscar, Ambetter) con la misma estructura, sin cambiar de adapter", async () => {
+      const oscarPdf = buildTestTablePdf([
+        headers,
+        [uniqueName("OSC"), "Persona Oscar", "Agent A", "IL", "Oscar", "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT],
+      ]);
+      const ambetterPdf = buildTestTablePdf([
+        headers,
+        [uniqueName("AMB"), "Persona Ambetter", "Agent A", "FL", "Ambetter", "ACTIVE", "30.00", "1", "30.00", "0.00", "30.00", "2026-08-01", PAID_AT],
+      ]);
+      const oscarResult = await OrangeOwnPdfAdapter.parse(oscarPdf, "oscar.pdf");
+      const ambetterResult = await OrangeOwnPdfAdapter.parse(ambetterPdf, "ambetter.pdf");
+      expect(oscarResult.detectedCarrierRaw).toBe("Oscar");
+      expect(ambetterResult.detectedCarrierRaw).toBe("Ambetter");
+      // Ambos conservan la MISMA modalidad — el carrier nunca la altera.
+      expect(oscarResult.businessModality).toBe("OWN");
+      expect(ambetterResult.businessModality).toBe("OWN");
+    });
+
+    it("un reporte con MÁS DE UN carrier distinto en el mismo archivo se rechaza por completo", async () => {
+      const pdf = buildTestTablePdf([
+        headers,
+        [uniqueName("OSC"), "Persona Uno", "Agent A", "IL", "Oscar", "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT],
+        [uniqueName("AMB"), "Persona Dos", "Agent A", "FL", "Ambetter", "ACTIVE", "30.00", "1", "30.00", "0.00", "30.00", "2026-08-01", PAID_AT],
+      ]);
+      await expect(OrangeOwnPdfAdapter.parse(pdf, "mixed.pdf")).rejects.toThrow(/más de un carrier/);
+    });
   });
 
-  describe("OrangeKaiserPdfAdapter (ORANGE_REFERRAL, sin Member ID)", () => {
+  describe("OrangeReferralPdfAdapter (ORANGE_REFERRAL — carrier-agnóstico, sin Member ID)", () => {
     const headers = [
       "Name", "Agent", "State", "Carrier", "Status", "Rate", "Members",
       "Subtotal", "Asistencia", "Total", "Effective Date", "Paid At",
@@ -205,15 +243,33 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
         headers,
         ["Nombre Kaiser", "Agent B", "GA", "Kaiser", "ACTIVE", "30.00", "1", "60.00", "0.00", "60.00", "2026-08-01", PAID_AT],
       ]);
-      const result = await OrangeKaiserPdfAdapter.parse(pdf, "kaiser.pdf");
+      const result = await OrangeReferralPdfAdapter.parse(pdf, "kaiser.pdf");
       expect(result.payerAgency).toBe("ORANGE");
       expect(result.businessModality).toBe("REFERRAL");
       expect(result.rows[0].externalMemberId).toBeNull();
       expect(result.rows[0].receivedAmount).toBe("60.00");
+      expect(result.detectedCarrierRaw).toBe("Kaiser");
+    });
+
+    it("acepta archivos de carriers distintos (Kaiser, BCBS) bajo la misma modalidad referida", async () => {
+      const kaiserPdf = buildTestTablePdf([
+        headers,
+        ["Persona Kaiser", "Agent B", "GA", "Kaiser", "ACTIVE", "30.00", "1", "60.00", "0.00", "60.00", "2026-08-01", PAID_AT],
+      ]);
+      const bcbsPdf = buildTestTablePdf([
+        headers,
+        ["Persona BCBS", "Agent B", "SC", "BCBS", "ACTIVE", "40.00", "1", "40.00", "0.00", "40.00", "2026-08-01", PAID_AT],
+      ]);
+      const kaiserResult = await OrangeReferralPdfAdapter.parse(kaiserPdf, "kaiser.pdf");
+      const bcbsResult = await OrangeReferralPdfAdapter.parse(bcbsPdf, "bcbs.pdf");
+      expect(kaiserResult.detectedCarrierRaw).toBe("Kaiser");
+      expect(bcbsResult.detectedCarrierRaw).toBe("BCBS");
+      expect(kaiserResult.businessModality).toBe("REFERRAL");
+      expect(bcbsResult.businessModality).toBe("REFERRAL");
     });
   });
 
-  describe("EliteBcbsPdfAdapter (ELITE_REFERRAL, con CLIENT DOB, sin Status)", () => {
+  describe("EliteReferralPdfAdapter (ELITE_REFERRAL — carrier-agnóstico, con CLIENT DOB, sin Status)", () => {
     const headers = [
       "REPORT", "CARRIER", "MEMBER ID", "Agent", "CLIENT/TITLE", "CLIENT DOB", "STATE",
       "RATE", "EFFECTIVE DATE", "APPLICANTS", "SUBTOTAL", "ASISTENCIA", "TOTAL", "MONTH PAID",
@@ -224,7 +280,7 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
         headers,
         ["RPT1", "BlueCross", uniqueName("ELM"), "Agent C", "Persona Elite", "1990-05-20", "SC", "40.00", "2026-08-01", "1", "80.00", "5.00", "75.00", PAID_AT],
       ]);
-      const result = await EliteBcbsPdfAdapter.parse(pdf, "elite.pdf");
+      const result = await EliteReferralPdfAdapter.parse(pdf, "elite.pdf");
       expect(result.payerAgency).toBe("ELITE");
       expect(result.businessModality).toBe("REFERRAL");
       const row = result.rows[0];
@@ -232,6 +288,33 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
       expect(row.dateOfBirth?.toISOString().slice(0, 10)).toBe("1990-05-20");
       expect(row.receivedAmount).toBe("80.00");
       expect(row.netAmount).toBe("75.00");
+      expect(result.detectedCarrierRaw).toBe("BlueCross");
+    });
+
+    it("acepta carriers distintos (BlueCross, Cigna) con la misma estructura Elite", async () => {
+      const bcPdf = buildTestTablePdf([
+        headers,
+        ["RPT1", "BlueCross", uniqueName("ELM"), "Agent C", "Persona Uno", "1990-05-20", "SC", "40.00", "2026-08-01", "1", "80.00", "5.00", "75.00", PAID_AT],
+      ]);
+      const cignaPdf = buildTestTablePdf([
+        headers,
+        ["RPT1", "Cigna", uniqueName("ELM"), "Agent C", "Persona Dos", "1985-03-10", "NC", "35.00", "2026-08-01", "1", "70.00", "5.00", "65.00", PAID_AT],
+      ]);
+      const bcResult = await EliteReferralPdfAdapter.parse(bcPdf, "bc.pdf");
+      const cignaResult = await EliteReferralPdfAdapter.parse(cignaPdf, "cigna.pdf");
+      expect(bcResult.detectedCarrierRaw).toBe("BlueCross");
+      expect(cignaResult.detectedCarrierRaw).toBe("Cigna");
+      expect(bcResult.businessModality).toBe("REFERRAL");
+      expect(cignaResult.businessModality).toBe("REFERRAL");
+    });
+
+    it("un reporte Elite con más de un carrier distinto se rechaza por completo", async () => {
+      const pdf = buildTestTablePdf([
+        headers,
+        ["RPT1", "BlueCross", uniqueName("ELM"), "Agent C", "Persona Uno", "1990-05-20", "SC", "40.00", "2026-08-01", "1", "80.00", "5.00", "75.00", PAID_AT],
+        ["RPT1", "Cigna", uniqueName("ELM"), "Agent C", "Persona Dos", "1985-03-10", "NC", "35.00", "2026-08-01", "1", "70.00", "5.00", "65.00", PAID_AT],
+      ]);
+      await expect(EliteReferralPdfAdapter.parse(pdf, "mixed.pdf")).rejects.toThrow(/más de un carrier/);
     });
 
     it("G) CLIENT DOB nunca se persiste en CommissionStatementRow — solo vive en memoria durante el matching", async () => {
@@ -242,7 +325,7 @@ describe("Adaptadores PDF reales (Fase 025.5) — Orange/Oscar, Orange/Kaiser, E
           "40.00", "2026-08-01", "1", "80.00", "5.00", "75.00", PAID_AT,
         ],
       ]);
-      const upload = await uploadCommissionStatement(admin, "ELITE_BCBS_PDF", makePdfFile(pdf, uniqueName("elite") + ".pdf"));
+      const upload = await uploadCommissionStatement(admin, "ELITE_REFERRAL", makePdfFile(pdf, uniqueName("elite") + ".pdf"));
       if (upload.duplicate) throw new Error("unexpected duplicate");
       createdStatementIds.push(upload.statementId);
       const row = await prisma.commissionStatementRow.findFirst({ where: { statementId: upload.statementId } });
@@ -268,7 +351,7 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
       [memberId, `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
       ["Total", "", "", "", "", "", "", "", "", "", "44.00", "", ""],
     ]);
-    const upload = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
     if (upload.duplicate) throw new Error("unexpected duplicate");
     createdStatementIds.push(upload.statementId);
 
@@ -293,7 +376,7 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
       oscarHeaders,
       [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "GA", carrier.name, "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
     ]);
-    const upload = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
     if (upload.duplicate) throw new Error("unexpected duplicate");
     createdStatementIds.push(upload.statementId);
 
@@ -328,7 +411,7 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
       oscarHeaders,
       [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "FL", carrier.name, "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
     ]);
-    const upload = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
     if (upload.duplicate) throw new Error("unexpected duplicate");
     createdStatementIds.push(upload.statementId);
 
@@ -345,7 +428,7 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
     const row = [memberId, `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT];
 
     const pdf1 = buildTestTablePdf([oscarHeaders, row]);
-    const upload1 = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf1, uniqueName("oscar1") + ".pdf"));
+    const upload1 = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf1, uniqueName("oscar1") + ".pdf"));
     if (upload1.duplicate) throw new Error("unexpected duplicate");
     createdStatementIds.push(upload1.statementId);
     const preview1 = await getCommissionStatementPreview(admin, upload1.statementId);
@@ -362,7 +445,7 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
       "ACTIVE", "10.00", "1", "20.00", "0.00", "20.00", "2026-08-01", PAID_AT,
     ];
     const pdf2 = buildTestTablePdf([oscarHeaders, row, extraRow]);
-    const upload2 = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf2, uniqueName("oscar2") + ".pdf"));
+    const upload2 = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf2, uniqueName("oscar2") + ".pdf"));
     if (upload2.duplicate) throw new Error("unexpected duplicate");
     createdStatementIds.push(upload2.statementId);
     const preview2 = await getCommissionStatementPreview(admin, upload2.statementId);
@@ -385,7 +468,7 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
       oscarHeaders,
       [uniqueName("OSC"), `${policyFresh.holder.firstName} ${policyFresh.holder.lastName}`, "Agent A", "TX", carrierRow.carrier.name, "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
     ]);
-    const upload = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
     if (upload.duplicate) throw new Error("unexpected duplicate");
     createdStatementIds.push(upload.statementId);
     await applyCommissionStatement(admin, upload.statementId);
@@ -407,7 +490,7 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
       oscarHeaders,
       [memberId, `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
     ]);
-    const upload = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
     if (upload.duplicate) throw new Error("unexpected duplicate");
     createdStatementIds.push(upload.statementId);
 
@@ -421,5 +504,95 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
     // preview lo enmascara.
     const rawRow = await prisma.commissionStatementRow.findFirstOrThrow({ where: { statementId: upload.statementId } });
     expect(rawRow.externalId).toBe(memberId);
+  });
+
+  // -------------------------------------------------------------------
+  // CORRECCIÓN ADICIONAL — el selector de fuente ya NO incluye el
+  // carrier (ORANGE_OWN/ORANGE_REFERRAL/ELITE_REFERRAL solamente); el
+  // carrier real se detecta del PDF, se busca en el catálogo de
+  // carriers existente (nunca se crea uno nuevo) y se muestra separado
+  // de agencia/modalidad en el preview.
+  // -------------------------------------------------------------------
+
+  it("N) el preview muestra agencia, modalidad y carrier como datos SEPARADOS, y el carrier detectado (existente en el catálogo) queda reconocido", async () => {
+    const { person, carrier } = await makeHealthPolicy(admin, {
+      firstName: "CarrierOk", lastName: uniqueName("Persona"), carrierName: uniqueName("RealCarrier"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const pdf = buildTestTablePdf([
+      oscarHeaders,
+      [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT],
+    ]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    // Tres datos separados, nunca mezclados en un solo campo.
+    expect(preview.statement.payerAgency).toBe("ORANGE");
+    expect(preview.statement.businessModality).toBe("OWN");
+    expect(preview.statement.detectedCarrierName).toBe(carrier.name);
+    expect(preview.statement.carrierRecognized).toBe(true);
+  });
+
+  it("O) un carrier detectado que NO existe en el catálogo se marca como no reconocido y bloquea el apply (nunca se crea el Carrier automáticamente)", async () => {
+    const { person } = await makeHealthPolicy(admin, {
+      firstName: "CarrierBad", lastName: uniqueName("Persona"), carrierName: uniqueName("SomeOtherCarrier"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const unknownCarrierName = uniqueName("CarrierNuncaRegistrado");
+    const pdf = buildTestTablePdf([
+      oscarHeaders,
+      [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", unknownCarrierName, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT],
+    ]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview.statement.detectedCarrierName).toBe(unknownCarrierName);
+    expect(preview.statement.carrierRecognized).toBe(false); // el preview SIGUE disponible para revisión
+
+    await expect(applyCommissionStatement(admin, upload.statementId)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("no existe en el catálogo"),
+    });
+
+    const carrierCount = await prisma.carrier.count({ where: { name: unknownCarrierName } });
+    expect(carrierCount).toBe(0); // nunca se crea un Carrier automáticamente
+  });
+
+  it("P) el carrier detectado NUNCA determina ni cambia la modalidad/agencia del statement (vienen exclusivamente del selector)", async () => {
+    // Mismo carrier (BCBS) usado bajo DOS modalidades distintas — el
+    // resultado debe respetar exactamente lo que el ADMIN seleccionó al
+    // subir, nunca inferir la modalidad a partir del nombre del carrier.
+    const carrierName = uniqueName("BCBS");
+    const carrier = await prisma.carrier.create({ data: { name: carrierName } });
+    createdCarrierIds.push(carrier.id);
+
+    const ownPdf = buildTestTablePdf([
+      oscarHeaders,
+      [uniqueName("OSC"), "Persona Propia", "Agent A", "IL", carrierName, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT],
+    ]);
+    const uploadOwn = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(ownPdf, uniqueName("own") + ".pdf"));
+    if (uploadOwn.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(uploadOwn.statementId);
+    const previewOwn = await getCommissionStatementPreview(admin, uploadOwn.statementId);
+    expect(previewOwn.statement.businessModality).toBe("OWN");
+    expect(previewOwn.statement.detectedCarrierName).toBe(carrierName);
+
+    const referralPdf = buildTestTablePdf([
+      [
+        "Name", "Agent", "State", "Carrier", "Status", "Rate", "Members",
+        "Subtotal", "Asistencia", "Total", "Effective Date", "Paid At",
+      ],
+      ["Persona Referida", "Agent A", "SC", carrierName, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT],
+    ]);
+    const uploadReferral = await uploadCommissionStatement(admin, "ORANGE_REFERRAL", makePdfFile(referralPdf, uniqueName("ref") + ".pdf"));
+    if (uploadReferral.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(uploadReferral.statementId);
+    const previewReferral = await getCommissionStatementPreview(admin, uploadReferral.statementId);
+    expect(previewReferral.statement.businessModality).toBe("REFERRAL");
+    expect(previewReferral.statement.detectedCarrierName).toBe(carrierName);
   });
 });

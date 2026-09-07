@@ -1,17 +1,26 @@
 import { Prisma } from "@/generated/prisma/client";
 import { extractPdfRows, tableFromRows, rowToRecord, type PdfTextRow } from "./pdf-table-extract";
+import { detectSingleCarrier } from "./carrier-detection";
 import type { NormalizedCommissionRow, ParsedStatement } from "./types";
 
 // ---------------------------------------------------------------------------
-// Fase 025.5 — núcleo COMPARTIDO para los reportes PDF con el "estilo
-// Orange" (Oscar propia, Kaiser referida, BCBS-vía-Orange propia — los
-// 3 comparten prácticamente las mismas columnas, solo difieren en
-// cuáles son opcionales: Member ID, Type, Comment). Nunca se duplica
-// esta lógica entre OrangeOscarPdfAdapter/OrangeKaiserPdfAdapter — cada
-// uno es una envoltura fina que fija agencia/modalidad y valida qué
-// columnas espera encontrar.
+// Fase 025.5.3 — núcleo COMPARTIDO para los reportes PDF "estilo Orange"
+// (propias y referidas — el mismo layout de columnas sirve para ambas
+// modalidades; lo único que puede variar entre archivos reales es si
+// traen o no la columna opcional "Member ID", una variante ESTRUCTURAL
+// del layout, nunca una opción de negocio — se detecta sola, nunca se
+// selecciona en la UI). El carrier (Oscar, Ambetter, Kaiser, BCBS,
+// Cigna...) tampoco se selecciona: se detecta del contenido de cada
+// fila (columna Carrier) y debe ser el MISMO en todo el archivo, ver
+// carrier-detection.ts. La agencia+modalidad (ORANGE_OWN/
+// ORANGE_REFERRAL) las fija quien llama a `parseOrangeStylePdf` según
+// lo que el ADMIN seleccionó al subir, nunca este módulo.
 // ---------------------------------------------------------------------------
 
+// "Member ID" es OPCIONAL — algunos reportes reales la traen, otros no
+// (ninguna de las dos modalidades la exige). Nunca forma parte de los
+// headers requeridos: su presencia se detecta leyendo el header real,
+// no negociando qué columnas "debería" tener según la fuente elegida.
 const REQUIRED_HEADERS = [
   "Name",
   "Agent",
@@ -67,17 +76,13 @@ function parseIsoOrderDate(raw: string | undefined): Date | null {
 
 export interface OrangeStylePdfConfig {
   source: string;
-  requireMemberId: boolean;
 }
 
 export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdfConfig): Promise<ParsedStatement> {
   const extracted = await extractPdfRows(buffer);
-  const requiredForThisConfig = config.requireMemberId ? ["Member ID", ...REQUIRED_HEADERS] : REQUIRED_HEADERS;
-  const table = tableFromRows(extracted.rows, requiredForThisConfig);
+  const table = tableFromRows(extracted.rows, REQUIRED_HEADERS);
   if (!table) {
-    throw new Error(
-      `El PDF no tiene el formato esperado — faltan columnas requeridas (${requiredForThisConfig.join(", ")}).`
-    );
+    throw new Error(`El PDF no tiene el formato esperado — faltan columnas requeridas (${REQUIRED_HEADERS.join(", ")}).`);
   }
   const headerCells = extracted.rows[table.headerRowIndex].cells;
   const headerByNormalized = new Map(headerCells.map((h) => [normalizeHeader(h.text), h.text]));
@@ -134,5 +139,9 @@ export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdf
     });
   });
 
-  return { rows, declaredTotal: declaredFooterTotal };
+  // Un solo carrier por reporte — nunca se adivina cuál es el
+  // "correcto" si el archivo trae más de uno (ver carrier-detection.ts).
+  const detectedCarrierRaw = detectSingleCarrier(rows);
+
+  return { rows, declaredTotal: declaredFooterTotal, detectedCarrierRaw };
 }

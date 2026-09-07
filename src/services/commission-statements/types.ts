@@ -65,6 +65,14 @@ export interface ParsedStatement {
   // matcher nunca pueda emparejar una fila con una póliza de otro
   // producto (ver matcher.ts).
   policyType?: "HEALTH";
+  // Fase 025.5.3: el carrier real se DETECTA del contenido del PDF
+  // (columna Carrier de cada fila), nunca se selecciona en la UI — la
+  // UI solo elige agencia+modalidad. Texto tal como aparece en el
+  // archivo (ej. "Oscar ( ACA)"), para mostrarlo en el preview; nunca
+  // se usa para inferir OWN/REFERRAL. Un reporte con más de un carrier
+  // distinto hace que el adapter rechace el archivo por completo (ver
+  // carrier-detection.ts) — nunca llega aquí con ambigüedad.
+  detectedCarrierRaw?: string | null;
 }
 
 export interface CommissionStatementAdapter {

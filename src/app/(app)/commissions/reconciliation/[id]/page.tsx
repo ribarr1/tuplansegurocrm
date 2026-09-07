@@ -86,6 +86,24 @@ export default async function ReconciliationDetailPage({
             <CardTitle className="text-sm font-medium text-muted-foreground">Totales del reporte</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+            {/* Agencia, modalidad y carrier son 3 datos SEPARADOS —
+                agencia+modalidad vienen del selector del ADMIN, el
+                carrier se detecta del contenido del PDF (nunca al
+                revés). */}
+            <span>
+              Carrier detectado:{" "}
+              <strong>{statement.detectedCarrierName ?? "no detectado"}</strong>
+              {statement.carrierRecognized === true && (
+                <Badge variant="default" className="ml-2">
+                  Reconocido
+                </Badge>
+              )}
+              {statement.carrierRecognized === false && (
+                <Badge variant="destructive" className="ml-2">
+                  No reconocido — bloquea el apply
+                </Badge>
+              )}
+            </span>
             <span>
               Subtotal bruto: <strong>${statement.receivedTotal.toString()}</strong>
             </span>
@@ -133,6 +151,14 @@ export default async function ReconciliationDetailPage({
         </p>
       )}
 
+      {statement.carrierRecognized === false && (
+        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          El carrier detectado (&quot;{statement.detectedCarrierName}&quot;) no existe en el catálogo de carriers
+          del CRM — revísalo en Configuración antes de aplicar este reporte. Nunca se crea un carrier
+          automáticamente.
+        </p>
+      )}
+
       {statement.status === "APPLIED" ? (
         <p className="rounded-md bg-secondary/40 px-3 py-2 text-sm">
           Este reporte ya fue aplicado el {statement.appliedAt ? formatDateOnlyUS(statement.appliedAt) : "—"}.
@@ -140,6 +166,10 @@ export default async function ReconciliationDetailPage({
       ) : integrityError ? (
         <span className="text-xs text-destructive">
           Aplicar está bloqueado hasta resolver el error de integridad de arriba.
+        </span>
+      ) : statement.carrierRecognized === false ? (
+        <span className="text-xs text-destructive">
+          Aplicar está bloqueado hasta que el carrier detectado sea reconocido.
         </span>
       ) : (
         <div className="flex items-center gap-3">

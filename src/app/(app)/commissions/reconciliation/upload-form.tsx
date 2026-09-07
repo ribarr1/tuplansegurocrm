@@ -13,7 +13,7 @@ export function UploadStatementForm({ sources }: { sources: { source: string; la
     <form action={formAction} className="flex flex-col gap-3 max-w-md">
       <FormError message={state?.error} />
       <div className="flex flex-col gap-1">
-        <Label htmlFor="source">Fuente / formato</Label>
+        <Label htmlFor="source">Agencia y modalidad</Label>
         <select
           id="source"
           name="source"
@@ -26,6 +26,11 @@ export function UploadStatementForm({ sources }: { sources: { source: string; la
             </option>
           ))}
         </select>
+        <p className="text-xs text-muted-foreground">
+          Esto NUNCA es el carrier (Oscar, Ambetter, Kaiser, BCBS, Cigna...) — el carrier se detecta
+          automáticamente del contenido del PDF y se muestra en el preview antes de aplicar. Elige solo quién
+          paga y bajo qué modalidad (propia o referida).
+        </p>
       </div>
       <div className="flex flex-col gap-1">
         <Label htmlFor="file">Archivo (.csv, .xlsx o .pdf según la fuente elegida)</Label>
@@ -38,11 +43,9 @@ export function UploadStatementForm({ sources }: { sources: { source: string; la
           className="text-sm"
         />
         <p className="text-xs text-muted-foreground">
-          Cada fuente ya identifica agencia pagadora + modalidad (ej. &quot;Orange — Oscar (PDF, propia)&quot;) —
-          elige la que corresponda al reporte real que vas a subir. Si el PDF no coincide con las columnas
-          esperadas de esa fuente, la subida se rechaza con un mensaje claro (nunca se adivina el formato).
-          Las fuentes marcadas &quot;PDF — pendiente&quot; todavía no procesan el contenido del PDF — sube
-          igual para confirmar el archivo, pero verás un aviso indicando que el adaptador está pendiente.
+          Si el PDF no coincide con las columnas esperadas de esa agencia/modalidad, la subida se rechaza con
+          un mensaje claro (nunca se adivina el formato). Un reporte con más de un carrier distinto en el mismo
+          archivo también se rechaza — cada reporte debe representar un único carrier.
         </p>
       </div>
       <Button type="submit" disabled={isPending} className="w-fit">

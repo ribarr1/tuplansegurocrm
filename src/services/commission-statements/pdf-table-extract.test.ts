@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Prisma } from "@/generated/prisma/client";
 import { buildTestTablePdf } from "./test-pdf-builder";
-import { OrangeOscarPdfAdapter } from "./orange-oscar-pdf-adapter";
+import { OrangeOwnPdfAdapter } from "./orange-own-pdf-adapter";
 
 // ---------------------------------------------------------------------------
 // Fase 025.5.2 — la cantidad de filas de un reporte PDF NUNCA es fija (1,
@@ -10,7 +10,7 @@ import { OrangeOscarPdfAdapter } from "./orange-oscar-pdf-adapter";
 // contra PDF sintéticos generados a medida — nunca datos reales, nunca
 // una cantidad de filas codificada en el parser.
 //
-// Se usa OrangeOscarPdfAdapter como vehículo representativo del layout
+// Se usa OrangeOwnPdfAdapter como vehículo representativo del layout
 // Orange (Member ID/Name/Agent/State/Carrier/Status/Rate/Members/
 // Subtotal/Asistencia/Total/Effective Date/Paid At) — Kaiser y Elite
 // comparten el mismo motor de extracción (pdf-table-extract.ts), cuya
@@ -37,7 +37,7 @@ function footerRow(amount: string): string[] {
 describe("pdf-table-extract / adaptadores PDF — cantidad variable de filas (Fase 025.5.2)", () => {
   it("1 fila: se detecta correctamente, footer coincide", async () => {
     const pdf = buildTestTablePdf([HEADERS, dataRow(1, "25.00", "3.00", "22.00"), footerRow("22.00")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "one-row.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "one-row.pdf");
     expect(result.rows).toHaveLength(1);
     expect(result.declaredTotal).toBe("22.00");
   });
@@ -45,7 +45,7 @@ describe("pdf-table-extract / adaptadores PDF — cantidad variable de filas (Fa
   it("2 filas: se detectan ambas, footer = suma de netos", async () => {
     const rows = [dataRow(1, "25.00", "3.00", "22.00"), dataRow(2, "30.00", "5.00", "25.00")];
     const pdf = buildTestTablePdf([HEADERS, ...rows, footerRow("47.00")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "two-rows.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "two-rows.pdf");
     expect(result.rows).toHaveLength(2);
     expect(result.declaredTotal).toBe("47.00");
   });
@@ -53,7 +53,7 @@ describe("pdf-table-extract / adaptadores PDF — cantidad variable de filas (Fa
   it("25 filas: todas se detectan, ninguna se pierde ni se trunca", async () => {
     const rows = Array.from({ length: 25 }, (_, i) => dataRow(i + 1, "20.00", "2.00", "18.00"));
     const pdf = buildTestTablePdf([HEADERS, ...rows, footerRow("450.00")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "twentyfive-rows.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "twentyfive-rows.pdf");
     expect(result.rows).toHaveLength(25);
     const netSum = result.rows
       .reduce((sum, r) => sum.plus(new Prisma.Decimal(r.netAmount ?? "0")), new Prisma.Decimal(0))
@@ -64,7 +64,7 @@ describe("pdf-table-extract / adaptadores PDF — cantidad variable de filas (Fa
 
   it("cero filas de datos (encabezado + footer sin ningún registro) produce un resultado sin filas, nunca inventa una", async () => {
     const pdf = buildTestTablePdf([HEADERS, footerRow("0.00")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "zero-rows.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "zero-rows.pdf");
     expect(result.rows).toHaveLength(0);
   });
 
@@ -75,21 +75,21 @@ describe("pdf-table-extract / adaptadores PDF — cantidad variable de filas (Fa
       "25.00", "1", "25.00", "0.00", "25.00", "2026-01-01", "2026-01-15",
     ];
     const pdf = buildTestTablePdf([HEADERS, row]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "long-name.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "long-name.pdf");
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].memberName).toBe(longName);
   });
 
   it("Asistencia = 0.00 se conserva como cero, nunca se confunde con ausente", async () => {
     const pdf = buildTestTablePdf([HEADERS, dataRow(1, "25.00", "0.00", "25.00")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "zero-assistance.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "zero-assistance.pdf");
     expect(result.rows[0].assistanceAmount).toBe("0.00");
     expect(result.rows[0].netAmount).toBe("25.00");
   });
 
   it("importes decimales (centavos) se preservan con precisión exacta", async () => {
     const pdf = buildTestTablePdf([HEADERS, dataRow(1, "33.33", "1.11", "32.22")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "decimals.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "decimals.pdf");
     expect(result.rows[0].receivedAmount).toBe("33.33");
     expect(result.rows[0].assistanceAmount).toBe("1.11");
     expect(result.rows[0].netAmount).toBe("32.22");
@@ -98,7 +98,7 @@ describe("pdf-table-extract / adaptadores PDF — cantidad variable de filas (Fa
   it("footer incorrecto (no coincide con la suma) se reporta tal cual — declaredTotal nunca se corrige solo", async () => {
     const rows = [dataRow(1, "25.00", "3.00", "22.00"), dataRow(2, "30.00", "5.00", "25.00")];
     const pdf = buildTestTablePdf([HEADERS, ...rows, footerRow("999.00")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "wrong-footer.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "wrong-footer.pdf");
     expect(result.rows).toHaveLength(2);
     expect(result.declaredTotal).toBe("999.00"); // se reporta el valor real del PDF, la validación de coincidencia ocurre en reconciliation.service.ts
   });
@@ -111,7 +111,7 @@ describe("pdf-table-extract / adaptadores PDF — cantidad variable de filas (Fa
       "25.00", "25.00", "3.00", "22.00", "2026-01-01", "2026-01-15",
     ];
     const pdf = buildTestTablePdf([HEADERS, incompleteRow]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "incomplete-row.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "incomplete-row.pdf");
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].warnings?.some((w) => w.includes("no coincidieron"))).toBe(true);
   });
@@ -122,7 +122,7 @@ describe("pdf-table-extract / adaptadores PDF — reportes de varias páginas (F
     const page1 = [HEADERS, dataRow(1, "25.00", "3.00", "22.00"), dataRow(2, "30.00", "5.00", "25.00")];
     const page2 = [HEADERS, dataRow(3, "40.00", "4.00", "36.00"), footerRow("83.00")];
     const pdf = buildTestTablePdf([page1, page2]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "two-pages.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "two-pages.pdf");
     expect(result.rows).toHaveLength(3);
     expect(result.rows.map((r) => r.externalMemberId)).toEqual(["OSC1001", "OSC1002", "OSC1003"]);
     expect(result.declaredTotal).toBe("83.00");
@@ -132,7 +132,7 @@ describe("pdf-table-extract / adaptadores PDF — reportes de varias páginas (F
     const page1 = [HEADERS, dataRow(1, "25.00", "3.00", "22.00")];
     const page2 = [HEADERS, dataRow(2, "30.00", "5.00", "25.00")];
     const pdf = buildTestTablePdf([page1, page2]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "page-break.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "page-break.pdf");
     expect(result.rows).toHaveLength(2);
     expect(result.rows[0].externalMemberId).toBe("OSC1001");
     expect(result.rows[1].externalMemberId).toBe("OSC1002");
@@ -146,14 +146,14 @@ describe("pdf-table-extract / adaptadores PDF — reportes de varias páginas (F
     const page2 = [HEADERS, dataRow(2, "30.00", "5.00", "25.00"), footerRow("25.00")];
     const page3 = [HEADERS, dataRow(3, "40.00", "4.00", "36.00"), footerRow("83.00")]; // total general acumulado
     const pdf = buildTestTablePdf([page1, page2, page3]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "three-pages-subtotals.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "three-pages-subtotals.pdf");
     expect(result.rows).toHaveLength(3);
     expect(result.declaredTotal).toBe("83.00");
   });
 
   it("una sola fila de datos repartida en 1 página sigue funcionando igual que antes (no se rompe el caso de una sola página)", async () => {
     const pdf = buildTestTablePdf([[HEADERS, dataRow(1, "25.00", "3.00", "22.00")]]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "single-page-array.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "single-page-array.pdf");
     expect(result.rows).toHaveLength(1);
   });
 });
@@ -179,7 +179,7 @@ describe("Regresión dirigida — reporte Oscar de 4 filas ($17+$22+$22+$15=$76)
       dataRow(4, "18.00", "3.00", "15.00"),
     ];
     const pdf = buildTestTablePdf([HEADERS, ...rows, footerRow("76.00")]);
-    const result = await OrangeOscarPdfAdapter.parse(pdf, "oscar-4-rows.pdf");
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "oscar-4-rows.pdf");
 
     expect(result.rows).toHaveLength(4);
     const netSum = result.rows

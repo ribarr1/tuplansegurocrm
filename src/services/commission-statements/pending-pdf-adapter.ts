@@ -1,36 +1,26 @@
 import type { CommissionStatementAdapter, ParsedStatement } from "./types";
 
 // ---------------------------------------------------------------------------
-// Fase 025.4 (UAT-05) — los reportes de pago REALES que llegan hoy son
-// PDF (no CSV/XLSX como se asumió en Fase 020, ver
-// docs/COMMISSION_RECONCILIATION.md). Se habilita la SUBIDA segura de
-// PDF (validación de extensión + firma real %PDF- + tamaño, igual
-// rigor que XLSX) y el CONTRATO de adaptador por fuente/carrier, pero
-// el parseo real de cada layout NO se implementa aquí — no existe en
-// este entorno ningún PDF de muestra real de Orange/Oscar, Ambetter,
-// BCBS, Kaiser o Elite para verificar contra qué estructura exacta
-// programar (columnas, posición, si el texto es seleccionable o
-// escaneado/OCR). Escribir un parser sin esa evidencia sería
-// inventar un layout — exactamente lo que la ficha de UAT prohíbe
-// explícitamente.
+// Fase 025.4 (UAT-05) — infraestructura para declarar una fuente PDF
+// como "pendiente" (se registra, aparece en el selector, ACEPTA el
+// upload y valida la firma real del archivo, pero `parse()` siempre
+// falla con un mensaje claro) cuando no existe todavía ningún PDF de
+// muestra real para esa AGENCIA+MODALIDAD — nunca se inventa un layout
+// sin evidencia.
 //
-// Este adaptador "pendiente" cumple el resto de la arquitectura: se
-// registra, aparece en el selector de fuente, ACEPTA el upload (sube,
-// se valida como PDF real), pero `parse()` siempre falla con un
-// mensaje claro señalando qué falta — reconciliation.service.ts
-// convierte ese error en VALIDATION_ERROR visible para el ADMIN, y
-// NUNCA se llega a crear un CommissionStatement en PREVIEW ni,
-// mucho menos, a `applyCommissionStatement` (que solo actúa sobre
-// filas ya MATCHED de un preview que nunca existió). "Apply" queda
-// bloqueado por construcción, no por una bandera aparte.
-//
-// Para completar un adaptador real: reemplazar `parse()` de la
-// entrada correspondiente en registry.ts por una implementación real
-// (probablemente con una librería de extracción de texto de PDF,
-// añadida ENTONCES, nunca antes de tener con qué probarla) una vez
-// se disponga de al menos un PDF representativo real de esa fuente
-// (fuera de Git, aportado de forma segura).
-function createPendingPdfAdapter(source: string, label: string): CommissionStatementAdapter {
+// Fase 025.5.3: el carrier (Oscar, Ambetter, Kaiser, BCBS, Cigna...)
+// NUNCA es una fuente/modalidad propia — es un dato que se DETECTA del
+// contenido del PDF (ver carrier-detection.ts), así que "Ambetter" ya
+// no es (ni debe volver a ser) una entrada aparte aquí: un reporte de
+// Ambetter pagado por Orange como propia usa exactamente
+// OrangeOwnPdfAdapter, igual que uno de Oscar — el parser ya lo acepta
+// sin necesitar código nuevo. Esta lista queda vacía mientras las 3
+// agencias+modalidades confirmadas (ORANGE_OWN, ORANGE_REFERRAL,
+// ELITE_REFERRAL) tengan adaptador real; se usaría de nuevo solo si
+// apareciera una AGENCIA o MODALIDAD genuinamente nueva sin PDF de
+// muestra todavía.
+// ---------------------------------------------------------------------------
+export function createPendingPdfAdapter(source: string, label: string): CommissionStatementAdapter {
   return {
     source,
     label: `${label} (PDF — pendiente)`,
@@ -45,17 +35,4 @@ function createPendingPdfAdapter(source: string, label: string): CommissionState
   };
 }
 
-// Fase 025.5: ORANGE_OSCAR_PDF, ORANGE_KAISER_PDF y ELITE_BCBS_PDF ya
-// tienen adaptador REAL (ver orange-oscar-pdf-adapter.ts,
-// orange-kaiser-pdf-adapter.ts, elite-bcbs-pdf-adapter.ts) — se
-// retiraron de aquí. Ambetter sigue sin ningún PDF de muestra real
-// analizado; se mantiene como pendiente explícito. BCBS_PDF/KAISER_PDF/
-// ELITE_PDF (genéricos, sin agencia+modalidad confirmada) se retiran:
-// la ficha de UAT confirmó que la combinación real correcta es
-// agencia+modalidad+carrier específicos (ej. BCBS puede ser propia vía
-// Orange O referida vía Elite, según el estado — nunca "BCBS = Elite"
-// a secas), así que un stub genérico por carrier sin esa distinción ya
-// no representa correctamente el dominio.
-export const PendingPdfAdapters: CommissionStatementAdapter[] = [
-  createPendingPdfAdapter("AMBETTER_PDF", "Ambetter"),
-];
+export const PendingPdfAdapters: CommissionStatementAdapter[] = [];
