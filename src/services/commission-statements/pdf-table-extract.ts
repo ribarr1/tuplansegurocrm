@@ -48,14 +48,32 @@ export interface ExtractedPdfTable {
   rows: PdfTextRow[];
 }
 
+// Errores "esperados" — el ADMIN puede actuar sobre ellos (el PDF en sí
+// tiene un problema real: dañado, cifrado, formato no compatible,
+// demasiadas páginas/filas). Mensaje seguro para mostrar tal cual.
 export class PdfTooManyPagesError extends Error {}
 export class PdfTooManyRowsError extends Error {}
 export class PdfParseError extends Error {}
+// Fase 025.5.4 — falla de INFRAESTRUCTURA (worker de pdfjs, módulo
+// faltante, configuración server-side), nunca un problema real del
+// archivo del usuario. Nunca se le dice al ADMIN "tu PDF está dañado"
+// cuando en realidad falló el procesador — eso llevó exactamente al
+// bug reportado ("Setting up fake worker failed" mostrado como PDF
+// inválido). El detalle técnico real se registra aparte, solo en
+// servidor (ver reconciliation.service.ts), nunca en el mensaje que
+// llega al ADMIN.
+export class PdfInternalError extends Error {}
+// Estructura reconocida como PDF válido, pero sus columnas no
+// coinciden con ningún adapter — señal real y esperada (formato no
+// compatible), nunca un fallo interno.
+export class PdfFormatMismatchError extends Error {}
 
 export async function extractPdfRows(buffer: Buffer): Promise<ExtractedPdfTable> {
   // Import diferido: pdfjs-dist es relativamente pesado, nunca se carga
   // fuera del flujo real de importación de comisiones.
-  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const { getDocument, InvalidPDFException, PasswordException } = await import(
+    "pdfjs-dist/legacy/build/pdf.mjs"
+  );
 
   let doc;
   try {
@@ -64,10 +82,20 @@ export async function extractPdfRows(buffer: Buffer): Promise<ExtractedPdfTable>
       useSystemFonts: true,
     }).promise;
   } catch (error) {
-    throw new PdfParseError(
-      `No se pudo leer el archivo PDF (¿está dañado, cifrado, o no es un PDF real?): ${
-        error instanceof Error ? error.message : "error desconocido"
-      }`
+    // Solo InvalidPDFException/PasswordException son señales REALES de
+    // que el archivo en sí es el problema (dañado/cifrado/no es un PDF
+    // real) — pdfjs las expone como clases propias precisamente para
+    // esto. Cualquier otro fallo (worker, módulo, timeout, error
+    // interno desconocido) es un problema del PROCESADOR, nunca del
+    // archivo, y se propaga como PdfInternalError — nunca se declara el
+    // PDF dañado sin evidencia real de que lo esté.
+    if (error instanceof InvalidPDFException || error instanceof PasswordException) {
+      throw new PdfParseError(
+        `No se pudo leer el archivo PDF (está dañado, cifrado, o no es un PDF real): ${error.message}`
+      );
+    }
+    throw new PdfInternalError(
+      `Fallo interno del procesador de PDF: ${error instanceof Error ? error.message : "error desconocido"}`
     );
   }
 

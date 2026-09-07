@@ -1,5 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
-import { extractPdfRows, tableFromRows, rowToRecord, type PdfTextRow } from "./pdf-table-extract";
+import { extractPdfRows, tableFromRows, rowToRecord, PdfFormatMismatchError, type PdfTextRow } from "./pdf-table-extract";
 import { detectSingleCarrier } from "./carrier-detection";
 import type { NormalizedCommissionRow, ParsedStatement } from "./types";
 
@@ -82,7 +82,7 @@ export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdf
   const extracted = await extractPdfRows(buffer);
   const table = tableFromRows(extracted.rows, REQUIRED_HEADERS);
   if (!table) {
-    throw new Error(`El PDF no tiene el formato esperado — faltan columnas requeridas (${REQUIRED_HEADERS.join(", ")}).`);
+    throw new PdfFormatMismatchError(`El PDF no tiene el formato esperado — faltan columnas requeridas (${REQUIRED_HEADERS.join(", ")}).`);
   }
   const headerCells = extracted.rows[table.headerRowIndex].cells;
   const headerByNormalized = new Map(headerCells.map((h) => [normalizeHeader(h.text), h.text]));

@@ -1,5 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
-import { extractPdfRows, tableFromRows, rowToRecord } from "./pdf-table-extract";
+import { extractPdfRows, tableFromRows, rowToRecord, PdfFormatMismatchError } from "./pdf-table-extract";
 import { detectSingleCarrier } from "./carrier-detection";
 import type { CommissionStatementAdapter, NormalizedCommissionRow, ParsedStatement } from "./types";
 
@@ -82,7 +82,7 @@ export const EliteReferralPdfAdapter: CommissionStatementAdapter = {
     const extracted = await extractPdfRows(buffer);
     const table = tableFromRows(extracted.rows, REQUIRED_HEADERS);
     if (!table) {
-      throw new Error(
+      throw new PdfFormatMismatchError(
         `El PDF no tiene el formato esperado de Elite — faltan columnas requeridas (${REQUIRED_HEADERS.join(", ")}).`
       );
     }

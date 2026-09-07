@@ -203,9 +203,19 @@ async function parseXlsxBuffer(buffer: Buffer): Promise<ParsedStatement> {
   return rowsFromTable(headers, dataRows);
 }
 
+// Fase 025.5.4: la etiqueta se corrigió para no mostrar el carrier
+// (Oscar) en el selector, mismo criterio que los adaptadores PDF de
+// Fase 025.5.3 — este adapter SÍ sigue siendo específico del layout
+// CSV/XLSX histórico de Oscar (nunca se generalizó a otros carriers,
+// a diferencia del PDF), pero la UI no debe volver a mostrar "Oscar"
+// como si fuera una opción de modalidad. `source: "ORANGE_OSCAR"` se
+// conserva sin cambios — es una clave de negocio persistida en
+// CommissionStatement.source para reportes históricos reales ya
+// aplicados; renombrarla sería una migración de datos, no una
+// corrección de UI.
 export const OrangeOscarAdapter: CommissionStatementAdapter = {
   source: "ORANGE_OSCAR",
-  label: "Orange / Oscar",
+  label: "Orange — Propia (CSV/XLSX, formato histórico)",
   acceptedExtensions: [".csv", ".xlsx"],
   async parse(buffer: Buffer, fileName: string): Promise<ParsedStatement> {
     const lower = fileName.toLowerCase();

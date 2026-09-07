@@ -14,7 +14,8 @@ import {
 } from "@/schemas/commission-statement.schema";
 import { getStatementAdapter } from "./registry";
 import { matchStatementRow, findExpectationForPolicy, inferPeriod, type MatchResult } from "./matcher";
-import { normalizeCarrierForComparison } from "./carrier-detection";
+import { normalizeCarrierForComparison, MultipleCarriersError } from "./carrier-detection";
+import { PdfParseError, PdfTooManyPagesError, PdfTooManyRowsError, PdfFormatMismatchError } from "./pdf-table-extract";
 import type { NormalizedCommissionRow } from "./types";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -188,9 +189,36 @@ export async function uploadCommissionStatement(
   try {
     parsed = await adapter.parse(buffer, fileName);
   } catch (error) {
+    // Fase 025.5.4 — separar "el PDF tiene un problema real" (dañado,
+    // cifrado, formato/columnas no compatibles, más de un carrier,
+    // demasiadas páginas/filas) de "falló el procesador" (worker de
+    // pdfjs, módulo faltante, error interno inesperado). Nunca se le
+    // dice al ADMIN que su archivo está dañado cuando en realidad es un
+    // problema de configuración/infraestructura — eso fue exactamente
+    // el bug reportado (worker de pdfjs mostrado como "PDF inválido").
+    const isKnownFileIssue =
+      error instanceof PdfParseError ||
+      error instanceof PdfTooManyPagesError ||
+      error instanceof PdfTooManyRowsError ||
+      error instanceof PdfFormatMismatchError ||
+      error instanceof MultipleCarriersError;
+
+    if (isKnownFileIssue) {
+      throw new AppError("VALIDATION_ERROR", `file: ${(error as Error).message}`);
+    }
+
+    // Error interno del procesador — mensaje genérico y seguro para el
+    // ADMIN (nunca rutas locales, nombres de chunk ni stack traces); el
+    // detalle técnico real se registra SOLO en el servidor, sin PII ni
+    // contenido del PDF (nunca el buffer, nunca el nombre de archivo
+    // crudo del usuario).
+    console.error(
+      "[commission-statements] Fallo interno al procesar un PDF de comisiones:",
+      error instanceof Error ? error.stack ?? error.message : String(error)
+    );
     throw new AppError(
       "VALIDATION_ERROR",
-      `file: ${error instanceof Error ? error.message : "No se pudo leer el archivo."}`
+      "file: No pudimos procesar el PDF por un error interno. El archivo no fue aplicado. Intenta nuevamente o contacta al administrador."
     );
   }
 
