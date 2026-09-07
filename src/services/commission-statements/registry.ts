@@ -28,6 +28,19 @@ export function getStatementAdapter(source: string): CommissionStatementAdapter 
   return STATEMENT_ADAPTERS[source] ?? null;
 }
 
-export function listStatementSources(): { source: string; label: string }[] {
-  return Object.values(STATEMENT_ADAPTERS).map((a) => ({ source: a.source, label: a.label }));
+// Fase 025.5.5 (UAT-20): `ORANGE_OSCAR` es la fuente legacy CSV/XLSX de
+// Fase 020 — debe seguir resolviéndose vía `getStatementAdapter` para
+// interpretar reportes históricos ya existentes, pero NUNCA debe
+// aparecer como opción para NUEVAS importaciones (el selector de
+// subida solo ofrece las 3 modalidades agencia+PDF vigentes). Por eso
+// el default de `includeLegacy` es `false`: cualquier caller nuevo que
+// no pase el parámetro obtiene el comportamiento seguro (sin la fuente
+// legacy); solo se pasa `true` explícitamente donde de verdad se
+// necesita listar/inspeccionar la fuente legacy.
+export function listStatementSources(
+  { includeLegacy = false }: { includeLegacy?: boolean } = {}
+): { source: string; label: string }[] {
+  return Object.values(STATEMENT_ADAPTERS)
+    .filter((a) => includeLegacy || a.source !== OrangeOscarAdapter.source)
+    .map((a) => ({ source: a.source, label: a.label }));
 }

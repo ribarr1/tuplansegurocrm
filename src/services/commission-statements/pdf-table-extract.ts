@@ -201,6 +201,38 @@ export function tableFromRows(
   return { headerRowIndex, headers, dataRows, headerRepeatCount };
 }
 
+// Fase 025.5.2/025.5.5 — un reporte de varias páginas puede repetir una
+// fila "Total" al final de CADA página (subtotal de página), nunca solo
+// al final del archivo. En los reportes reales confirmados, el ÚLTIMO
+// "Total" encontrado en el archivo es siempre el total GENERAL (una
+// página intermedia reporta su propio subtotal, la última reporta el
+// acumulado completo) — este es el comportamiento confirmado contra
+// evidencia real (ver test "3 páginas" en pdf-table-extract.test.ts),
+// nunca se cambia aquí. La verificación real de que ese valor sea
+// correcto ocurre DESPUÉS, comparándolo contra la suma de netAmount de
+// las filas efectivamente mostradas en el preview (ver
+// reconciliation.service.ts) — nunca se declara "coincide" sin esa
+// comparación explícita, y un total declarado que NO reconcilia con las
+// filas mostradas bloquea el apply como "no verificable" (Fase 025.5.5).
+export function detectFooterTotal(
+  rows: PdfTextRow[],
+  isTotalCell: (cellText: string) => boolean,
+  parseAmount: (raw: string) => string | null
+): { declaredTotal: string | null; totalRowIndices: Set<number> } {
+  let declaredTotal: string | null = null;
+  const totalRowIndices = new Set<number>();
+
+  rows.forEach((row, index) => {
+    if (!row.cells.some((c) => isTotalCell(c.text))) return;
+    totalRowIndices.add(index);
+    const amountCell = [...row.cells].reverse().find((c) => parseAmount(c.text) !== null);
+    const parsed = amountCell ? parseAmount(amountCell.text) : null;
+    if (parsed !== null) declaredTotal = parsed;
+  });
+
+  return { declaredTotal, totalRowIndices };
+}
+
 // Fila -> Record<header, valor>. Si el conteo de celdas coincide con el
 // header, mapeo posicional directo (caso normal). Si no coincide, cada
 // celda se asigna a la columna de header más cercana en X — nunca se

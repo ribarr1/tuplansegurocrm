@@ -13,6 +13,7 @@ import { productIdSchema } from "@/schemas/product.schema";
 import { policyIdSchema } from "@/schemas/policy.schema";
 import { getTodayBusinessRange } from "@/lib/business-time";
 import { recordAuditEvent } from "@/services/audit.service";
+import { linkPendingPaymentsToExpectation } from "@/services/commission-payment-linking";
 
 // ---------------------------------------------------------------------------
 // Reglas de comisión — Fase 019.5
@@ -355,6 +356,15 @@ async function generateExpectationCore(
         householdId: policy.householdId,
         contactPersonId: policy.holderId,
         summary: "Expectativa de comisión generada",
+      });
+      // Fase 025.5.5 (UAT-17): vincula retroactivamente pagos reales ya
+      // recibidos para esta Policy+período antes de que existiera la
+      // expectativa (ver commission-payment-linking.ts).
+      await linkPendingPaymentsToExpectation(tx, {
+        expectationId: expectation.id,
+        policyId: policy.id,
+        period,
+        actor,
       });
       return expectation;
     });

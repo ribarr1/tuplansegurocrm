@@ -7,7 +7,7 @@ import { AppError } from "@/services/errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDateTimeUS } from "@/lib/business-time";
+import { formatDateTimeUS, formatPeriodUS } from "@/lib/business-time";
 import { UploadStatementForm } from "./upload-form";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -15,6 +15,15 @@ const STATUS_LABELS: Record<string, string> = {
   APPLIED: "Aplicado",
   DUPLICATE_BLOCKED: "Bloqueado (duplicado)",
 };
+
+// Fase 025.5.5 (UAT-19): nunca la fecha de subida — el rango real de
+// meses de comisión cubiertos por el reporte.
+function formatPeriodSummary(summary: { min: Date; max: Date; distinctMonths: number } | null): string {
+  if (!summary) return "Sin periodo";
+  if (summary.distinctMonths === 1) return formatPeriodUS(summary.min);
+  const range = `${formatPeriodUS(summary.min)} – ${formatPeriodUS(summary.max)}`;
+  return summary.distinctMonths > 2 ? `${range} (${summary.distinctMonths} meses)` : range;
+}
 
 // Conciliación de comisiones — Fase 020 (§7-§26 de la ficha). Solo
 // ADMIN — ver docs/COMMISSION_RECONCILIATION.md.
@@ -67,10 +76,18 @@ export default async function ReconciliationPage() {
                 <div className="flex flex-col gap-0.5">
                   <span className="font-medium">
                     {s.fileName} · {s.source}
+                    {s.payerAgency && ` · ${s.payerAgency}`}
+                    {s.businessModality && ` (${s.businessModality})`}
+                    {s.detectedCarrierName && ` · ${s.detectedCarrierName}`}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    {formatDateTimeUS(s.uploadedAt)} · {s.uploadedBy?.name ?? "—"} · {s.totalRows} filas ·{" "}
-                    {s.matchedRows} emparejadas · {s.unmatchedRows} sin emparejar · {s.ambiguousRows} ambiguas
+                    Periodo: {formatPeriodSummary(s.periodSummary)} · Carga: {formatDateTimeUS(s.uploadedAt)} ·{" "}
+                    {s.uploadedBy?.name ?? "—"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {s.totalRows} filas · {s.appliedRows} aplicadas ·{" "}
+                    {s.totalRows - s.appliedRows} pendientes · Bruto ${s.receivedTotal.toString()} · Asistencia $
+                    {s.assistanceTotal.toString()} · Neto ${s.netTotal.toString()}
                   </span>
                 </div>
                 <Badge variant={s.status === "APPLIED" ? "default" : "outline"}>

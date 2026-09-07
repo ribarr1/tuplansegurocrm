@@ -6,6 +6,7 @@ import { AppError } from "@/services/errors";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateOnlyUS } from "@/lib/date-only";
+import { formatPeriodUS } from "@/lib/business-time";
 import { MatchRowDialog } from "./match-row-dialog";
 import { IgnoreRowButton } from "./ignore-row-button";
 import { ApplyStatementButton } from "./apply-button";
@@ -116,8 +117,17 @@ export default async function ReconciliationDetailPage({
             <span>
               Total declarado en el pie:{" "}
               <strong>
-                {statement.declaredFooterTotal ? `$${statement.declaredFooterTotal.toString()}` : "no detectado"}
+                {statement.footerAmbiguous
+                  ? "Total general no verificable"
+                  : statement.declaredFooterTotal
+                    ? `$${statement.declaredFooterTotal.toString()}`
+                    : "no detectado"}
               </strong>
+              {statement.footerAmbiguous && (
+                <Badge variant="destructive" className="ml-2">
+                  Ambiguo — bloquea el apply
+                </Badge>
+              )}
               {statement.footerMatchesNet === true && (
                 <Badge variant="default" className="ml-2">
                   Coincide con el neto
@@ -140,8 +150,7 @@ export default async function ReconciliationDetailPage({
 
       {duplicate === "1" && (
         <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-          Este contenido ya se había subido antes (mismo archivo, posiblemente con otro nombre) — te mostramos el
-          reporte existente en vez de crear uno nuevo.
+          Este archivo ya existe. Se abrió la importación anterior para continuar las filas pendientes.
         </p>
       )}
 
@@ -159,6 +168,14 @@ export default async function ReconciliationDetailPage({
         </p>
       )}
 
+      {statement.footerAmbiguous && (
+        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Total general no verificable — el total declarado en el pie de este reporte no coincide con la suma de
+          las filas mostradas abajo (posible subtotal de página en un reporte multipágina). Revísalo
+          manualmente antes de aplicar.
+        </p>
+      )}
+
       {statement.status === "APPLIED" ? (
         <p className="rounded-md bg-secondary/40 px-3 py-2 text-sm">
           Este reporte ya fue aplicado el {statement.appliedAt ? formatDateOnlyUS(statement.appliedAt) : "—"}.
@@ -170,6 +187,10 @@ export default async function ReconciliationDetailPage({
       ) : statement.carrierRecognized === false ? (
         <span className="text-xs text-destructive">
           Aplicar está bloqueado hasta que el carrier detectado sea reconocido.
+        </span>
+      ) : statement.footerAmbiguous ? (
+        <span className="text-xs text-destructive">
+          Aplicar está bloqueado hasta que el total general sea verificable.
         </span>
       ) : (
         <div className="flex items-center gap-3">
@@ -193,6 +214,7 @@ export default async function ReconciliationDetailPage({
                 <th className="py-2 pr-3">Cliente</th>
                 <th className="py-2 pr-3">Member ID</th>
                 <th className="py-2 pr-3">Carrier / Estado</th>
+                <th className="py-2 pr-3">Periodo / Fechas</th>
                 <th className="py-2 pr-3">Póliza emparejada</th>
                 <th className="py-2 pr-3">Clasif. histórica</th>
                 <th className="py-2 pr-3">Esperado</th>
@@ -211,6 +233,15 @@ export default async function ReconciliationDetailPage({
                   <td className="py-2 pr-3 text-xs text-muted-foreground">{row.externalId ?? "—"}</td>
                   <td className="py-2 pr-3 text-xs text-muted-foreground">
                     {row.carrier ?? "—"} {row.state ? `/ ${row.state}` : ""}
+                  </td>
+                  <td className="py-2 pr-3 text-xs">
+                    <div className="font-medium text-foreground">
+                      {row.commissionPeriod ? formatPeriodUS(row.commissionPeriod) : "Sin periodo"}
+                    </div>
+                    <div className="text-muted-foreground">
+                      {row.paidAt && <div>Pagado: {formatDateOnlyUS(row.paidAt)}</div>}
+                      {row.effectiveDate && <div>Vigencia: {formatDateOnlyUS(row.effectiveDate)}</div>}
+                    </div>
                   </td>
                   <td className="py-2 pr-3">
                     {row.matchedPolicy ? (

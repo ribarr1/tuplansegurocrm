@@ -535,6 +535,9 @@ model Policy {
   tasks                  Task[]
   notes                  Note[]
   commissionExpectations CommissionExpectation[]
+  // Fase 025.5.5 (UAT-16/17): link directo, independiente de si ya
+  // existe una CommissionExpectation para el período del pago.
+  commissionPayments     CommissionPayment[]
   documents              PolicyDocument[]
   commissionRules        CommissionRule[]
   auditEvents            AuditEvent[]
@@ -885,7 +888,27 @@ model CommissionExpectation {
 // Los pagos nunca se editan ni se borran: cada ajuste es una fila nueva.
 model CommissionPayment {
   id                      String                @id @default(uuid()) @db.Uuid
-  commissionExpectationId String                @db.Uuid
+  // Fase 025.5.5 (UAT-16/17): nullable — un pago real puede llegar
+  // ANTES de que exista una CommissionExpectation para esa Policy y
+  // período (el reporte del carrier no espera a que nosotros
+  // registremos la expectativa). `policyId`/`period` son la fuente de
+  // verdad independiente de si ya hay expectativa; cuando se crea la
+  // expectativa correspondiente, se vinculan retroactivamente los
+  // pagos pendientes que coincidan (ver
+  // commission-payment-linking.ts) — nunca se crean pagos nuevos ni se
+  // modifican los históricos, solo se completa esta FK.
+  commissionExpectationId String?               @db.Uuid
+  // Policy directa — antes solo se conocía vía commissionExpectation,
+  // lo que hacía imposible relacionar un pago sin expectativa. Se
+  // backfillea desde commissionExpectation.policyId para pagos
+  // existentes (migración 021) y siempre se fija explícitamente para
+  // pagos nuevos.
+  policyId                String                @db.Uuid
+  // Período de comisión normalizado (primer día del mes, misma
+  // convención que CommissionExpectation.period) — nunca
+  // `effectiveDate` de la póliza. Backfilleado desde
+  // commissionExpectation.period para pagos existentes.
+  period                  DateTime              @db.Date
   amount                  Decimal               @db.Decimal(12, 2)
   type                    CommissionPaymentType
   receivedAt              DateTime
@@ -899,11 +922,13 @@ model CommissionPayment {
   // convención de aplicación.
   statementRowId          String?               @unique @db.Uuid
 
-  commissionExpectation CommissionExpectation   @relation(fields: [commissionExpectationId], references: [id], onDelete: Restrict)
+  commissionExpectation CommissionExpectation?  @relation(fields: [commissionExpectationId], references: [id], onDelete: Restrict)
+  policy                Policy                  @relation(fields: [policyId], references: [id], onDelete: Restrict)
   statementRow          CommissionStatementRow? @relation(fields: [statementRowId], references: [id], onDelete: SetNull)
 
   @@index([commissionExpectationId])
   @@index([receivedAt])
+  @@index([policyId, period])
   @@map("commission_payments")
 }
 
@@ -1283,6 +1308,15 @@ model CommissionStatement {
   // Fase 020, fuera de alcance de esta validación).
   detectedCarrierName  String?
   carrierRecognized    Boolean?
+  // Fase 025.5.5: true cuando `declaredFooterTotal` NO reconcilia con la
+  // suma de netAmount de las filas efectivamente mostradas en el
+  // preview (footerMatchesNet=false) — típico de un reporte
+  // multipágina donde el "Total" detectado resultó ser un subtotal de
+  // página, no el total general acumulado. En ese caso el total
+  // declarado no puede confiarse y el apply se bloquea hasta revisión
+  // manual. Default false: los reportes históricos ya aplicados nunca
+  // quedan bloqueados retroactivamente por este campo.
+  footerAmbiguous Boolean @default(false)
 
   uploadedBy User?                    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
   rows       CommissionStatementRow[]

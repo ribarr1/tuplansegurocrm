@@ -273,6 +273,8 @@ export async function applyImportPlan(plan: ImportPlan): Promise<ApplyResult> {
       await tx.commissionPayment.create({
         data: {
           commissionExpectationId: expectation.id,
+          policyId,
+          period: pay.period,
           amount: pay.amount,
           type: "PAYMENT",
           receivedAt: pay.period,

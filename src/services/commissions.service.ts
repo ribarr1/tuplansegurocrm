@@ -15,6 +15,7 @@ import {
 } from "@/schemas/commission.schema";
 import { Prisma } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
+import { linkPendingPaymentsToExpectation } from "@/services/commission-payment-linking";
 
 // ---------------------------------------------------------------------------
 // Política de acceso — Comisiones (V1)
@@ -455,6 +456,16 @@ export async function createCommissionExpectation(actor: AuthorizedUser, rawInpu
         contactPersonId: policy.holder.id,
         summary: "Expectativa de comisión creada manualmente",
       });
+      // Fase 025.5.5 (UAT-17): si ya existían pagos reales para esta
+      // Policy+período (recibidos antes de crear la expectativa), se
+      // vinculan retroactivamente ahora — nunca requiere volver a subir
+      // el reporte ni crea pagos nuevos.
+      await linkPendingPaymentsToExpectation(tx, {
+        expectationId: expectation.id,
+        policyId: input.policyId,
+        period: input.period,
+        actor,
+      });
       return expectation;
     });
   } catch (error) {
@@ -635,7 +646,7 @@ export async function addCommissionPayment(
 
   const expectation = await prisma.commissionExpectation.findUnique({
     where: { id: expectationId },
-    select: { id: true, status: true, policyId: true, policy: { select: { holderId: true } } },
+    select: { id: true, status: true, policyId: true, period: true, policy: { select: { holderId: true } } },
   });
   if (!expectation) throw new AppError("NOT_FOUND", "Comisión no encontrada.");
   if (expectation.status === "CANCELLED") {
@@ -661,6 +672,8 @@ export async function addCommissionPayment(
     const payment = await tx.commissionPayment.create({
       data: {
         commissionExpectationId: expectationId,
+        policyId: expectation.policyId,
+        period: expectation.period,
         amount,
         type: input.type,
         receivedAt: input.receivedAt,

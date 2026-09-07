@@ -102,6 +102,7 @@ const statementSelect = {
   netTotal: true,
   declaredFooterTotal: true,
   footerMatchesNet: true,
+  footerAmbiguous: true,
   detectedCarrierName: true,
   carrierRecognized: true,
   uploadedBy: { select: { id: true, name: true } },
@@ -345,6 +346,14 @@ export async function uploadCommissionStatement(
   const footerMatchesNet = declaredFooterTotal
     ? declaredFooterTotal.minus(netTotalSum).abs().lessThanOrEqualTo("0.01")
     : null;
+  // Fase 025.5.5 (TOTAL GENERAL EN REPORTES MULTIPÁGINA): un total
+  // declarado que NO reconcilia con la suma de netAmount de las filas
+  // EFECTIVAMENTE mostradas en el preview no puede confiarse como total
+  // general (típico de un reporte multipágina donde el footer detectado
+  // resultó ser un subtotal de página, no el acumulado completo) —
+  // nunca se aplica un reporte en ese estado, aunque el preview siga
+  // disponible para revisión manual.
+  const footerAmbiguous = footerMatchesNet === false;
 
   const statementId = randomUUID();
   await prisma.$transaction(async (tx) => {
@@ -368,6 +377,7 @@ export async function uploadCommissionStatement(
         netTotal: netTotalSum.toFixed(2),
         declaredFooterTotal: declaredFooterTotal ? declaredFooterTotal.toFixed(2) : null,
         footerMatchesNet,
+        footerAmbiguous,
         adapterVersion: parsed.adapterVersion ?? "1",
         detectedCarrierName: parsed.detectedCarrierRaw ?? null,
         carrierRecognized,
@@ -407,14 +417,52 @@ export async function getCommissionStatement(actor: AuthorizedUser, rawId: unkno
   return statement;
 }
 
+// Fase 025.5.5 (UAT-19): resume los meses de comisión cubiertos por un
+// reporte para el historial — nunca la fecha de subida. Un mismo
+// archivo puede tener varias filas con Policy/miembro/carrier iguales
+// pero meses distintos (no son duplicadas, ver rowFingerprint), así
+// que el historial debe reflejar el RANGO real, no un solo mes
+// arbitrario.
+type PeriodSummary = { min: Date; max: Date; distinctMonths: number } | null;
+
+function summarizePeriods(periods: Date[]): PeriodSummary {
+  if (periods.length === 0) return null;
+  const times = Array.from(new Set(periods.map((p) => p.getTime()))).sort((a, b) => a - b);
+  return { min: new Date(times[0]), max: new Date(times[times.length - 1]), distinctMonths: times.length };
+}
+
 export async function listCommissionStatements(actor: AuthorizedUser) {
   assertModuleAccess(actor);
   assertAdminOnly(actor);
-  return prisma.commissionStatement.findMany({
+  const statements = await prisma.commissionStatement.findMany({
     select: statementSelect,
     orderBy: { uploadedAt: "desc" },
     take: 50,
   });
+
+  const rows = await prisma.commissionStatementRow.findMany({
+    where: { statementId: { in: statements.map((s) => s.id) } },
+    select: { statementId: true, paidAt: true, effectiveDate: true },
+  });
+  const periodsByStatement = new Map<string, Date[]>();
+  for (const row of rows) {
+    const period = inferPeriod({
+      source: "",
+      receivedAmount: "0",
+      sourceRowNumber: 0,
+      paidAt: row.paidAt,
+      effectiveDate: row.effectiveDate,
+    } as NormalizedCommissionRow);
+    if (!period) continue;
+    const list = periodsByStatement.get(row.statementId) ?? [];
+    list.push(period);
+    periodsByStatement.set(row.statementId, list);
+  }
+
+  return statements.map((s) => ({
+    ...s,
+    periodSummary: summarizePeriods(periodsByStatement.get(s.id) ?? []),
+  }));
 }
 
 // Preview con expected/received/difference calculado en el momento —
@@ -443,9 +491,16 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
   });
 
   const enriched = rows.map((row) => {
-    const expected = row.matchedExpectation?.expectedAmount ?? null;
+    const hasExpectation = !!row.matchedExpectation;
     const received = new Prisma.Decimal(row.receivedAmount);
-    const difference = expected ? received.minus(new Prisma.Decimal(expected)) : null;
+    // Fase 025.5.5 (UAT-16): mientras no exista CommissionExpectation,
+    // "Esperado" se muestra como $0 explícito (nunca un guion ambiguo)
+    // y la diferencia es PROVISIONAL (recibido - 0) — nunca se declara
+    // "conciliado" sin una expectativa real detrás. En cuanto se cree
+    // la expectativa (ver commission-payment-linking.ts), este mismo
+    // cálculo la recoge automáticamente sin volver a subir el archivo.
+    const expected = hasExpectation ? new Prisma.Decimal(row.matchedExpectation!.expectedAmount) : new Prisma.Decimal(0);
+    const difference = received.minus(expected);
     const reviewState =
       row.matchStatus === "UNMATCHED"
         ? "UNMATCHED"
@@ -457,15 +512,13 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
               ? "INVALID"
               : row.matchStatus === "DUPLICATE"
                 ? "DUPLICATE"
-                : !row.matchedExpectationId
+                : !hasExpectation
                   ? "NO_EXPECTATION"
-                  : difference === null
-                    ? "NO_EXPECTATION"
-                    : difference.isZero()
-                      ? "MATCH"
-                      : difference.isPositive()
-                        ? "OVERPAID"
-                        : "UNDERPAID";
+                  : difference.isZero()
+                    ? "MATCH"
+                    : difference.isPositive()
+                      ? "OVERPAID"
+                      : "UNDERPAID";
 
     // Solo campos operativos seguros ya guardados en metadata (nunca la
     // fila cruda) — ver el comentario de metadata en uploadCommissionStatement.
@@ -489,11 +542,24 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
       warnings: metadata.warnings ?? [],
       effectiveDate: row.effectiveDate,
       paidAt: row.paidAt,
+      // Fase 025.5.5 (UAT-19): período de comisión normalizado (primer
+      // día del mes, ancla UTC) — mismo cálculo que matching/apply
+      // (inferPeriod: paidAt preferido, effectiveDate como respaldo).
+      // Nunca es la fecha de subida; se muestra SEPARADO de Effective
+      // Date, que es la vigencia de la póliza, no el mes de comisión.
+      commissionPeriod: inferPeriod({
+        source: "",
+        receivedAmount: "0",
+        sourceRowNumber: 0,
+        paidAt: row.paidAt,
+        effectiveDate: row.effectiveDate,
+      } as NormalizedCommissionRow),
       receivedAmount: row.receivedAmount,
       assistanceAmount: row.assistanceAmount,
       netAmount: row.netAmount,
-      expectedAmount: expected,
-      difference: difference ? difference.toFixed(2) : null,
+      expectedAmount: expected.toFixed(2),
+      difference: difference.toFixed(2),
+      hasExpectation,
       matchStatus: row.matchStatus,
       reviewState,
       errorCode: row.errorCode,
@@ -677,7 +743,7 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
 
   const statement = await prisma.commissionStatement.findUnique({
     where: { id },
-    select: { id: true, status: true, payerAgency: true, totalRows: true, carrierRecognized: true },
+    select: { id: true, status: true, payerAgency: true, totalRows: true, carrierRecognized: true, footerAmbiguous: true },
   });
   if (!statement) throw new AppError("NOT_FOUND", "Reporte no encontrado.");
   if (statement.status === "DUPLICATE_BLOCKED") {
@@ -690,6 +756,20 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
     throw new AppError(
       "VALIDATION_ERROR",
       "El carrier detectado en este reporte no existe en el catálogo — no se puede aplicar hasta que un ADMIN lo revise."
+    );
+  }
+  // Fase 025.5.5 (TOTAL GENERAL EN REPORTES MULTIPÁGINA): el total
+  // declarado en el pie del PDF no reconcilia con la suma de las filas
+  // efectivamente mostradas en el preview (típico de un reporte
+  // multipágina donde el "Total" detectado resultó ser un subtotal de
+  // página) — nunca se asume que igual es correcto. El preview sigue
+  // disponible para revisión manual, pero el apply queda bloqueado
+  // hasta que un ADMIN confirme el total real fuera de este flujo
+  // automático.
+  if (statement.footerAmbiguous) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Total general no verificable — el total declarado en el reporte no coincide con la suma de las filas mostradas en el preview. No se puede aplicar hasta revisión manual."
     );
   }
   // Fase 025.5.2 (Corrección 3) — mismo invariante que
@@ -723,10 +803,32 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
   let appliedCount = 0;
   await prisma.$transaction(async (tx) => {
     for (const row of rowsToApply) {
-      // Sin expectativa resuelta: no hay a qué CommissionExpectation
-      // adjuntar el pago — se deja para resolución manual (NO_EXPECTATION
-      // en el preview), nunca se inventa una expectativa aquí.
-      if (!row.matchedExpectationId) continue;
+      // Fase 025.5.5 (UAT-16/17): un pago real puede llegar ANTES de
+      // que exista una CommissionExpectation para esa Policy+período —
+      // ya NO se salta la fila por falta de expectativa (antes de esta
+      // fase, `continue` aquí dejaba la fila MATCHED-pero-nunca-aplicada
+      // para siempre). Se aplica igual, con commissionExpectationId
+      // null; cuando se cree la expectativa correspondiente,
+      // commission-payment-linking.ts la vincula retroactivamente sin
+      // tocar el monto/fecha ya registrados (nunca se inventa la
+      // expectativa aquí).
+      const period = inferPeriod({
+        source: "",
+        receivedAmount: "0",
+        sourceRowNumber: 0,
+        paidAt: row.paidAt,
+        effectiveDate: row.effectiveDate,
+      });
+      if (!period) {
+        await tx.commissionStatementRow.update({
+          where: { id: row.id },
+          data: {
+            matchStatus: "INVALID",
+            errorCode: "No se pudo determinar el período de comisión (sin Paid At ni Effective Date) — no se creó el pago.",
+          },
+        });
+        continue;
+      }
 
       // Fase 025.5.1 (PENDIENTE 025.5-D): revalidación defensiva en el
       // momento de aplicar — un pago PDF (siempre HEALTH, ver
@@ -751,9 +853,16 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
         }
       }
 
+      const policy = await tx.policy.findUniqueOrThrow({
+        where: { id: row.matchedPolicyId! },
+        select: { holderId: true, householdId: true },
+      });
+
       const payment = await tx.commissionPayment.create({
         data: {
-          commissionExpectationId: row.matchedExpectationId,
+          commissionExpectationId: row.matchedExpectationId, // null es válido — ver UAT-16/17 arriba
+          policyId: row.matchedPolicyId!,
+          period,
           amount: row.receivedAmount,
           type: "PAYMENT",
           // Paid At es la fecha real del pago cuando el adapter la
@@ -770,19 +879,17 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
         data: { matchStatus: "APPLIED" },
       });
 
-      const expectation = await tx.commissionExpectation.findUniqueOrThrow({
-        where: { id: row.matchedExpectationId },
-        select: { policyId: true, policy: { select: { holderId: true, householdId: true } } },
-      });
       await recordAuditEvent(tx, {
         actor,
         entityType: "CommissionPayment",
         entityId: payment.id,
         action: "COMMISSION_PAYMENT_FROM_STATEMENT",
-        policyId: expectation.policyId,
-        householdId: expectation.policy.householdId,
-        contactPersonId: expectation.policy.holderId,
-        summary: "Pago de comisión aplicado desde reporte de conciliación",
+        policyId: row.matchedPolicyId!,
+        householdId: policy.householdId,
+        contactPersonId: policy.holderId,
+        summary: row.matchedExpectationId
+          ? "Pago de comisión aplicado desde reporte de conciliación"
+          : "Pago de comisión aplicado desde reporte de conciliación (sin expectativa todavía — se vinculará automáticamente cuando se cree)",
         metadata: { statementRowId: row.id },
       });
       appliedCount++;

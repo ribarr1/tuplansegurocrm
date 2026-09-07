@@ -8,7 +8,7 @@ import {
   manualMatchStatementRow,
   applyCommissionStatement,
 } from "./reconciliation.service";
-import { listStatementSources } from "./registry";
+import { listStatementSources, getStatementAdapter } from "./registry";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 // ---------------------------------------------------------------------------
@@ -401,6 +401,20 @@ describe("reconciliation.service — pipeline de conciliación", () => {
           expect(s.label.toUpperCase()).not.toContain(carrierName);
         }
       }
+    });
+
+    it("Fase 025.5.5 (UAT-20): el selector de NUEVAS importaciones excluye la fuente legacy ORANGE_OSCAR — muestra EXACTAMENTE las 3 modalidades PDF con sus valores técnicos y etiquetas", () => {
+      const sources = listStatementSources();
+      expect(sources.map((s) => s.source).sort()).toEqual(["ELITE_REFERRAL", "ORANGE_OWN", "ORANGE_REFERRAL"]);
+      expect(sources.find((s) => s.source === "ORANGE_OWN")?.label).toBe("Orange — Propias");
+      expect(sources.find((s) => s.source === "ORANGE_REFERRAL")?.label).toBe("Orange — Referidas");
+      expect(sources.find((s) => s.source === "ELITE_REFERRAL")?.label).toBe("Elite — Referidas");
+      expect(sources.some((s) => s.source === "ORANGE_OSCAR")).toBe(false);
+    });
+
+    it("Fase 025.5.5 (UAT-20): ORANGE_OSCAR sigue siendo resoluble vía getStatementAdapter (necesario para interpretar importaciones históricas ya existentes) aunque no aparezca en el selector de nuevas importaciones", () => {
+      expect(getStatementAdapter("ORANGE_OSCAR")).not.toBeNull();
+      expect(listStatementSources({ includeLegacy: true }).some((s) => s.source === "ORANGE_OSCAR")).toBe(true);
     });
 
     it("un PDF con firma válida pero sin estructura real de PDF es aceptado en la subida y rechazado con un mensaje claro al parsear", async () => {

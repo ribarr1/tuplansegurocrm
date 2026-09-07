@@ -1,5 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
-import { extractPdfRows, tableFromRows, rowToRecord, PdfFormatMismatchError, type PdfTextRow } from "./pdf-table-extract";
+import { extractPdfRows, tableFromRows, rowToRecord, detectFooterTotal, PdfFormatMismatchError, type PdfTextRow } from "./pdf-table-extract";
 import { detectSingleCarrier } from "./carrier-detection";
 import type { NormalizedCommissionRow, ParsedStatement } from "./types";
 
@@ -91,16 +91,16 @@ export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdf
     return real ? record[real] : undefined;
   }
 
+  const { declaredTotal: declaredFooterTotal, totalRowIndices } = detectFooterTotal(
+    table.dataRows,
+    (text) => normalizeHeader(text) === "total",
+    parseMoney
+  );
+
   const rows: NormalizedCommissionRow[] = [];
-  let declaredFooterTotal: string | null = null;
 
   table.dataRows.forEach((row: PdfTextRow, index: number) => {
-    const isFooterTotalRow = row.cells.some((c) => normalizeHeader(c.text) === "total");
-    if (isFooterTotalRow) {
-      const amountCell = [...row.cells].reverse().find((c) => parseMoney(c.text) !== null);
-      declaredFooterTotal = amountCell ? parseMoney(amountCell.text) : declaredFooterTotal;
-      return;
-    }
+    if (totalRowIndices.has(index)) return;
 
     const { record, mismatched } = rowToRecord(row, headerCells);
     const warnings: string[] = [];
