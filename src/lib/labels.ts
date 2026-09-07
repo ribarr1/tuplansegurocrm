@@ -26,6 +26,7 @@ import type {
   PaymentManagementMode,
   PolicyBusinessSource,
   ClientPortalType,
+  GoogleReviewStatus,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -48,6 +49,14 @@ export const CONTACT_STATUS_LABELS: Record<ContactStatus, string> = {
   CLIENT: "Cliente",
   FORMER_CLIENT: "Ex cliente",
   OTHER: "Otro",
+};
+
+// Fase 025.5 (UAT-10) — seguimiento de reseñas de Google.
+export const GOOGLE_REVIEW_STATUS_LABELS: Record<GoogleReviewStatus, string> = {
+  PENDING_REQUEST: "Pendiente de solicitar",
+  REQUESTED: "Solicitada",
+  PUBLISHED: "Publicada",
+  DO_NOT_REQUEST: "No solicitar",
 };
 
 // Fase 024 — nunca mostrar el enum técnico al usuario.

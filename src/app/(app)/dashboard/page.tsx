@@ -341,6 +341,45 @@ export default async function DashboardPage() {
           </Card>
         </section>
       )}
+
+      {/* RESEÑAS DE GOOGLE ---------------------------------------------- */}
+      {/* Fase 025.5 (UAT-10) — EXCLUSIVAMENTE ADMIN, el DTO ni siquiera
+          trae esta clave para otro rol (mismo criterio que Comisiones). */}
+      {data.googleReviews && (
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-muted-foreground">Reseñas de Google</h3>
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/contacts?review=CANDIDATES" />}
+            >
+              A quién pedir reseña
+            </Button>
+          </div>
+          <Card>
+            <CardContent className="grid grid-cols-2 gap-4 p-4 text-sm sm:grid-cols-4">
+              <Link href="/contacts?review=CANDIDATES" className="flex flex-col hover:underline">
+                <span className="text-xs text-muted-foreground">Pendientes de solicitar</span>
+                <span className="text-lg font-semibold">{data.googleReviews.pending}</span>
+              </Link>
+              <Link href="/contacts?review=REQUESTED" className="flex flex-col hover:underline">
+                <span className="text-xs text-muted-foreground">Solicitadas sin confirmar</span>
+                <span className="text-lg font-semibold">{data.googleReviews.requested}</span>
+              </Link>
+              <Link href="/contacts?review=PUBLISHED" className="flex flex-col hover:underline">
+                <span className="text-xs text-muted-foreground">Publicadas</span>
+                <span className="text-lg font-semibold">{data.googleReviews.published}</span>
+              </Link>
+              <Link href="/contacts?review=DO_NOT_REQUEST" className="flex flex-col hover:underline">
+                <span className="text-xs text-muted-foreground">No solicitar</span>
+                <span className="text-lg font-semibold">{data.googleReviews.doNotRequest}</span>
+              </Link>
+            </CardContent>
+          </Card>
+        </section>
+      )}
     </div>
   );
 }

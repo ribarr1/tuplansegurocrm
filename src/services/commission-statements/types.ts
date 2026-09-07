@@ -13,6 +13,13 @@
 // corresponde a esto (para Orange/Oscar: Subtotal, nunca Total, ver
 // docs/COMMISSION_RECONCILIATION.md). String decimal (nunca number),
 // mismo principio que el resto de montos financieros del proyecto.
+//
+// Fase 025.5: assistanceAmount/netAmount son informativos (preview y
+// reportes) — NUNCA generan su propio CommissionPayment (Asistencia es
+// un gasto separado, nunca un chargeback ni una reducción de lo
+// esperado). dateOfBirth NUNCA se persiste (solo existe en memoria
+// durante el matching de un adapter como Elite/BCBS que sí trae DOB en
+// el archivo) — ver docs/COMMISSION_RECONCILIATION.md.
 export interface NormalizedCommissionRow {
   source: string;
   externalMemberId?: string | null;
@@ -25,9 +32,18 @@ export interface NormalizedCommissionRow {
   rate?: string | null;
   memberCount?: number | null;
   receivedAmount: string;
+  assistanceAmount?: string | null;
+  netAmount?: string | null;
   effectiveDate?: Date | null;
   paidAt?: Date | null;
   sourceRowNumber: number;
+  // Solo en memoria durante esta importación — nunca se guarda en
+  // CommissionStatementRow ni en ningún log/AuditEvent (ver
+  // matcher.ts, único consumidor).
+  dateOfBirth?: Date | null;
+  // Advertencias no bloqueantes del adapter (ej. Subtotal-Asistencia
+  // != Total con una diferencia de redondeo) — nunca contienen PII.
+  warnings?: string[];
 }
 
 export interface ParsedStatement {
@@ -37,6 +53,18 @@ export interface ParsedStatement {
   // fuente de verdad (el total real siempre se deriva sumando
   // receivedAmount de las filas ya normalizadas).
   declaredTotal?: string | null;
+  // Fase 025.5: metadatos de clasificación fijados por el adapter
+  // (nunca inferidos del carrier de cada fila individual) — ORANGE_OWN
+  // fija payerAgency=ORANGE/businessModality=OWN, etc. Adapters CSV/
+  // XLSX de Fase 020 los dejan undefined (fuera de alcance de esta fase).
+  payerAgency?: "ORANGE" | "ELITE";
+  businessModality?: "OWN" | "REFERRAL";
+  adapterVersion?: string;
+  // Fase 025.5: los 3 adaptadores PDF reales son EXCLUSIVAMENTE de
+  // comisiones HEALTH — se fija aquí (nunca inferido) para que el
+  // matcher nunca pueda emparejar una fila con una póliza de otro
+  // producto (ver matcher.ts).
+  policyType?: "HEALTH";
 }
 
 export interface CommissionStatementAdapter {

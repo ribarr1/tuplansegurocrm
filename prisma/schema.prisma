@@ -27,6 +27,19 @@ enum ContactStatus {
   OTHER
 }
 
+// Fase 025.5 (UAT-10). Etiquetas en español en la UI (ver
+// GOOGLE_REVIEW_STATUS_LABELS, src/lib/labels.ts):
+//   PENDING_REQUEST -> "Pendiente de solicitar"
+//   REQUESTED       -> "Solicitada"
+//   PUBLISHED       -> "Publicada"
+//   DO_NOT_REQUEST  -> "No solicitar"
+enum GoogleReviewStatus {
+  PENDING_REQUEST
+  REQUESTED
+  PUBLISHED
+  DO_NOT_REQUEST
+}
+
 // Fase 024 (Hallazgo #1 de UAT): dato administrativo simple, no una
 // determinación clínica/legal. UNKNOWN es el default explícito — nunca
 // se infiere por nombre, ni al crear a mano ni al importar; una
@@ -81,6 +94,7 @@ model User {
   updatedAt     DateTime @updatedAt
 
   assignedPeople                   Person[]                @relation("PersonAssignedAgent")
+  reviewStatusUpdates               Person[]                @relation("PersonReviewStatusUpdatedBy")
   processedPolicies                Policy[]                @relation("PolicyProcessedBy")
   assignedTasks                    Task[]                  @relation("TaskAssignedTo")
   createdTasks                     Task[]                  @relation("TaskCreatedBy")
@@ -241,10 +255,27 @@ model Person {
   contactStatus   ContactStatus @default(PROSPECT)
   source          String?
   assignedAgentId String?       @db.Uuid
+  // Fase 025.5 (UAT-10): seguimiento administrativo de reseñas de
+  // Google — pertenece a Person (no a Policy) porque el seguimiento es
+  // único por CONTACTO, aunque tenga varias pólizas. PENDING_REQUEST
+  // es un default NEUTRO/informativo ("todavía no se gestionó"), NUNCA
+  // una señal de "hay que pedirle ahora" — la vista "A quién pedir
+  // reseña" (google-reviews.service.ts) aplica SU PROPIO filtro de
+  // elegibilidad (contactStatus=CLIENT + póliza OWN activa,
+  // excluyendo DO_NOT_REQUEST) encima de este estado, así que un
+  // prospecto nuevo con el default nunca aparece ahí como candidato.
+  // Nunca se marcan en bloque los contactos existentes al agregar este
+  // campo — todos arrancan en PENDING_REQUEST por el default de
+  // columna, sin ninguna migración de datos.
+  googleReviewStatus      GoogleReviewStatus @default(PENDING_REQUEST)
+  reviewRequestedAt       DateTime?
+  reviewPublishedAt       DateTime?
+  reviewStatusUpdatedById String?            @db.Uuid
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
   assignedAgent        User?                       @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  reviewStatusUpdatedBy User?                      @relation("PersonReviewStatusUpdatedBy", fields: [reviewStatusUpdatedById], references: [id], onDelete: SetNull)
   householdMembers     HouseholdMember[]
   holderPolicies       Policy[]                    @relation("PolicyHolder")
   policyMemberships    PolicyMember[]              @relation("PolicyMemberPerson")
@@ -1194,6 +1225,27 @@ enum CommissionStatementStatus {
 // real: un hash del CONTENIDO normalizado (filas + montos + fechas),
 // nunca solo el nombre de archivo — subir el mismo reporte dos veces
 // (incluso con otro nombre) se detecta y se bloquea el Apply duplicado.
+// Fase 025.5 (importación real de comisiones HEALTH desde PDF):
+// payerAgency/businessModality son normalizados EXPLÍCITAMENTE (nunca
+// inferidos del carrier — Orange puede pagar Oscar como propia Y
+// Kaiser como referida; Elite paga BCBS en SC como referida pero
+// Orange paga BCBS en IL como propia, mismo carrier, agencia y
+// modalidad distintas) — se fijan en el momento de la subida (Paso 1
+// del flujo, selección explícita del ADMIN) y nunca cambian después.
+// assistanceTotal/netTotal/declaredFooterTotal/footerMatchesNet
+// existen para la validación de totales del pie del reporte (nunca se
+// usan como fuente de verdad del pago real, que siempre se recalcula
+// sumando receivedAmount de las filas ya normalizadas).
+enum CommissionPayerAgency {
+  ORANGE
+  ELITE
+}
+
+enum CommissionBusinessModality {
+  OWN
+  REFERRAL
+}
+
 model CommissionStatement {
   id              String                    @id @default(uuid()) @db.Uuid
   source          String
@@ -1210,6 +1262,16 @@ model CommissionStatement {
   appliedRows     Int                       @default(0)
   receivedTotal   Decimal                   @db.Decimal(12, 2)
   appliedAt       DateTime?
+  // Nullable: los adaptadores CSV/XLSX de Fase 020 no los establecen
+  // (siguen sin agencia/modalidad explícitas, fuera del alcance de
+  // esta fase) — solo los adaptadores PDF nuevos los fijan siempre.
+  payerAgency          CommissionPayerAgency?
+  businessModality     CommissionBusinessModality?
+  assistanceTotal      Decimal                     @default(0) @db.Decimal(12, 2)
+  netTotal             Decimal                     @default(0) @db.Decimal(12, 2)
+  declaredFooterTotal  Decimal?                    @db.Decimal(12, 2)
+  footerMatchesNet     Boolean?
+  adapterVersion       String                      @default("1")
 
   uploadedBy User?                    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
   rows       CommissionStatementRow[]
@@ -1218,12 +1280,23 @@ model CommissionStatement {
   @@map("commission_statements")
 }
 
+// Fase 025.5: agrega INVALID (fila con datos inconsistentes — ej.
+// Subtotal - Asistencia != Total, o modalidad incompatible con el
+// businessSource histórico de la póliza encontrada — nunca aplicable)
+// y DUPLICATE (mismo fingerprint de fila ya aplicado en otra
+// importación — nunca aplicable, nunca paga dos veces). Equivalencia
+// con el vocabulario de la ficha de UAT: UNMATCHED=NOT_FOUND,
+// IGNORED=SKIPPED, MATCHED=READY (mientras no se haya aplicado aún).
+// Solo MATCHED puede pasar a APPLIED — el resto nunca genera un
+// CommissionPayment.
 enum CommissionStatementRowMatchStatus {
   MATCHED
   UNMATCHED
   AMBIGUOUS
   IGNORED
   APPLIED
+  INVALID
+  DUPLICATE
 }
 
 // Una fila normalizada de un CommissionStatement — nunca la fila cruda
@@ -1239,7 +1312,15 @@ model CommissionStatementRow {
   rowNumber            Int
   externalId           String?
   displayName          String?
+  // receivedAmount = Subtotal (bruto) — SIEMPRE lo que entra a
+  // CommissionPayment.amount al aplicar, nunca Total. assistanceAmount/
+  // netAmount son informativos (reporte/preview), nunca generan un
+  // CommissionPayment propio — Asistencia es un gasto separado, nunca
+  // un chargeback ni una reducción de lo esperado (ver
+  // docs/COMMISSION_RECONCILIATION.md).
   receivedAmount       Decimal                           @db.Decimal(12, 2)
+  assistanceAmount     Decimal                           @default(0) @db.Decimal(12, 2)
+  netAmount            Decimal                           @default(0) @db.Decimal(12, 2)
   effectiveDate        DateTime?                         @db.Date
   paidAt               DateTime?                         @db.Date
   matchStatus          CommissionStatementRowMatchStatus @default(UNMATCHED)
@@ -1247,6 +1328,13 @@ model CommissionStatementRow {
   matchedExpectationId String?                           @db.Uuid
   errorCode            String?
   metadata             Json?
+  // Hash de (fuente + externalId/nombre normalizado + periodo + monto)
+  // — nunca el fingerprint del ARCHIVO completo (eso ya existe en
+  // CommissionStatement.fingerprint) — permite detectar que ESTA fila
+  // puntual ya fue aplicada antes en otra importación, aunque el
+  // archivo completo sea distinto (ej. un reporte corregido/reenviado
+  // que repite algunas filas ya pagadas).
+  rowFingerprint       String?
 
   statement          CommissionStatement    @relation(fields: [statementId], references: [id], onDelete: Cascade)
   matchedPolicy      Policy?                @relation(fields: [matchedPolicyId], references: [id], onDelete: SetNull)
@@ -1256,5 +1344,6 @@ model CommissionStatementRow {
   @@index([statementId])
   @@index([matchedPolicyId])
   @@index([matchedExpectationId])
+  @@index([rowFingerprint])
   @@map("commission_statement_rows")
 }

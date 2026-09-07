@@ -369,38 +369,39 @@ describe("reconciliation.service — pipeline de conciliación", () => {
     expect(JSON.stringify(paymentEvent?.changes ?? {})).not.toContain("25");
   });
 
-  // Fase 025.4 (UAT-05) — subida segura de PDF, adaptadores "pendientes"
-  // que nunca fabrican un parser falso, apply bloqueado por construcción.
-  describe("UAT-05 — adaptadores PDF pendientes", () => {
+  // Fase 025.4 (UAT-05) — subida segura de PDF. Fase 025.5: Oscar/
+  // Kaiser/Elite-BCBS ya tienen adaptador REAL; Ambetter sigue
+  // pendiente (sin PDF de muestra real) y sirve para probar el
+  // contrato "nunca finge soporte" de forma genérica.
+  describe("UAT-05 — subida segura de PDF y adaptador pendiente (Ambetter)", () => {
     function makePdfFile(name: string): File {
       // Firma real %PDF- (mínimo válido para sniffMimeType) + relleno.
       const bytes = new TextEncoder().encode("%PDF-1.4\n%fake content for test\n");
       return new File([bytes], name, { type: "application/pdf" });
     }
 
-    it("las fuentes *_PDF aparecen en el catálogo de fuentes disponibles", () => {
+    it("las fuentes PDF reales y pendientes aparecen en el catálogo", () => {
       const sources = listStatementSources();
       const sourceIds = sources.map((s) => s.source);
       expect(sourceIds).toContain("ORANGE_OSCAR_PDF");
+      expect(sourceIds).toContain("ORANGE_KAISER_PDF");
+      expect(sourceIds).toContain("ELITE_BCBS_PDF");
       expect(sourceIds).toContain("AMBETTER_PDF");
-      expect(sourceIds).toContain("BCBS_PDF");
-      expect(sourceIds).toContain("KAISER_PDF");
-      expect(sourceIds).toContain("ELITE_PDF");
     });
 
-    it("un PDF real (firma válida) es aceptado en la subida pero el parseo se rechaza explícitamente (adaptador pendiente)", async () => {
+    it("un PDF real (firma válida) es aceptado en la subida pero el parseo se rechaza explícitamente (adaptador Ambetter pendiente)", async () => {
       await expect(
         uploadCommissionStatement(admin, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     });
 
-    it("el mensaje de rechazo nombra la fuente y nunca finge soporte", async () => {
+    it("el mensaje de rechazo del adaptador pendiente nombra la fuente y nunca finge soporte", async () => {
       await expect(
-        uploadCommissionStatement(admin, "BCBS_PDF", makePdfFile(uniqueName("r") + ".pdf"))
-      ).rejects.toThrow(/BCBS/);
+        uploadCommissionStatement(admin, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+      ).rejects.toThrow(/Ambetter/);
     });
 
-    it("un archivo que NO es un PDF real (firma inválida) se rechaza ANTES de llegar al adaptador", async () => {
+    it("un archivo que NO es un PDF real (firma inválida) se rechaza ANTES de llegar a cualquier adaptador", async () => {
       const fakeBytes = new TextEncoder().encode("esto no es un pdf de verdad");
       const fake = new File([fakeBytes], uniqueName("r") + ".pdf", { type: "application/pdf" });
       await expect(uploadCommissionStatement(admin, "AMBETTER_PDF", fake)).rejects.toMatchObject({
@@ -409,13 +410,19 @@ describe("reconciliation.service — pipeline de conciliación", () => {
       });
     });
 
-    it("nunca se crea un CommissionStatement para un adaptador PDF pendiente (apply queda bloqueado por construcción)", async () => {
-      const before = await prisma.commissionStatement.count({ where: { source: "KAISER_PDF" } });
+    it("nunca se crea un CommissionStatement para el adaptador pendiente (apply queda bloqueado por construcción)", async () => {
+      const before = await prisma.commissionStatement.count({ where: { source: "AMBETTER_PDF" } });
       await expect(
-        uploadCommissionStatement(admin, "KAISER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+        uploadCommissionStatement(admin, "AMBETTER_PDF", makePdfFile(uniqueName("r") + ".pdf"))
       ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-      const after = await prisma.commissionStatement.count({ where: { source: "KAISER_PDF" } });
+      const after = await prisma.commissionStatement.count({ where: { source: "AMBETTER_PDF" } });
       expect(after).toBe(before);
+    });
+
+    it("un source retirado del registro (ej. un stub genérico ya reemplazado) se rechaza como fuente no soportada", async () => {
+      await expect(
+        uploadCommissionStatement(admin, "BCBS_PDF", makePdfFile(uniqueName("r") + ".pdf"))
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("no soportada") });
     });
 
     it("ASSISTANT sigue sin acceso, ni siquiera para intentar un PDF", async () => {

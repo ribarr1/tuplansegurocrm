@@ -37,7 +37,7 @@ type SearchParams = {
   page?: string;
 };
 
-function buildHref(current: SearchParams, overrides: Partial<SearchParams>): string {
+function buildQueryString(current: SearchParams, overrides: Partial<SearchParams>): string {
   const merged = { ...current, ...overrides };
   const params = new URLSearchParams();
   if (merged.q) params.set("q", merged.q);
@@ -48,8 +48,19 @@ function buildHref(current: SearchParams, overrides: Partial<SearchParams>): str
   if (merged.agentId) params.set("agentId", merged.agentId);
   if (merged.businessSource) params.set("businessSource", merged.businessSource);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
-  const qs = params.toString();
+  return params.toString();
+}
+
+function buildHref(current: SearchParams, overrides: Partial<SearchParams>): string {
+  const qs = buildQueryString(current, overrides);
   return qs ? `/policies?${qs}` : "/policies";
+}
+
+// Fase 025.5 (UAT-09): "Exportar CSV" reenvía los mismos filtros que
+// están activos en pantalla — nunca siempre el universo completo.
+function buildExportHref(current: SearchParams): string {
+  const qs = buildQueryString(current, { page: undefined });
+  return qs ? `/api/export/policies?${qs}` : "/api/export/policies";
 }
 
 const formatDate = formatDateOnlyUS;
@@ -106,7 +117,7 @@ export default async function PoliciesPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-heading text-lg font-semibold">Pólizas</h2>
         <div className="flex items-center gap-2">
-          <Button variant="outline" nativeButton={false} render={<a href="/api/export/policies" />}>
+          <Button variant="outline" nativeButton={false} render={<a href={buildExportHref(sp)} />}>
             Exportar CSV
           </Button>
           <Button nativeButton={false} render={<Link href="/policies/new" />}>

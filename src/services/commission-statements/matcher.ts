@@ -9,12 +9,26 @@ import type { NormalizedCommissionRow } from "./types";
 // nombre+carrier). Nunca confirma por nombre solo, y nunca confirma
 // cuando hay ambigüedad — esas filas quedan AMBIGUOUS/UNMATCHED para
 // revisión manual (ver reconciliation.service.ts::manualMatchRow).
+//
+// Fase 025.5: además de encontrar candidato, valida que la póliza
+// candidata sea compatible con la modalidad/tipo del reporte que se
+// está conciliando (ORANGE_OWN solo reconcilia OWN, ORANGE_REFERRAL/
+// ELITE_REFERRAL solo REFERRAL, y todo pago de este importador es
+// EXCLUSIVAMENTE HEALTH) — nunca se reclasifica Policy.businessSource
+// desde aquí; una incompatibilidad se reporta como INVALID para
+// revisión manual del ADMIN, nunca se aplica en automático.
 // ---------------------------------------------------------------------------
+
+export type MatchOptions = {
+  businessModality?: "OWN" | "REFERRAL";
+  policyType?: "HEALTH";
+};
 
 export type MatchResult =
   | { status: "MATCHED"; policyId: string; expectationId: string | null }
   | { status: "UNMATCHED" }
-  | { status: "AMBIGUOUS"; candidatePolicyIds: string[] };
+  | { status: "AMBIGUOUS"; candidatePolicyIds: string[] }
+  | { status: "INVALID"; policyId: string; expectationId: string | null; reason: string };
 
 // El período de la expectativa NUNCA se asume igual a effectiveDate —
 // se deriva del mes de paidAt cuando existe (es la fecha real del pago
@@ -39,7 +53,46 @@ async function findExpectationForPolicy(
   return expectation?.id ?? null;
 }
 
-export async function matchStatementRow(source: string, row: NormalizedCommissionRow): Promise<MatchResult> {
+// Nunca reclasifica Policy.businessSource — solo compara contra la
+// clasificación histórica ya existente y reporta incompatibilidad.
+async function checkModalityCompatibility(
+  policyId: string,
+  businessModality: "OWN" | "REFERRAL"
+): Promise<string | null> {
+  const policy = await prisma.policy.findUnique({
+    where: { id: policyId },
+    select: { businessSource: true },
+  });
+  if (!policy) return "Póliza no encontrada.";
+  if (policy.businessSource !== businessModality) {
+    return `El reporte es de pólizas ${businessModality === "OWN" ? "propias" : "referidas"}, pero esta póliza está clasificada como ${policy.businessSource === "OWN" ? "propia" : "referida"}.`;
+  }
+  return null;
+}
+
+async function toMatchResult(
+  policyId: string,
+  row: NormalizedCommissionRow,
+  options: MatchOptions
+): Promise<MatchResult> {
+  if (options.businessModality) {
+    const reason = await checkModalityCompatibility(policyId, options.businessModality);
+    if (reason) {
+      const expectationId = await findExpectationForPolicy(policyId, row);
+      return { status: "INVALID", policyId, expectationId, reason };
+    }
+  }
+  const expectationId = await findExpectationForPolicy(policyId, row);
+  return { status: "MATCHED", policyId, expectationId };
+}
+
+export async function matchStatementRow(
+  source: string,
+  row: NormalizedCommissionRow,
+  options: MatchOptions = {}
+): Promise<MatchResult> {
+  const policyTypeFilter = options.policyType ? { product: { policyType: options.policyType } } : {};
+
   // 1. Identificador externo ya vinculado explícitamente a una Policy
   // (por un match manual anterior, ver §16) — la señal más fuerte
   // posible, nunca se vuelve a preguntar.
@@ -51,8 +104,7 @@ export async function matchStatementRow(source: string, row: NormalizedCommissio
       select: { policyId: true },
     });
     if (ref) {
-      const expectationId = await findExpectationForPolicy(ref.policyId, row);
-      return { status: "MATCHED", policyId: ref.policyId, expectationId };
+      return toMatchResult(ref.policyId, row, options);
     }
   }
 
@@ -62,12 +114,11 @@ export async function matchStatementRow(source: string, row: NormalizedCommissio
   // docs/COMMISSION_RECONCILIATION.md).
   if (row.externalMemberId) {
     const byNumber = await prisma.policy.findFirst({
-      where: { policyNumber: row.externalMemberId },
+      where: { policyNumber: row.externalMemberId, ...policyTypeFilter },
       select: { id: true },
     });
     if (byNumber) {
-      const expectationId = await findExpectationForPolicy(byNumber.id, row);
-      return { status: "MATCHED", policyId: byNumber.id, expectationId };
+      return toMatchResult(byNumber.id, row, options);
     }
   }
 
@@ -77,9 +128,12 @@ export async function matchStatementRow(source: string, row: NormalizedCommissio
   if (row.memberName && row.memberName.trim().split(/\s+/).length >= 2) {
     const fullNameLower = row.memberName.trim().toLowerCase().replace(/\s+/g, " ");
     const candidates = await prisma.policy.findMany({
-      where: row.carrier
-        ? { product: { carrier: { name: { equals: row.carrier, mode: "insensitive" } } } }
-        : {},
+      where: {
+        ...(row.carrier
+          ? { product: { carrier: { name: { equals: row.carrier, mode: "insensitive" } } } }
+          : {}),
+        ...policyTypeFilter,
+      },
       select: { id: true, holder: { select: { firstName: true, lastName: true } } },
     });
     const matched = candidates.filter(
@@ -88,8 +142,7 @@ export async function matchStatementRow(source: string, row: NormalizedCommissio
         fullNameLower
     );
     if (matched.length === 1) {
-      const expectationId = await findExpectationForPolicy(matched[0].id, row);
-      return { status: "MATCHED", policyId: matched[0].id, expectationId };
+      return toMatchResult(matched[0].id, row, options);
     }
     if (matched.length > 1) {
       return { status: "AMBIGUOUS", candidatePolicyIds: matched.map((m) => m.id) };

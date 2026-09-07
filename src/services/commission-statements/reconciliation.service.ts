@@ -13,7 +13,7 @@ import {
   MAX_STATEMENT_SIZE_BYTES,
 } from "@/schemas/commission-statement.schema";
 import { getStatementAdapter } from "./registry";
-import { matchStatementRow, findExpectationForPolicy } from "./matcher";
+import { matchStatementRow, findExpectationForPolicy, inferPeriod, type MatchResult } from "./matcher";
 import type { NormalizedCommissionRow } from "./types";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -62,6 +62,23 @@ function computeFingerprint(source: string, rows: NormalizedCommissionRow[]): st
   return hash.digest("hex");
 }
 
+// Fingerprint POR FILA (distinto del fingerprint del archivo completo
+// de arriba) — detecta que ESTA fila puntual ya fue aplicada antes en
+// otra importación, aunque el archivo completo sea distinto (ej. un
+// reporte corregido/reenviado que repite algunas filas ya pagadas).
+// Nunca usa PII cruda: el identificador se normaliza y se hashea junto
+// con el resto de la clave, nunca se persiste en claro.
+function computeRowFingerprint(source: string, row: NormalizedCommissionRow): string {
+  const period = inferPeriod(row);
+  const id = (row.externalMemberId ?? row.memberName ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  const hash = createHash("sha256");
+  hash.update(source);
+  hash.update(id);
+  hash.update(period ? period.toISOString() : "");
+  hash.update(row.receivedAmount);
+  return hash.digest("hex");
+}
+
 const statementSelect = {
   id: true,
   source: true,
@@ -77,6 +94,12 @@ const statementSelect = {
   appliedRows: true,
   receivedTotal: true,
   appliedAt: true,
+  payerAgency: true,
+  businessModality: true,
+  assistanceTotal: true,
+  netTotal: true,
+  declaredFooterTotal: true,
+  footerMatchesNet: true,
   uploadedBy: { select: { id: true, name: true } },
 } satisfies Prisma.CommissionStatementSelect;
 
@@ -86,6 +109,8 @@ const rowSelect = {
   externalId: true,
   displayName: true,
   receivedAmount: true,
+  assistanceAmount: true,
+  netAmount: true,
   effectiveDate: true,
   paidAt: true,
   matchStatus: true,
@@ -178,31 +203,58 @@ export async function uploadCommissionStatement(
     return { duplicate: true, existingStatementId: existing.id };
   }
 
+  // Fase 025.5: fingerprint por fila ANTES de emparejar — una fila cuyo
+  // fingerprint ya fue aplicado en un statement previo (ej. un reporte
+  // corregido/reenviado que repite filas ya pagadas) nunca se vuelve a
+  // emparejar/aplicar, sin importar cuántas veces se re-suba.
+  const rowFingerprints = parsed.rows.map((row) => computeRowFingerprint(source, row));
+  const alreadyAppliedFingerprints = new Set(
+    (
+      await prisma.commissionStatementRow.findMany({
+        where: { rowFingerprint: { in: rowFingerprints }, matchStatus: "APPLIED" },
+        select: { rowFingerprint: true },
+      })
+    ).map((r) => r.rowFingerprint)
+  );
+
   // Matching: lecturas fuera de la transacción (solo SELECTs, sin
   // riesgo de estado a medias); la escritura real (statement + filas +
   // audit event) sí es una sola transacción atómica.
-  const matches = await Promise.all(
+  const matchOptions = { businessModality: parsed.businessModality, policyType: parsed.policyType };
+  const matches: MatchResult[] = await Promise.all(
     // Promise.all aquí es seguro: son llamadas independientes que usan
     // el pool normal de conexiones de Prisma, no una transacción
     // interactiva fijada a una sola conexión (ver el hallazgo de
     // concurrencia de pg, Fase 019.6 — ese problema es específico de
     // $transaction(async tx => ...) / $transaction([...]), no de
     // queries top-level).
-    parsed.rows.map((row) => matchStatementRow(source, row))
+    parsed.rows.map((row, i) =>
+      alreadyAppliedFingerprints.has(rowFingerprints[i])
+        ? Promise.resolve<MatchResult>({ status: "UNMATCHED" })
+        : matchStatementRow(source, row, matchOptions)
+    )
   );
 
   let matchedCount = 0;
   let unmatchedCount = 0;
   let ambiguousCount = 0;
+  let assistanceTotalSum = new Prisma.Decimal(0);
+  let netTotalSum = new Prisma.Decimal(0);
   const receivedTotal = parsed.rows
     .reduce((sum, r) => sum.plus(new Prisma.Decimal(r.receivedAmount)), new Prisma.Decimal(0))
     .toFixed(2);
 
   const rowsData = parsed.rows.map((row, i) => {
+    const isDuplicate = alreadyAppliedFingerprints.has(rowFingerprints[i]);
     const match = matches[i];
-    if (match.status === "MATCHED") matchedCount++;
-    else if (match.status === "AMBIGUOUS") ambiguousCount++;
-    else unmatchedCount++;
+    const matchStatus: MatchResult["status"] | "DUPLICATE" = isDuplicate ? "DUPLICATE" : match.status;
+
+    if (matchStatus === "MATCHED") matchedCount++;
+    else if (matchStatus === "AMBIGUOUS") ambiguousCount++;
+    else unmatchedCount++; // UNMATCHED, INVALID o DUPLICATE: nunca se auto-aplican, requieren revisión.
+
+    assistanceTotalSum = assistanceTotalSum.plus(new Prisma.Decimal(row.assistanceAmount ?? "0"));
+    netTotalSum = netTotalSum.plus(new Prisma.Decimal(row.netAmount ?? row.receivedAmount));
 
     return {
       id: randomUUID(),
@@ -211,11 +263,20 @@ export async function uploadCommissionStatement(
       externalId: row.externalMemberId ?? null,
       displayName: row.memberName ?? null,
       receivedAmount: row.receivedAmount,
+      assistanceAmount: row.assistanceAmount ?? "0",
+      netAmount: row.netAmount ?? row.receivedAmount,
       effectiveDate: row.effectiveDate ?? null,
       paidAt: row.paidAt ?? null,
-      matchStatus: match.status,
-      matchedPolicyId: match.status === "MATCHED" ? match.policyId : null,
-      matchedExpectationId: match.status === "MATCHED" ? match.expectationId : null,
+      matchStatus,
+      matchedPolicyId: !isDuplicate && (match.status === "MATCHED" || match.status === "INVALID") ? match.policyId : null,
+      matchedExpectationId:
+        !isDuplicate && (match.status === "MATCHED" || match.status === "INVALID") ? match.expectationId : null,
+      errorCode: isDuplicate
+        ? "Fila duplicada: ya fue aplicada anteriormente en otro reporte."
+        : match.status === "INVALID"
+          ? match.reason
+          : null,
+      rowFingerprint: rowFingerprints[i],
       // Solo campos operativos seguros — nunca la fila cruda completa
       // (ver docs/SECURITY.md).
       metadata: {
@@ -227,9 +288,18 @@ export async function uploadCommissionStatement(
         rate: row.rate ?? null,
         memberCount: row.memberCount ?? null,
         ...(match.status === "AMBIGUOUS" ? { candidatePolicyIds: match.candidatePolicyIds } : {}),
+        ...(row.warnings && row.warnings.length > 0 ? { warnings: row.warnings } : {}),
       } as Prisma.InputJsonValue,
     };
   });
+
+  // El pie del PDF típicamente reporta el NETO (Subtotal - Asistencia),
+  // nunca el bruto — se compara contra la suma de netAmount calculada
+  // fila por fila, nunca se asume que coincide sin comparar.
+  const declaredFooterTotal = parsed.declaredTotal ? new Prisma.Decimal(parsed.declaredTotal) : null;
+  const footerMatchesNet = declaredFooterTotal
+    ? declaredFooterTotal.minus(netTotalSum).abs().lessThanOrEqualTo("0.01")
+    : null;
 
   const statementId = randomUUID();
   await prisma.$transaction(async (tx) => {
@@ -247,6 +317,13 @@ export async function uploadCommissionStatement(
         ambiguousRows: ambiguousCount,
         appliedRows: 0,
         receivedTotal,
+        payerAgency: parsed.payerAgency ?? null,
+        businessModality: parsed.businessModality ?? null,
+        assistanceTotal: assistanceTotalSum.toFixed(2),
+        netTotal: netTotalSum.toFixed(2),
+        declaredFooterTotal: declaredFooterTotal ? declaredFooterTotal.toFixed(2) : null,
+        footerMatchesNet,
+        adapterVersion: parsed.adapterVersion ?? "1",
       },
     });
     for (const rowData of rowsData) {
@@ -319,15 +396,19 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
           ? "AMBIGUOUS"
           : row.matchStatus === "IGNORED"
             ? "IGNORED"
-            : !row.matchedExpectationId
-              ? "NO_EXPECTATION"
-              : difference === null
-                ? "NO_EXPECTATION"
-                : difference.isZero()
-                  ? "MATCH"
-                  : difference.isPositive()
-                    ? "OVERPAID"
-                    : "UNDERPAID";
+            : row.matchStatus === "INVALID"
+              ? "INVALID"
+              : row.matchStatus === "DUPLICATE"
+                ? "DUPLICATE"
+                : !row.matchedExpectationId
+                  ? "NO_EXPECTATION"
+                  : difference === null
+                    ? "NO_EXPECTATION"
+                    : difference.isZero()
+                      ? "MATCH"
+                      : difference.isPositive()
+                        ? "OVERPAID"
+                        : "UNDERPAID";
 
     return {
       id: row.id,
@@ -335,10 +416,13 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
       externalId: row.externalId,
       displayName: row.displayName,
       receivedAmount: row.receivedAmount,
+      assistanceAmount: row.assistanceAmount,
+      netAmount: row.netAmount,
       expectedAmount: expected,
       difference: difference ? difference.toFixed(2) : null,
       matchStatus: row.matchStatus,
       reviewState,
+      errorCode: row.errorCode,
       matchedPolicy: row.matchedPolicy,
       alreadyApplied: !!row.payment,
     };
@@ -385,6 +469,12 @@ export async function manualMatchStatementRow(actor: AuthorizedUser, rawRowId: u
   if (!row) throw new AppError("NOT_FOUND", "Fila no encontrada.");
   if (row.matchStatus === "APPLIED") {
     throw new AppError("VALIDATION_ERROR", "Esta fila ya fue aplicada, no se puede re-emparejar.");
+  }
+  if (row.matchStatus === "DUPLICATE") {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Esta fila ya fue aplicada anteriormente en otro reporte (duplicada); no se puede re-emparejar."
+    );
   }
 
   const policy = await prisma.policy.findUnique({ where: { id: input.policyId }, select: { id: true } });
@@ -474,7 +564,9 @@ export async function ignoreStatementRow(actor: AuthorizedUser, rawRowId: unknow
 // executing a query" (ver docs/DECISIONS.md, Fase 020 §6).
 async function recomputeStatementCounts(tx: Prisma.TransactionClient, statementId: string) {
   const matchedRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "MATCHED" } });
-  const unmatchedRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "UNMATCHED" } });
+  const unmatchedRows = await tx.commissionStatementRow.count({
+    where: { statementId, matchStatus: { in: ["UNMATCHED", "INVALID", "DUPLICATE"] } },
+  });
   const ambiguousRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "AMBIGUOUS" } });
   const appliedRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "APPLIED" } });
   await tx.commissionStatement.update({

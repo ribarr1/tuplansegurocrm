@@ -659,7 +659,9 @@ describe("commissions.service", () => {
       receivedAt: new Date(),
     });
     expect(current.derivedStatus).toBe("OVERPAID");
-    expect(current.difference.toString()).toBe("-20");
+    // Fase 025.5: Difference = Received - Expected (recibido 120,
+    // esperado 100 -> +20, nunca -20).
+    expect(current.difference.toString()).toBe("20");
   });
 
   it("AP) getCommissionTotalsForPeriod suma TODO el período, no solo una página (>100 expectativas)", async () => {
@@ -694,7 +696,8 @@ describe("commissions.service", () => {
     if (totals.hasData) {
       expect(totals.expected.toString()).toBe(String(expectedTotal));
       expect(totals.received.toString()).toBe(String(receivedTotal));
-      expect(totals.difference.toString()).toBe(String(expectedTotal - receivedTotal));
+      // Fase 025.5: Difference = Received - Expected.
+      expect(totals.difference.toString()).toBe(String(receivedTotal - expectedTotal));
     }
   }, 30000);
 

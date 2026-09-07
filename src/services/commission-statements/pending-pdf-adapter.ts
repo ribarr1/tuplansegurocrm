@@ -45,10 +45,17 @@ function createPendingPdfAdapter(source: string, label: string): CommissionState
   };
 }
 
+// Fase 025.5: ORANGE_OSCAR_PDF, ORANGE_KAISER_PDF y ELITE_BCBS_PDF ya
+// tienen adaptador REAL (ver orange-oscar-pdf-adapter.ts,
+// orange-kaiser-pdf-adapter.ts, elite-bcbs-pdf-adapter.ts) — se
+// retiraron de aquí. Ambetter sigue sin ningún PDF de muestra real
+// analizado; se mantiene como pendiente explícito. BCBS_PDF/KAISER_PDF/
+// ELITE_PDF (genéricos, sin agencia+modalidad confirmada) se retiran:
+// la ficha de UAT confirmó que la combinación real correcta es
+// agencia+modalidad+carrier específicos (ej. BCBS puede ser propia vía
+// Orange O referida vía Elite, según el estado — nunca "BCBS = Elite"
+// a secas), así que un stub genérico por carrier sin esa distinción ya
+// no representa correctamente el dominio.
 export const PendingPdfAdapters: CommissionStatementAdapter[] = [
-  createPendingPdfAdapter("ORANGE_OSCAR_PDF", "Orange / Oscar"),
   createPendingPdfAdapter("AMBETTER_PDF", "Ambetter"),
-  createPendingPdfAdapter("BCBS_PDF", "BCBS"),
-  createPendingPdfAdapter("KAISER_PDF", "Kaiser"),
-  createPendingPdfAdapter("ELITE_PDF", "Elite"),
 ];

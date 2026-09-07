@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { createUser, setUserActive, listAllUsers, resetUserPassword } from "@/services/users.service";
+import {
+  createUser,
+  setUserActive,
+  setUserIsAgent,
+  listAllUsers,
+  listActiveAgents,
+  resetUserPassword,
+} from "@/services/users.service";
 import { auth } from "@/lib/auth";
 import type { AuthorizedUser } from "@/lib/authorization";
 
@@ -13,6 +20,12 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
       email: `${label.toLowerCase()}.${Date.now()}.${Math.random().toString(36).slice(2)}@test.local`,
       role,
       isActive: true,
+      // Fase 025.5: un User real con role=AGENT SIEMPRE tiene
+      // isAgent=true (createUser lo garantiza) — un fixture creado
+      // directo por Prisma debe reproducir la misma invariante, nunca
+      // depender del default de columna (false) para un rol que en
+      // producción siempre lo tendría en true.
+      isAgent: role === "AGENT",
     },
   });
   createdUserIds.push(user.id);
@@ -255,6 +268,80 @@ describe("users.service", () => {
       createdUserIds.push(user.id);
       const updated = await setUserActive(admin, { id: user.id, isActive: false });
       expect(updated.isActive).toBe(false);
+    });
+  });
+
+  // Fase 025.5 (UAT-09/UAT-07) — listActiveAgents es el universo que
+  // alimenta el selector "Procesado por"/filtro "Agente" en Pólizas —
+  // debe depender de `isAgent`, nunca de `role`.
+  describe("listActiveAgents — universo del selector de agente", () => {
+    it("ADMIN + isAgent=true aparece en la lista", async () => {
+      const { user } = await createUser(admin, {
+        name: "Admin Agente",
+        email: `adminagente.${Date.now()}@test.local`,
+        role: "ADMIN",
+        isAgent: true,
+      });
+      createdUserIds.push(user.id);
+      const list = await listActiveAgents(admin);
+      expect(list.some((a) => a.id === user.id)).toBe(true);
+    });
+
+    it("AGENT (siempre isAgent=true) sigue apareciendo", async () => {
+      const list = await listActiveAgents(admin);
+      expect(list.some((a) => a.id === agent.id)).toBe(true);
+    });
+
+    it("ADMIN sin isAgent NO aparece en la lista", async () => {
+      const { user } = await createUser(admin, {
+        name: "Admin No Agente",
+        email: `adminnoagente.${Date.now()}@test.local`,
+        role: "ADMIN",
+      });
+      createdUserIds.push(user.id);
+      const list = await listActiveAgents(admin);
+      expect(list.some((a) => a.id === user.id)).toBe(false);
+    });
+
+    it("ASSISTANT (rol) nunca puede consultar la lista de agentes por sí mismo", async () => {
+      const { user: assistantUser } = await createUser(admin, {
+        name: "Assistant Actor",
+        email: `assistantactor.${Date.now()}@test.local`,
+        role: "ASSISTANT",
+      });
+      createdUserIds.push(assistantUser.id);
+      const assistantActor: AuthorizedUser = {
+        id: assistantUser.id,
+        name: assistantUser.name,
+        email: assistantUser.email,
+        role: "ASSISTANT",
+        isActive: true,
+      };
+      // ASSISTANT SÍ puede invocar listActiveAgents (lo necesita para
+      // asignar tareas a agentes, Fase 014) — esto no cambia.
+      await expect(listActiveAgents(assistantActor)).resolves.toBeInstanceOf(Array);
+    });
+
+    it("AGENT (rol) no puede consultar la lista de agentes (solo ADMIN/ASSISTANT)", async () => {
+      await expect(listActiveAgents(agent)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("setUserIsAgent rechaza desmarcar isAgent en un usuario con role=AGENT", async () => {
+      await expect(setUserIsAgent(admin, { id: agent.id, isAgent: false })).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+
+    it("setUserIsAgent es idempotente (marcar dos veces no duplica ni falla)", async () => {
+      const { user } = await createUser(admin, {
+        name: "Idempotent Agent",
+        email: `idempotentagent.${Date.now()}@test.local`,
+        role: "ADMIN",
+      });
+      createdUserIds.push(user.id);
+      await setUserIsAgent(admin, { id: user.id, isAgent: true });
+      const updated = await setUserIsAgent(admin, { id: user.id, isAgent: true });
+      expect(updated.isAgent).toBe(true);
     });
   });
 });

@@ -17,7 +17,13 @@ import {
   cancelPolicySchema,
   policyTypeSchema,
 } from "@/schemas/policy.schema";
-import { Prisma, type PolicyType } from "@/generated/prisma/client";
+import {
+  Prisma,
+  type PolicyType,
+  type PolicyStatus,
+  type HealthCoverageSource,
+  type PolicyBusinessSource,
+} from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
 import { getTodayBusinessRange } from "@/lib/business-time";
 import { getPolicyEligibility } from "@/services/policy-business-source.service";
@@ -440,27 +446,51 @@ export async function listActiveProducts(actor: AuthorizedUser, rawQuery: unknow
   });
 }
 
-export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
-  const { page, pageSize, search, status, policyType, carrierId, healthSource, agentId, businessSource } =
-    parseOrThrow(listPoliciesQuerySchema, rawQuery);
-
-  const where: Prisma.PolicyWhereInput = {
-    ...(status ? { status } : {}),
-    ...(policyType ? { product: { policyType } } : {}),
-    ...(carrierId ? { product: { carrierId } } : {}),
-    ...(healthSource ? { healthCoverageSource: healthSource } : {}),
-    ...(agentId ? { holder: { assignedAgentId: agentId } } : {}),
-    ...(businessSource ? { businessSource } : {}),
-    ...(search
+// Fase 025.5 (UAT-09): filtros COMUNES a listPolicies y a
+// exportPoliciesCsv — nunca duplicados, para que un export filtrado
+// mida exactamente el mismo universo que la lista en pantalla.
+//
+// `agentId` filtra por `Policy.processedById` — el mismo campo que el
+// detalle de la póliza muestra como "Procesado por" — NUNCA por
+// `Person.assignedAgentId` (un concepto DISTINTO: a quién está
+// asignado el CONTACTO, no quién procesó/vendió ESTA póliza). Antes de
+// esta fase el filtro usaba `holder.assignedAgentId` por error: un
+// titular sin agente asignado nunca aparecía al filtrar por el agente
+// que sí procesó su póliza, aunque el detalle mostrara correctamente
+// "Procesado por: <agente>" (UAT-09).
+export function buildPolicyFilterWhere(filters: {
+  search?: string;
+  status?: PolicyStatus;
+  policyType?: PolicyType;
+  carrierId?: string;
+  healthSource?: HealthCoverageSource;
+  agentId?: string;
+  businessSource?: PolicyBusinessSource;
+}): Prisma.PolicyWhereInput {
+  return {
+    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.policyType ? { product: { policyType: filters.policyType } } : {}),
+    ...(filters.carrierId ? { product: { carrierId: filters.carrierId } } : {}),
+    ...(filters.healthSource ? { healthCoverageSource: filters.healthSource } : {}),
+    ...(filters.agentId ? { processedById: filters.agentId } : {}),
+    ...(filters.businessSource ? { businessSource: filters.businessSource } : {}),
+    ...(filters.search
       ? {
           OR: [
-            { policyNumber: { contains: search, mode: "insensitive" } },
-            { holder: { firstName: { contains: search, mode: "insensitive" } } },
-            { holder: { lastName: { contains: search, mode: "insensitive" } } },
+            { policyNumber: { contains: filters.search, mode: "insensitive" } },
+            { holder: { firstName: { contains: filters.search, mode: "insensitive" } } },
+            { holder: { lastName: { contains: filters.search, mode: "insensitive" } } },
           ],
         }
       : {}),
   };
+}
+
+export async function listPolicies(actor: AuthorizedUser, rawQuery: unknown) {
+  const { page, pageSize, search, status, policyType, carrierId, healthSource, agentId, businessSource } =
+    parseOrThrow(listPoliciesQuerySchema, rawQuery);
+
+  const where = buildPolicyFilterWhere({ search, status, policyType, carrierId, healthSource, agentId, businessSource });
 
   const agentWhere = policyAgentAccessWhere(actor);
   const finalWhere: Prisma.PolicyWhereInput = agentWhere

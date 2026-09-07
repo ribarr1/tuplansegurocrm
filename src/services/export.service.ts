@@ -5,7 +5,9 @@ import { Prisma } from "@/generated/prisma/client";
 import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError } from "@/services/errors";
 import { recordAuditEvent } from "@/services/audit.service";
-import { policyAgentAccessWhere } from "@/services/policies.service";
+import { policyAgentAccessWhere, buildPolicyFilterWhere } from "@/services/policies.service";
+import { listPoliciesQuerySchema } from "@/schemas/policy.schema";
+import { parseOrThrow } from "@/services/errors";
 import { agentCommissionAccessWhere, sumPayments } from "@/services/commissions.service";
 import { toCsv } from "@/lib/csv";
 import { formatDateOnlyUS } from "@/lib/date-only";
@@ -81,10 +83,23 @@ export async function exportContactsCsv(actor: AuthorizedUser): Promise<string> 
   return csv;
 }
 
-export async function exportPoliciesCsv(actor: AuthorizedUser): Promise<string> {
+// Fase 025.5 (UAT-09): acepta los MISMOS filtros que el listado de
+// /policies (reutilizando buildPolicyFilterWhere, nunca duplicados) —
+// "Exportar CSV" ahora exporta exactamente lo que la pantalla está
+// mostrando, incluido el filtro por agente (Policy.processedById).
+// rawFilters es opcional: sin filtros, exporta el alcance completo
+// autorizado, igual que antes de esta fase.
+export async function exportPoliciesCsv(actor: AuthorizedUser, rawFilters?: unknown): Promise<string> {
+  const parsed = rawFilters ? parseOrThrow(listPoliciesQuerySchema, rawFilters) : undefined;
+  const filterWhere = parsed ? buildPolicyFilterWhere(parsed) : undefined;
   const agentWhere = policyAgentAccessWhere(actor);
+  const where: Prisma.PolicyWhereInput | undefined =
+    filterWhere && agentWhere
+      ? { AND: [filterWhere, agentWhere] }
+      : (filterWhere ?? agentWhere ?? undefined);
+
   const policies = await prisma.policy.findMany({
-    where: agentWhere ?? undefined,
+    where,
     select: {
       policyNumber: true,
       status: true,

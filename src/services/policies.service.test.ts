@@ -610,21 +610,37 @@ describe("policies.service", () => {
     expect(items.some((i) => i.id === policy.id)).toBe(true);
   });
 
-  // Fase 021 (§39, auditoría de reportes): filtro agentId, faltaba
-  // hasta esta fase — filtra por el agente asignado al TITULAR.
-  it("filtro /policies?agentId= devuelve solo pólizas de titulares asignados a ese agente", async () => {
-    const holder = await makePerson(agent.id);
+  // Fase 025.5 (UAT-09): el filtro agentId filtra por
+  // Policy.processedById ("Procesado por" en el detalle) — NUNCA por
+  // Person.assignedAgentId (a quién está asignado el CONTACTO, un
+  // concepto distinto). Un titular SIN agente asignado cuya póliza fue
+  // procesada por un agente real debe seguir apareciendo (caso real
+  // encontrado en UAT).
+  it("filtro /policies?agentId= devuelve solo pólizas procesadas por ese agente (processedById), no por el agente asignado al titular", async () => {
+    const holderNoAgent = await makePerson(null);
     const policy = trackPolicy(
-      await createPolicy(admin, { holderId: holder.id, productId: activeProductId, holderCovered: "false" })
+      await createPolicy(admin, {
+        holderId: holderNoAgent.id,
+        productId: activeProductId,
+        holderCovered: "false",
+        processedById: agent.id,
+      })
     );
-    const otherHolder = await makePerson();
+    // Titular SÍ asignado a `agent`, pero procesada por alguien más
+    // (admin) — nunca debe aparecer al filtrar por `agent`.
+    const holderAssignedToAgent = await makePerson(agent.id);
     const otherPolicy = trackPolicy(
-      await createPolicy(admin, { holderId: otherHolder.id, productId: activeProductId, holderCovered: "false" })
+      await createPolicy(admin, {
+        holderId: holderAssignedToAgent.id,
+        productId: activeProductId,
+        holderCovered: "false",
+      })
     );
-    const { items } = await listPolicies(admin, { agentId: agent.id, pageSize: 100 });
+    const { items, total } = await listPolicies(admin, { agentId: agent.id, pageSize: 100 });
     const ids = items.map((i) => i.id);
     expect(ids).toContain(policy.id);
     expect(ids).not.toContain(otherPolicy.id);
+    expect(total).toBe(items.length);
   });
 
   it("G) effectiveDate === terminationDate es válido", async () => {

@@ -1,6 +1,14 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/authorization";
 import { listPeople } from "@/services/people.service";
+import {
+  listContactsWithReviewInfo,
+  listReviewCandidates,
+  getReviewStatusesByIds,
+} from "@/services/google-reviews.service";
+import { GOOGLE_REVIEW_STATUS_LABELS } from "@/lib/labels";
+import { GOOGLE_REVIEW_STATUS_VALUES } from "@/schemas/google-review.schema";
+import type { GoogleReviewStatus } from "@/generated/prisma/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,13 +24,14 @@ import {
 import { CONTACT_STATUS_BADGE_VARIANT, CONTACT_STATUS_LABELS } from "@/lib/labels";
 import { CONTACT_STATUS_VALUES } from "@/schemas/person.schema";
 
-type SearchParams = { q?: string; status?: string; page?: string };
+type SearchParams = { q?: string; status?: string; page?: string; review?: string };
 
 function buildHref(current: SearchParams, overrides: Partial<SearchParams>): string {
   const merged = { ...current, ...overrides };
   const params = new URLSearchParams();
   if (merged.q) params.set("q", merged.q);
   if (merged.status) params.set("status", merged.status);
+  if (merged.review) params.set("review", merged.review);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
   const qs = params.toString();
   return qs ? `/contacts?${qs}` : "/contacts";
@@ -39,14 +48,47 @@ export default async function ContactsPage({
   const status = (CONTACT_STATUS_VALUES as readonly string[]).includes(sp.status ?? "")
     ? sp.status
     : undefined;
+  const isAdmin = actor.role === "ADMIN";
+  const reviewFilter = isAdmin && (GOOGLE_REVIEW_STATUS_VALUES as readonly string[]).includes(sp.review ?? "")
+    ? (sp.review as GoogleReviewStatus)
+    : undefined;
+  const isCandidatesView = isAdmin && sp.review === "CANDIDATES";
 
-  const { items, total, pageSize } = await listPeople(actor, {
-    search: sp.q || undefined,
-    contactStatus: status,
-    page,
-  });
+  // Fase 025.5 (UAT-10): "A quién pedir reseña" y el filtro por estado
+  // de reseña son EXCLUSIVAMENTE ADMIN — para cualquier otro rol (o si
+  // no hay ningún filtro de reseña activo) se usa el listado normal
+  // sin ningún dato de reseña, tal como antes de esta fase.
+  type ContactRow = {
+    id: string;
+    firstName: string;
+    lastName: string;
+    phone: string | null;
+    email: string | null;
+    contactStatus: (typeof CONTACT_STATUS_VALUES)[number];
+    assignedAgent: { id: string; name: string } | null;
+    googleReviewStatus?: GoogleReviewStatus;
+  };
+
+  const { items, total, pageSize }: { items: ContactRow[]; total: number; pageSize: number } = isCandidatesView
+    ? await listReviewCandidates(actor, { page })
+    : reviewFilter
+      ? await listContactsWithReviewInfo(actor, {
+          search: sp.q || undefined,
+          contactStatus: status,
+          reviewStatus: reviewFilter,
+          page,
+        })
+      : await listPeople(actor, { search: sp.q || undefined, contactStatus: status, page });
+
+  // Vista normal + ADMIN: se decora con el estado de reseña solo para
+  // mostrar la columna — nunca se usa para filtrar aquí (eso ya lo
+  // hicieron las ramas de arriba cuando corresponde).
+  const reviewStatusById = isAdmin && !reviewFilter && !isCandidatesView
+    ? await getReviewStatusesByIds(actor, items.map((i) => i.id))
+    : null;
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const hasFilters = Boolean(sp.q || sp.status);
+  const hasFilters = Boolean(sp.q || sp.status || sp.review);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -91,6 +133,25 @@ export default async function ContactsPage({
             ))}
           </select>
         </div>
+        {isAdmin && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="review">Reseña de Google</Label>
+            <select
+              id="review"
+              name="review"
+              defaultValue={sp.review ?? ""}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Todos</option>
+              {GOOGLE_REVIEW_STATUS_VALUES.map((s) => (
+                <option key={s} value={s}>
+                  {GOOGLE_REVIEW_STATUS_LABELS[s]}
+                </option>
+              ))}
+              <option value="CANDIDATES">A quién pedir reseña</option>
+            </select>
+          </div>
+        )}
         <Button type="submit" variant="secondary">
           Filtrar
         </Button>
@@ -125,11 +186,14 @@ export default async function ContactsPage({
                   <TableHead>Email</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Agente asignado</TableHead>
+                  {isAdmin && <TableHead>Reseña de Google</TableHead>}
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((person) => (
+                {items.map((person) => {
+                  const reviewStatus = person.googleReviewStatus ?? reviewStatusById?.get(person.id);
+                  return (
                   <TableRow key={person.id}>
                     <TableCell className="font-medium">
                       {person.firstName} {person.lastName}
@@ -142,6 +206,15 @@ export default async function ContactsPage({
                       </Badge>
                     </TableCell>
                     <TableCell>{person.assignedAgent?.name ?? "—"}</TableCell>
+                    {isAdmin && (
+                      <TableCell>
+                        {reviewStatus ? (
+                          <Badge variant="outline">{GOOGLE_REVIEW_STATUS_LABELS[reviewStatus]}</Badge>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
@@ -153,7 +226,8 @@ export default async function ContactsPage({
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

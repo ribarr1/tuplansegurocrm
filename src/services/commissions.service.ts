@@ -174,7 +174,12 @@ function attachDerived(expectation: ExpectationWithPayments) {
   return {
     ...expectation,
     receivedAmount: received,
-    difference: new Prisma.Decimal(expectation.expectedAmount).minus(received),
+    // Fase 025.5: fórmula ÚNICA en todo el proyecto — Difference =
+    // Received - Expected (nunca al revés). Antes de esta fase esta
+    // función usaba Expected - Received (signo invertido respecto a
+    // exportCommissionsCsv, que ya usaba la convención correcta) — ver
+    // docs/DECISIONS.md.
+    difference: received.minus(expectation.expectedAmount),
     derivedStatus,
   };
 }
@@ -310,7 +315,9 @@ async function aggregateExpectationTotals(
 
   const expected = new Prisma.Decimal(expectedAgg._sum.expectedAmount ?? 0);
   const received = new Prisma.Decimal(paymentAgg._sum.amount ?? 0);
-  return { hasData: true, expected, received, difference: expected.minus(received) };
+  // Fase 025.5: Difference = Received - Expected, fórmula única en
+  // todo el proyecto (ver attachDerived más arriba).
+  return { hasData: true, expected, received, difference: received.minus(expected) };
 }
 
 export async function getCommissionTotalsForPeriod(actor: AuthorizedUser, rawQuery: unknown) {

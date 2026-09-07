@@ -6,6 +6,7 @@ import { listPremiumTracking } from "@/services/premiums.service";
 import { listBirthdays } from "@/services/birthdays.service";
 import { listPolicies, listExpiringPolicies } from "@/services/policies.service";
 import { getCommissionTotalsForPeriod } from "@/services/commissions.service";
+import { getGoogleReviewCounts } from "@/services/google-reviews.service";
 import { TASK_CLOSED_STATUSES } from "@/schemas/task.schema";
 
 // ---------------------------------------------------------------------------
@@ -237,7 +238,15 @@ export async function getDashboard(actor: AuthorizedUser) {
   }
 
   const commissions = await getCommissionsBlock(actor);
-  return { tasks, premiums, birthdays, policies, commissions };
+
+  // Fase 025.5 (UAT-10): Reseñas de Google es EXCLUSIVAMENTE ADMIN —
+  // ni siquiera un AGENT (aunque isAgent=true) recibe esta clave, mismo
+  // criterio "se omite por completo" de arriba para comisiones/ASSISTANT.
+  if (actor.role !== "ADMIN") {
+    return { tasks, premiums, birthdays, policies, commissions };
+  }
+  const googleReviews = await getGoogleReviewCounts(actor);
+  return { tasks, premiums, birthdays, policies, commissions, googleReviews };
 }
 
 export type DashboardData = Awaited<ReturnType<typeof getDashboard>>;

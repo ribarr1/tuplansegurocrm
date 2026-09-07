@@ -25,6 +25,7 @@ import { CommissionsTab } from "./commissions-tab";
 import { NotesTab } from "./notes-tab";
 import { HistoryTab } from "./history-tab";
 import { CredentialsTab } from "./credentials-tab";
+import { GoogleReviewCard } from "./google-review-card";
 import { formatDateTimeUS } from "@/lib/business-time";
 import { MarkSentDialog } from "../../birthdays/mark-sent-dialog";
 import { SkipGreetingButton } from "../../birthdays/greeting-quick-buttons";
@@ -284,6 +285,8 @@ export default async function ContactDetailPage({
               </CardContent>
             </Card>
           )}
+
+          {actor.role === "ADMIN" && <GoogleReviewCard actor={actor} personId={person.id} />}
         </div>
       )}
     </div>
