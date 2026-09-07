@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { personIdSchema } from "@/schemas/person.schema";
+import { personIdSchema, assignedAgentIdFilterSchema } from "@/schemas/person.schema";
 
 // Fase 025.5 (UAT-10) — seguimiento administrativo de reseñas de
 // Google. Nombres técnicos coherentes con el resto del proyecto
@@ -31,4 +31,8 @@ export const listContactsWithReviewQuerySchema = z.object({
   search: z.string().trim().min(1).optional(),
   contactStatus: z.enum(CONTACT_STATUS_VALUES).optional(),
   reviewStatus: z.enum(GOOGLE_REVIEW_STATUS_VALUES).optional(),
+  // Fase 025.5.1 (UAT-11): mismo filtro por Person.assignedAgentId que
+  // /contacts sin vista de reseñas — debe combinarse con el filtro de
+  // reseña, nunca ser mutuamente excluyente.
+  assignedAgentId: assignedAgentIdFilterSchema,
 });

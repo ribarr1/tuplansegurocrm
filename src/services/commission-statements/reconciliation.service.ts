@@ -122,6 +122,7 @@ const rowSelect = {
     select: {
       id: true,
       policyNumber: true,
+      businessSource: true,
       holder: { select: { id: true, firstName: true, lastName: true } },
       product: { select: { carrier: { select: { name: true } } } },
     },
@@ -372,6 +373,16 @@ export async function listCommissionStatements(actor: AuthorizedUser) {
 
 // Preview con expected/received/difference calculado en el momento —
 // nunca almacenado (§18 de la ficha).
+// Fase 025.5.1 (PENDIENTE 025.5-B): el preview nunca expone un
+// identificador externo (Member ID) completo — solo confirma que EXISTE
+// y sus últimos 4 caracteres, suficiente para que el ADMIN reconozca
+// "es este" sin poder leerlo/copiarlo completo desde la pantalla.
+function maskExternalId(id: string | null): string | null {
+  if (!id) return null;
+  if (id.length <= 4) return "*".repeat(id.length);
+  return `${"*".repeat(id.length - 4)}${id.slice(-4)}`;
+}
+
 export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId: unknown) {
   assertModuleAccess(actor);
   assertAdminOnly(actor);
@@ -410,11 +421,28 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
                         ? "OVERPAID"
                         : "UNDERPAID";
 
+    // Solo campos operativos seguros ya guardados en metadata (nunca la
+    // fila cruda) — ver el comentario de metadata en uploadCommissionStatement.
+    const metadata = (row.metadata ?? {}) as {
+      state?: string | null;
+      carrier?: string | null;
+      rate?: string | null;
+      memberCount?: number | null;
+      warnings?: string[];
+    };
+
     return {
       id: row.id,
       rowNumber: row.rowNumber,
-      externalId: row.externalId,
+      externalId: maskExternalId(row.externalId),
       displayName: row.displayName,
+      state: metadata.state ?? null,
+      carrier: metadata.carrier ?? null,
+      rate: metadata.rate ?? null,
+      memberCount: metadata.memberCount ?? null,
+      warnings: metadata.warnings ?? [],
+      effectiveDate: row.effectiveDate,
+      paidAt: row.paidAt,
       receivedAmount: row.receivedAmount,
       assistanceAmount: row.assistanceAmount,
       netAmount: row.netAmount,
@@ -589,17 +617,23 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
 
   const statement = await prisma.commissionStatement.findUnique({
     where: { id },
-    select: { id: true, status: true },
+    select: { id: true, status: true, payerAgency: true },
   });
   if (!statement) throw new AppError("NOT_FOUND", "Reporte no encontrado.");
   if (statement.status === "DUPLICATE_BLOCKED") {
     throw new AppError("VALIDATION_ERROR", "Este reporte está bloqueado por ser un posible duplicado.");
   }
+  // payerAgency solo lo fijan los 3 adaptadores PDF reales (Fase 025.5),
+  // que son EXCLUSIVAMENTE HEALTH — los adaptadores CSV/XLSX genéricos
+  // de Fase 020 no declaran agencia/modalidad y nunca tuvieron esta
+  // restricción, así que la revalidación de abajo nunca los alcanza.
+  const requiresHealthOnly = statement.payerAgency !== null;
 
   const rowsToApply = await prisma.commissionStatementRow.findMany({
     where: { statementId: id, matchStatus: "MATCHED", matchedPolicyId: { not: null } },
     select: {
       id: true,
+      matchedPolicyId: true,
       matchedExpectationId: true,
       receivedAmount: true,
       paidAt: true,
@@ -614,6 +648,29 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
       // adjuntar el pago — se deja para resolución manual (NO_EXPECTATION
       // en el preview), nunca se inventa una expectativa aquí.
       if (!row.matchedExpectationId) continue;
+
+      // Fase 025.5.1 (PENDIENTE 025.5-D): revalidación defensiva en el
+      // momento de aplicar — un pago PDF (siempre HEALTH, ver
+      // requiresHealthOnly arriba) nunca se aplica contra una póliza que
+      // dejó de ser HEALTH entre el matching y el apply (caso extremo,
+      // pero nunca se asume que el estado en preview sigue vigente sin
+      // volver a confirmarlo).
+      if (requiresHealthOnly) {
+        const policyCheck = await tx.policy.findUnique({
+          where: { id: row.matchedPolicyId! },
+          select: { product: { select: { policyType: true } } },
+        });
+        if (policyCheck?.product.policyType !== "HEALTH") {
+          await tx.commissionStatementRow.update({
+            where: { id: row.id },
+            data: {
+              matchStatus: "INVALID",
+              errorCode: "La póliza emparejada ya no es HEALTH — revalidado al aplicar, no se creó el pago.",
+            },
+          });
+          continue;
+        }
+      }
 
       const payment = await tx.commissionPayment.create({
         data: {

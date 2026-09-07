@@ -7,6 +7,7 @@ import {
   listReviewCandidatesQuerySchema,
   listContactsWithReviewQuerySchema,
 } from "@/schemas/google-review.schema";
+import { UNASSIGNED_AGENT_FILTER } from "@/schemas/person.schema";
 import type { Prisma, GoogleReviewStatus } from "@/generated/prisma/client";
 import { recordAuditEvent } from "@/services/audit.service";
 
@@ -179,7 +180,7 @@ export async function getReviewStatusesByIds(
 // where-builder de people.service.ts solo para este único caso ADMIN.
 export async function listContactsWithReviewInfo(actor: AuthorizedUser, rawQuery: unknown) {
   assertAdminOnly(actor);
-  const { page, pageSize, search, contactStatus, reviewStatus } = parseOrThrow(
+  const { page, pageSize, search, contactStatus, reviewStatus, assignedAgentId } = parseOrThrow(
     listContactsWithReviewQuerySchema,
     rawQuery
   );
@@ -187,6 +188,11 @@ export async function listContactsWithReviewInfo(actor: AuthorizedUser, rawQuery
   const where: Prisma.PersonWhereInput = {
     ...(contactStatus ? { contactStatus } : {}),
     ...(reviewStatus ? { googleReviewStatus: reviewStatus } : {}),
+    ...(assignedAgentId
+      ? assignedAgentId === UNASSIGNED_AGENT_FILTER
+        ? { assignedAgentId: null }
+        : { assignedAgentId }
+      : {}),
     ...(search
       ? {
           OR: [

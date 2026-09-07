@@ -56,6 +56,10 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
       email: `${label.toLowerCase()}.${Date.now()}.${Math.random().toString(36).slice(2)}@test.local`,
       role,
       isActive: true,
+      // Fase 025.5.1 (UAT-11): assertActiveAgent exige isAgent=true
+      // (nunca role==="AGENT") — un fixture crudo vía prisma.user.create
+      // debe replicarlo a mano, igual que createUser() ya hace.
+      isAgent: role === "AGENT",
     },
   });
   createdUserIds.push(user.id);

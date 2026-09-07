@@ -451,4 +451,30 @@ describe("Fase 025.5 — reconciliation.service wiring con reportes PDF reales",
     });
     expect(payment.amount.toFixed(2)).toBe("50.00"); // Subtotal, nunca Total (44.00) ni Asistencia (6.00)
   });
+
+  it("M) el preview enmascara el Member ID (solo confirma los últimos 4 caracteres, nunca el valor completo)", async () => {
+    const { person, carrier } = await makeHealthPolicy(admin, {
+      firstName: "Masked", lastName: uniqueName("Persona"), carrierName: uniqueName("OscarCarrierMask"),
+      state: "TX", own: true, expectedAmount: "44.00", period: PAID_PERIOD,
+    });
+    const memberId = `${uniqueName("OSC")}9876`;
+    const pdf = buildTestTablePdf([
+      oscarHeaders,
+      [memberId, `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "2", "50.00", "6.00", "44.00", "2026-08-01", PAID_AT],
+    ]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OSCAR_PDF", makePdfFile(pdf, uniqueName("oscar") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    const maskedId = preview.rows[0].externalId;
+    expect(maskedId).not.toBe(memberId);
+    expect(maskedId).toMatch(/^\*+9876$/);
+
+    // El valor real sigue existiendo en la fila persistida (necesario
+    // para el matching y para PolicyExternalReference) — solo el DTO de
+    // preview lo enmascara.
+    const rawRow = await prisma.commissionStatementRow.findFirstOrThrow({ where: { statementId: upload.statementId } });
+    expect(rawRow.externalId).toBe(memberId);
+  });
 });

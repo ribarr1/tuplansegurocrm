@@ -11,13 +11,15 @@ import { IgnoreRowButton } from "./ignore-row-button";
 import { ApplyStatementButton } from "./apply-button";
 
 const REVIEW_STATE_LABELS: Record<string, string> = {
-  MATCH: "Coincide",
+  MATCH: "Lista para aplicar",
   UNDERPAID: "Pagado de menos",
   OVERPAID: "Pagado de más",
   NO_EXPECTATION: "Sin expectativa",
-  UNMATCHED: "Sin emparejar",
-  AMBIGUOUS: "Ambiguo",
-  IGNORED: "Ignorado",
+  UNMATCHED: "No encontrada",
+  AMBIGUOUS: "Ambigua",
+  IGNORED: "Ignorada",
+  INVALID: "Inválida",
+  DUPLICATE: "Duplicada",
 };
 
 const REVIEW_STATE_VARIANT: Record<string, "default" | "outline" | "destructive" | "secondary"> = {
@@ -28,7 +30,12 @@ const REVIEW_STATE_VARIANT: Record<string, "default" | "outline" | "destructive"
   UNMATCHED: "outline",
   AMBIGUOUS: "outline",
   IGNORED: "outline",
+  INVALID: "destructive",
+  DUPLICATE: "outline",
 };
+
+const PAYER_AGENCY_LABELS: Record<string, string> = { ORANGE: "Orange", ELITE: "Elite" };
+const BUSINESS_MODALITY_LABELS: Record<string, string> = { OWN: "Propia", REFERRAL: "Referida" };
 
 export default async function ReconciliationDetailPage({
   params,
@@ -53,6 +60,8 @@ export default async function ReconciliationDetailPage({
 
   const { statement, rows } = preview;
   const pendingCount = rows.filter((r) => r.matchStatus === "MATCHED" && !r.alreadyApplied).length;
+  const stateCounts: Record<string, number> = {};
+  for (const row of rows) stateCounts[row.reviewState] = (stateCounts[row.reviewState] ?? 0) + 1;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -60,13 +69,56 @@ export default async function ReconciliationDetailPage({
         <div>
           <h2 className="font-heading text-lg font-semibold">{statement.fileName}</h2>
           <p className="text-sm text-muted-foreground">
-            {statement.source} · {statement.totalRows} filas · Total declarado: ${statement.receivedTotal.toString()}
+            {statement.source} · {statement.totalRows} filas
+            {statement.payerAgency && ` · ${PAYER_AGENCY_LABELS[statement.payerAgency] ?? statement.payerAgency}`}
+            {statement.businessModality &&
+              ` (${BUSINESS_MODALITY_LABELS[statement.businessModality] ?? statement.businessModality})`}
           </p>
         </div>
         <Link href="/commissions/reconciliation" className="text-sm underline">
           Volver al historial
         </Link>
       </div>
+
+      {(statement.payerAgency || statement.businessModality) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Totales del reporte</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+            <span>
+              Subtotal bruto: <strong>${statement.receivedTotal.toString()}</strong>
+            </span>
+            <span>
+              Asistencia: <strong>${statement.assistanceTotal.toString()}</strong>
+            </span>
+            <span>
+              Neto: <strong>${statement.netTotal.toString()}</strong>
+            </span>
+            <span>
+              Total declarado en el pie:{" "}
+              <strong>
+                {statement.declaredFooterTotal ? `$${statement.declaredFooterTotal.toString()}` : "no detectado"}
+              </strong>
+              {statement.footerMatchesNet === true && (
+                <Badge variant="default" className="ml-2">
+                  Coincide con el neto
+                </Badge>
+              )}
+              {statement.footerMatchesNet === false && (
+                <Badge variant="destructive" className="ml-2">
+                  No coincide con el neto
+                </Badge>
+              )}
+            </span>
+            <span className="w-full text-xs text-muted-foreground">
+              {Object.entries(stateCounts)
+                .map(([state, count]) => `${REVIEW_STATE_LABELS[state] ?? state}: ${count}`)
+                .join(" · ")}
+            </span>
+          </CardContent>
+        </Card>
+      )}
 
       {duplicate === "1" && (
         <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
@@ -99,10 +151,14 @@ export default async function ReconciliationDetailPage({
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
                 <th className="py-2 pr-3">Cliente</th>
-                <th className="py-2 pr-3">External ID</th>
+                <th className="py-2 pr-3">Member ID</th>
+                <th className="py-2 pr-3">Carrier / Estado</th>
                 <th className="py-2 pr-3">Póliza emparejada</th>
+                <th className="py-2 pr-3">Clasif. histórica</th>
                 <th className="py-2 pr-3">Esperado</th>
-                <th className="py-2 pr-3">Recibido</th>
+                <th className="py-2 pr-3">Subtotal</th>
+                <th className="py-2 pr-3">Asistencia</th>
+                <th className="py-2 pr-3">Neto</th>
                 <th className="py-2 pr-3">Diferencia</th>
                 <th className="py-2 pr-3">Estado</th>
                 <th className="py-2">Acciones</th>
@@ -113,6 +169,9 @@ export default async function ReconciliationDetailPage({
                 <tr key={row.id} className="border-b last:border-0">
                   <td className="py-2 pr-3">{row.displayName ?? "—"}</td>
                   <td className="py-2 pr-3 text-xs text-muted-foreground">{row.externalId ?? "—"}</td>
+                  <td className="py-2 pr-3 text-xs text-muted-foreground">
+                    {row.carrier ?? "—"} {row.state ? `/ ${row.state}` : ""}
+                  </td>
                   <td className="py-2 pr-3">
                     {row.matchedPolicy ? (
                       <Link href={`/policies/${row.matchedPolicy.id}`} className="underline">
@@ -122,18 +181,37 @@ export default async function ReconciliationDetailPage({
                       "—"
                     )}
                   </td>
+                  <td className="py-2 pr-3 text-xs text-muted-foreground">
+                    {row.matchedPolicy ? BUSINESS_MODALITY_LABELS[row.matchedPolicy.businessSource] ?? row.matchedPolicy.businessSource : "—"}
+                  </td>
                   <td className="py-2 pr-3">{row.expectedAmount ? `$${row.expectedAmount.toString()}` : "—"}</td>
                   <td className="py-2 pr-3">${row.receivedAmount.toString()}</td>
+                  <td className="py-2 pr-3">${row.assistanceAmount.toString()}</td>
+                  <td className="py-2 pr-3">${row.netAmount.toString()}</td>
                   <td className="py-2 pr-3">{row.difference ? `$${row.difference}` : "—"}</td>
                   <td className="py-2 pr-3">
                     <Badge variant={REVIEW_STATE_VARIANT[row.reviewState] ?? "outline"}>
                       {REVIEW_STATE_LABELS[row.reviewState] ?? row.reviewState}
                     </Badge>
+                    {row.errorCode && (
+                      <p className="mt-1 max-w-[220px] text-xs text-destructive">{row.errorCode}</p>
+                    )}
+                    {row.warnings.length > 0 && (
+                      <p className="mt-1 max-w-[220px] text-xs text-amber-600 dark:text-amber-400">
+                        {row.warnings.join(" ")}
+                      </p>
+                    )}
                   </td>
                   <td className="py-2">
                     {row.alreadyApplied ? (
                       <span className="text-xs text-muted-foreground">Aplicado</span>
-                    ) : row.matchStatus === "UNMATCHED" || row.matchStatus === "AMBIGUOUS" ? (
+                    ) : row.matchStatus === "DUPLICATE" ? (
+                      <span className="text-xs text-muted-foreground">
+                        Ya aplicada en otro reporte — nunca se reaplica
+                      </span>
+                    ) : row.matchStatus === "UNMATCHED" ||
+                      row.matchStatus === "AMBIGUOUS" ||
+                      row.matchStatus === "INVALID" ? (
                       <div className="flex items-center gap-2">
                         <MatchRowDialog
                           rowId={row.id}

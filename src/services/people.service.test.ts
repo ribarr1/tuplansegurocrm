@@ -19,7 +19,8 @@ function track<T extends { id: string }>(p: T): T {
 
 async function makeActor(
   role: "ADMIN" | "AGENT" | "ASSISTANT",
-  label: string
+  label: string,
+  overrides: { isAgent?: boolean; isActive?: boolean } = {}
 ): Promise<AuthorizedUser> {
   const user = await prisma.user.create({
     data: {
@@ -28,7 +29,12 @@ async function makeActor(
         .toString(36)
         .slice(2)}@test.local`,
       role,
-      isActive: true,
+      isActive: overrides.isActive ?? true,
+      // Fase 025.5.1 (UAT-11): assertActiveAgent ahora exige
+      // isAgent=true (nunca role==="AGENT") — un fixture crudo vía
+      // prisma.user.create debe replicarlo a mano, igual que
+      // createUser() ya hace en el servicio real.
+      isAgent: overrides.isAgent ?? role === "AGENT",
     },
   });
   createdUserIds.push(user.id);
@@ -39,12 +45,20 @@ let admin: AuthorizedUser;
 let agent: AuthorizedUser;
 let agentB: AuthorizedUser;
 let assistant: AuthorizedUser;
+let adminAgent: AuthorizedUser;
+let adminNonAgent: AuthorizedUser;
+let inactiveAgent: AuthorizedUser;
 
 beforeAll(async () => {
   admin = await makeActor("ADMIN", "admin-svc");
   agent = await makeActor("AGENT", "agent-svc");
   agentB = await makeActor("AGENT", "agentb-svc");
   assistant = await makeActor("ASSISTANT", "assistant-svc");
+  // UAT-11: un ADMIN que también es agente (ej. el dueño de la
+  // agencia) — el caso real que el bug rechazaba en updatePerson.
+  adminAgent = await makeActor("ADMIN", "adminagent-svc", { isAgent: true });
+  adminNonAgent = await makeActor("ADMIN", "adminnonagent-svc", { isAgent: false });
+  inactiveAgent = await makeActor("AGENT", "inactiveagent-svc", { isActive: false });
 });
 
 afterAll(async () => {
@@ -171,6 +185,51 @@ describe("people.service", () => {
     expect(ids).not.toContain(prospect.id);
   });
 
+  it("UAT-11: filtro assignedAgentId devuelve solo contactos de ese agente, nunca por Policy.processedById", async () => {
+    const marker = `AgentFilter${Date.now()}`;
+    const assigned = track(
+      await createPerson(admin, { firstName: marker, lastName: "Assigned", assignedAgentId: agent.id })
+    );
+    const other = track(
+      await createPerson(admin, { firstName: marker, lastName: "Other", assignedAgentId: agentB.id })
+    );
+    const result = await listPeople(admin, { search: marker, assignedAgentId: agent.id });
+    const ids = result.items.map((i) => i.id);
+    expect(ids).toContain(assigned.id);
+    expect(ids).not.toContain(other.id);
+  });
+
+  it("UAT-11: filtro assignedAgentId='unassigned' devuelve solo contactos sin agente", async () => {
+    const marker = `UnassignedFilter${Date.now()}`;
+    const unassigned = track(await createPerson(assistant, { firstName: marker, lastName: "None" }));
+    const assigned = track(
+      await createPerson(admin, { firstName: marker, lastName: "Has", assignedAgentId: agent.id })
+    );
+    const result = await listPeople(admin, { search: marker, assignedAgentId: "unassigned" });
+    const ids = result.items.map((i) => i.id);
+    expect(ids).toContain(unassigned.id);
+    expect(ids).not.toContain(assigned.id);
+  });
+
+  it("UAT-11: filtro por agente se combina correctamente con contactStatus y búsqueda", async () => {
+    const marker = `Combined${Date.now()}`;
+    const match = track(
+      await createPerson(admin, { firstName: marker, lastName: "Match", assignedAgentId: agent.id })
+    );
+    await prisma.person.update({ where: { id: match.id }, data: { contactStatus: "CLIENT" } });
+    const wrongStatus = track(
+      await createPerson(admin, { firstName: marker, lastName: "WrongStatus", assignedAgentId: agent.id })
+    );
+    const result = await listPeople(admin, {
+      search: marker,
+      assignedAgentId: agent.id,
+      contactStatus: "CLIENT",
+    });
+    const ids = result.items.map((i) => i.id);
+    expect(ids).toContain(match.id);
+    expect(ids).not.toContain(wrongStatus.id);
+  });
+
   it("AGENT solo puede editar personas sin asignar o asignadas a sí mismo", async () => {
     const own = track(await createPerson(agent, { firstName: "Own", lastName: "Test" }));
     const updatedOwn = await updatePerson(agent, own.id, { firstName: "OwnUpdated" });
@@ -207,5 +266,72 @@ describe("people.service", () => {
     expect(canEditPerson(agent, { assignedAgentId: null })).toBe(true);
     expect(canEditPerson(agent, { assignedAgentId: agent.id })).toBe(true);
     expect(canEditPerson(agent, { assignedAgentId: agentB.id })).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------
+  // Fase 025.5.1 (UAT-11) — la columna "Agente asignado" de Contactos
+  // aparecía vacía porque assertActiveAgent exigía role==="AGENT",
+  // rechazando en silencio a cualquier ADMIN+isAgent=true (ej. el dueño
+  // de la agencia) aunque el selector de la UI ya lo mostrara (esa lista
+  // usa listActiveAgents, que sí filtra por isAgent). Root cause: dos
+  // funciones distintas con criterios de elegibilidad distintos para el
+  // mismo concepto de negocio.
+  // ---------------------------------------------------------------------
+  describe("UAT-11 — assignedAgentId usa isAgent, nunca role", () => {
+    it("un ADMIN+isAgent=true puede asignarse como agente de un contacto (caso real del bug)", async () => {
+      const p = track(await createPerson(admin, { firstName: "AdminAgent", lastName: "Case" }));
+      const updated = await updatePerson(admin, p.id, { assignedAgentId: adminAgent.id });
+      expect(updated.assignedAgentId).toBe(adminAgent.id);
+      expect(updated.assignedAgent?.id).toBe(adminAgent.id);
+    });
+
+    it("un ADMIN sin isAgent=true (no vende) NUNCA puede recibir contactos asignados", async () => {
+      await expect(
+        createPerson(admin, { firstName: "Bad", lastName: "AdminNonAgent", assignedAgentId: adminNonAgent.id })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("un AGENT inactivo (isActive=false) nunca puede recibir contactos asignados", async () => {
+      await expect(
+        createPerson(admin, { firstName: "Bad", lastName: "InactiveAgent", assignedAgentId: inactiveAgent.id })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("ASSISTANT sigue excluido del selector de agente", async () => {
+      await expect(
+        createPerson(admin, { firstName: "Bad", lastName: "AssistantCase", assignedAgentId: assistant.id })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("enviar assignedAgentId='' desasigna explícitamente un contacto que ya tenía agente", async () => {
+      const p = track(
+        await createPerson(admin, { firstName: "Unassign", lastName: "Case", assignedAgentId: agent.id })
+      );
+      const updated = await updatePerson(admin, p.id, { assignedAgentId: "" });
+      expect(updated.assignedAgentId).toBeNull();
+      expect(updated.assignedAgent).toBeNull();
+    });
+
+    it("un contacto realmente sin asignación queda assignedAgentId=null (no un guion ambiguo en el servicio)", async () => {
+      const p = track(await createPerson(assistant, { firstName: "NoAgent", lastName: "Case" }));
+      expect(p.assignedAgentId).toBeNull();
+    });
+
+    it("la reasignación (agent -> agentB) queda auditada con el agente anterior y el nuevo, sin PII innecesaria", async () => {
+      const p = track(
+        await createPerson(admin, { firstName: "Audit", lastName: "Case", assignedAgentId: agent.id })
+      );
+      await updatePerson(admin, p.id, { assignedAgentId: agentB.id });
+
+      const event = await prisma.auditEvent.findFirst({
+        where: { entityType: "Person", entityId: p.id, action: "CONTACT_ASSIGN_AGENT" },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(event).toBeTruthy();
+      expect(event?.actorUserId).toBe(admin.id);
+      const changes = event?.changes as { assignedAgentId?: { before: string | null; after: string | null } } | null;
+      expect(changes?.assignedAgentId?.before).toBe(agent.id);
+      expect(changes?.assignedAgentId?.after).toBe(agentB.id);
+    });
   });
 });

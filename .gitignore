@@ -56,6 +56,14 @@ coverage/
 *.xls
 /private-imports/
 
+# Fase 025.5 — reportes de comisiones PDF reales (agencias Orange/
+# Elite) aportados fuera de Git para programar/verificar los
+# adaptadores de importación: nunca deben versionarse (contienen
+# nombres, Member ID y DOB reales). Ignorado por extensión, igual
+# criterio que *.xlsx de arriba — los fixtures de test se generan
+# programáticamente en memoria (ver pdf-import.service.test.ts).
+*.pdf
+
 # Documentos de Policy (Fase 019.5) — almacenamiento local de dev,
 # nunca servido desde /public ni versionado. Ver src/lib/storage.ts.
 /private-storage/

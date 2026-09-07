@@ -38,10 +38,13 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
 
 let admin: AuthorizedUser;
 let assistant: AuthorizedUser;
+let agent: AuthorizedUser;
 
 beforeAll(async () => {
   admin = await makeActor("ADMIN", "admin-export");
   assistant = await makeActor("ASSISTANT", "assistant-export");
+  agent = await makeActor("AGENT", "agent-export");
+  await prisma.user.update({ where: { id: agent.id }, data: { isAgent: true } });
 
   const person = await prisma.person.create({
     data: { firstName: "Export", lastName: uniqueName("Test"), contactStatus: "CLIENT", phone: "555-0000" },
@@ -80,6 +83,28 @@ describe("export.service — CSV", () => {
     expect(csv.toLowerCase()).not.toContain("ssn");
     expect(csv.toLowerCase()).not.toContain("password");
     expect(csv.toLowerCase()).not.toContain("medicamento");
+  });
+
+  // Fase 025.5.1 (UAT-11): "Exportar CSV" de Contactos exporta lo que
+  // la pantalla muestra — mismo filtro assignedAgentId que el listado.
+  it("UAT-11: exportContactsCsv respeta el filtro assignedAgentId (mismo universo que la pantalla)", async () => {
+    const marker = uniqueName("ExportAgentFilter");
+    const assigned = await prisma.person.create({
+      data: { firstName: marker, lastName: "HasAgentRow", contactStatus: "PROSPECT", assignedAgentId: agent.id },
+    });
+    createdPersonIds.push(assigned.id);
+    const unassigned = await prisma.person.create({
+      data: { firstName: marker, lastName: "NoAgentRow", contactStatus: "PROSPECT" },
+    });
+    createdPersonIds.push(unassigned.id);
+
+    const csvFiltered = await exportContactsCsv(admin, { search: marker, assignedAgentId: agent.id });
+    expect(csvFiltered).toContain("HasAgentRow");
+    expect(csvFiltered).not.toContain("NoAgentRow");
+
+    const csvUnassigned = await exportContactsCsv(admin, { search: marker, assignedAgentId: "unassigned" });
+    expect(csvUnassigned).toContain("NoAgentRow");
+    expect(csvUnassigned).not.toContain("HasAgentRow");
   });
 
   it("exporta pólizas con las columnas esperadas", async () => {

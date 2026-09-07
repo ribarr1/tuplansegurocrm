@@ -6,7 +6,9 @@ import type { AuthorizedUser } from "@/lib/authorization";
 import { AppError } from "@/services/errors";
 import { recordAuditEvent } from "@/services/audit.service";
 import { policyAgentAccessWhere, buildPolicyFilterWhere } from "@/services/policies.service";
+import { buildPersonFilterWhere } from "@/services/people.service";
 import { listPoliciesQuerySchema } from "@/schemas/policy.schema";
+import { listPeopleQuerySchema } from "@/schemas/person.schema";
 import { parseOrThrow } from "@/services/errors";
 import { agentCommissionAccessWhere, sumPayments } from "@/services/commissions.service";
 import { toCsv } from "@/lib/csv";
@@ -43,8 +45,21 @@ import {
 
 const EXPORT_ROW_LIMIT = 5000;
 
-export async function exportContactsCsv(actor: AuthorizedUser): Promise<string> {
+// Fase 025.5.1 (UAT-11): acepta los MISMOS filtros que el listado de
+// /contacts (search, contactStatus, assignedAgentId — reutilizando
+// buildPersonFilterWhere, nunca duplicados), mismo patrón que
+// exportPoliciesCsv (Fase 025.5, UAT-09). rawFilters es opcional: sin
+// filtros exporta el universo completo autorizado, igual que antes.
+// Deliberadamente NO acepta el filtro de reseña de Google — esa
+// información administrativa nunca se mezcla en este export general
+// (ver UAT-10: exclusivamente ADMIN, y ni siquiera para ADMIN se anexa
+// aquí para no cambiar el contrato de "contactos.csv" sin pedirlo).
+export async function exportContactsCsv(actor: AuthorizedUser, rawFilters?: unknown): Promise<string> {
+  const parsed = rawFilters ? parseOrThrow(listPeopleQuerySchema, rawFilters) : undefined;
+  const where = parsed ? buildPersonFilterWhere(parsed) : undefined;
+
   const people = await prisma.person.findMany({
+    where,
     select: {
       firstName: true,
       lastName: true,

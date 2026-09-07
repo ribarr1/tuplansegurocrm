@@ -38,6 +38,9 @@ export function UploadStatementForm({ sources }: { sources: { source: string; la
           className="text-sm"
         />
         <p className="text-xs text-muted-foreground">
+          Cada fuente ya identifica agencia pagadora + modalidad (ej. &quot;Orange — Oscar (PDF, propia)&quot;) —
+          elige la que corresponda al reporte real que vas a subir. Si el PDF no coincide con las columnas
+          esperadas de esa fuente, la subida se rechaza con un mensaje claro (nunca se adivina el formato).
           Las fuentes marcadas &quot;PDF — pendiente&quot; todavía no procesan el contenido del PDF — sube
           igual para confirmar el archivo, pero verás un aviso indicando que el adaptador está pendiente.
         </p>

@@ -29,11 +29,21 @@ const PERSON_FORM_FIELDS = [
 // Convierte FormData a un objeto plano, sin inventar campos que no
 // existan en Person. Campos vacíos se omiten (quedan "no enviados",
 // no strings vacíos) para no chocar con los .optional() de Zod.
+//
+// Excepción: assignedAgentId SÍ se envía como "" cuando el <select>
+// del formulario está presente y su valor es la opción "Sin asignar"
+// — esa es una señal EXPLÍCITA de desasignar (Fase 025.5.1, UAT-11),
+// distinta de "el campo no vino en el formulario" (= no tocar). Sin
+// esta excepción, elegir "Sin asignar" nunca desasignaba nada: el
+// campo se descartaba en silencio junto con el resto de campos vacíos.
 export function formDataToPersonInput(formData: FormData): Record<string, string> {
   const raw: Record<string, string> = {};
   for (const key of PERSON_FORM_FIELDS) {
     const value = formData.get(key);
-    if (typeof value === "string" && value.trim() !== "") {
+    if (typeof value !== "string") continue;
+    if (key === "assignedAgentId") {
+      raw[key] = value.trim();
+    } else if (value.trim() !== "") {
       raw[key] = value;
     }
   }

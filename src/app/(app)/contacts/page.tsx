@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/authorization";
 import { listPeople } from "@/services/people.service";
+import { listActiveAgents } from "@/services/users.service";
 import {
   listContactsWithReviewInfo,
   listReviewCandidates,
@@ -22,19 +23,37 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CONTACT_STATUS_BADGE_VARIANT, CONTACT_STATUS_LABELS } from "@/lib/labels";
-import { CONTACT_STATUS_VALUES } from "@/schemas/person.schema";
+import { CONTACT_STATUS_VALUES, UNASSIGNED_AGENT_FILTER } from "@/schemas/person.schema";
 
-type SearchParams = { q?: string; status?: string; page?: string; review?: string };
+type SearchParams = {
+  q?: string;
+  status?: string;
+  page?: string;
+  review?: string;
+  assignedAgentId?: string;
+};
 
-function buildHref(current: SearchParams, overrides: Partial<SearchParams>): string {
+function buildQueryString(current: SearchParams, overrides: Partial<SearchParams>): string {
   const merged = { ...current, ...overrides };
   const params = new URLSearchParams();
   if (merged.q) params.set("q", merged.q);
   if (merged.status) params.set("status", merged.status);
   if (merged.review) params.set("review", merged.review);
+  if (merged.assignedAgentId) params.set("assignedAgentId", merged.assignedAgentId);
   if (merged.page && merged.page !== "1") params.set("page", merged.page);
-  const qs = params.toString();
+  return params.toString();
+}
+
+function buildHref(current: SearchParams, overrides: Partial<SearchParams>): string {
+  const qs = buildQueryString(current, overrides);
   return qs ? `/contacts?${qs}` : "/contacts";
+}
+
+// Fase 025.5.1 (UAT-11): "Exportar CSV" exporta lo que la pantalla
+// muestra — mismos filtros, sin paginación (ver exportContactsCsv).
+function buildExportHref(current: SearchParams): string {
+  const qs = buildQueryString(current, { page: undefined });
+  return qs ? `/api/export/contacts?${qs}` : "/api/export/contacts";
 }
 
 export default async function ContactsPage({
@@ -53,6 +72,10 @@ export default async function ContactsPage({
     ? (sp.review as GoogleReviewStatus)
     : undefined;
   const isCandidatesView = isAdmin && sp.review === "CANDIDATES";
+  const assignedAgentId =
+    sp.assignedAgentId === UNASSIGNED_AGENT_FILTER || /^[0-9a-f-]{36}$/i.test(sp.assignedAgentId ?? "")
+      ? sp.assignedAgentId
+      : undefined;
 
   // Fase 025.5 (UAT-10): "A quién pedir reseña" y el filtro por estado
   // de reseña son EXCLUSIVAMENTE ADMIN — para cualquier otro rol (o si
@@ -76,9 +99,20 @@ export default async function ContactsPage({
           search: sp.q || undefined,
           contactStatus: status,
           reviewStatus: reviewFilter,
+          assignedAgentId,
           page,
         })
-      : await listPeople(actor, { search: sp.q || undefined, contactStatus: status, page });
+      : await listPeople(actor, {
+          search: sp.q || undefined,
+          contactStatus: status,
+          assignedAgentId,
+          page,
+        });
+
+  // Solo ADMIN/ASSISTANT pueden consultar el catálogo de agentes (ver
+  // listActiveAgents) — el filtro por agente se oculta para AGENT, que
+  // de todas formas solo ve su propia cartera en otras pantallas.
+  const activeAgents = actor.role === "ADMIN" || actor.role === "ASSISTANT" ? await listActiveAgents(actor) : [];
 
   // Vista normal + ADMIN: se decora con el estado de reseña solo para
   // mostrar la columna — nunca se usa para filtrar aquí (eso ya lo
@@ -88,14 +122,14 @@ export default async function ContactsPage({
     : null;
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const hasFilters = Boolean(sp.q || sp.status || sp.review);
+  const hasFilters = Boolean(sp.q || sp.status || sp.review || sp.assignedAgentId);
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-heading text-lg font-semibold">Contactos</h2>
         <div className="flex items-center gap-2">
-          <Button variant="outline" nativeButton={false} render={<a href="/api/export/contacts" />}>
+          <Button variant="outline" nativeButton={false} render={<a href={buildExportHref(sp)} />}>
             Exportar CSV
           </Button>
           <Button nativeButton={false} render={<Link href="/contacts/new" />}>
@@ -133,6 +167,25 @@ export default async function ContactsPage({
             ))}
           </select>
         </div>
+        {activeAgents.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="assignedAgentId">Agente asignado</Label>
+            <select
+              id="assignedAgentId"
+              name="assignedAgentId"
+              defaultValue={sp.assignedAgentId ?? ""}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Todos</option>
+              <option value={UNASSIGNED_AGENT_FILTER}>Sin asignar</option>
+              {activeAgents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {isAdmin && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="review">Reseña de Google</Label>
@@ -205,7 +258,7 @@ export default async function ContactsPage({
                         {CONTACT_STATUS_LABELS[person.contactStatus]}
                       </Badge>
                     </TableCell>
-                    <TableCell>{person.assignedAgent?.name ?? "—"}</TableCell>
+                    <TableCell>{person.assignedAgent?.name ?? "Sin asignar"}</TableCell>
                     {isAdmin && (
                       <TableCell>
                         {reviewStatus ? (

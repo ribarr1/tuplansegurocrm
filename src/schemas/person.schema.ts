@@ -17,11 +17,21 @@ export const PERSON_SEX_VALUES = ["MALE", "FEMALE", "OTHER", "UNKNOWN"] as const
 
 export const personIdSchema = z.uuid();
 
+// Fase 025.5.1 (UAT-11): filtro por Person.assignedAgentId — un UUID
+// real filtra por ese agente, el literal "unassigned" filtra
+// exactamente los contactos SIN agente asignado (nunca se confunde con
+// "sin filtro", que es simplemente omitir el parámetro).
+export const UNASSIGNED_AGENT_FILTER = "unassigned" as const;
+export const assignedAgentIdFilterSchema = z
+  .union([z.literal(UNASSIGNED_AGENT_FILTER), z.uuid()])
+  .optional();
+
 export const listPeopleQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   search: optionalSearchFilter(),
   contactStatus: optionalEnumFilter(CONTACT_STATUS_VALUES),
+  assignedAgentId: assignedAgentIdFilterSchema,
 });
 export type ListPeopleQuery = z.infer<typeof listPeopleQuerySchema>;
 
@@ -54,9 +64,11 @@ const personFieldsSchema = {
   contactStatus: z.enum(CONTACT_STATUS_VALUES).default("PROSPECT"),
   source: z.string().trim().min(1).max(200).optional(),
   // La política de quién puede asignar/a quién se resuelve en el
-  // servicio (people.service.ts), no aquí — este schema solo valida
-  // que, si viene, sea un UUID.
-  assignedAgentId: z.uuid("Selecciona un agente válido.").optional(),
+  // servicio (people.service.ts), no aquí. "" es una señal explícita
+  // de "sin asignar" (el <select> del formulario la envía al elegir
+  // esa opción — ver form-helpers.ts) — solo un UUID real se valida
+  // como agente activo (Fase 025.5.1, UAT-11).
+  assignedAgentId: z.union([z.literal(""), z.uuid("Selecciona un agente válido.")]).optional(),
 };
 
 export const createPersonSchema = z.object(personFieldsSchema);

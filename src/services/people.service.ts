@@ -7,8 +7,9 @@ import {
   updatePersonSchema,
   listPeopleQuerySchema,
   personIdSchema,
+  UNASSIGNED_AGENT_FILTER,
 } from "@/schemas/person.schema";
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma, ContactStatus } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
 
 const PERSON_AUDIT_FIELDS = [
@@ -37,8 +38,13 @@ const PERSON_AUDIT_FIELDS = [
 //                      mismo (su propia cartera).
 //
 // assignedAgentId (crear/editar):
-//   ADMIN:      puede asignar cualquier User con role=AGENT y isActive=true.
+//   ADMIN:      puede asignar cualquier User con isAgent=true e isActive=true
+//               (incluye ADMIN+isAgent=true, ej. el dueño de la agencia —
+//               NUNCA se filtra por role=AGENT, ver Fase 025.5.1 UAT-11:
+//               ese era exactamente el bug que dejaba a un ADMIN-agente
+//               imposible de asignar aunque el selector ya lo mostrara).
 //               Si no envía assignedAgentId, queda sin asignar (null).
+//               Enviar "" explícitamente desasigna (vuelve a null).
 //   AGENT:      siempre se asigna a sí mismo. Cualquier assignedAgentId
 //               enviado por el cliente se ignora — un AGENT nunca puede
 //               asignar un contacto a otro agente.
@@ -130,40 +136,65 @@ export async function resolveAssignedAgentIdForCreate(
   return assertActiveAgent(requested);
 }
 
+// Fase 025.5.1 (UAT-11): filtra por `isAgent`, NUNCA por `role` — mismo
+// criterio que listActiveAgents (users.service.ts). Antes exigía
+// role==="AGENT", lo que rechazaba silenciosamente a cualquier
+// ADMIN+isAgent=true (ej. el dueño de la agencia): el selector de la UI
+// ya los mostraba correctamente, pero guardar esa selección siempre
+// fallaba, dejando el contacto sin asignar.
 async function assertActiveAgent(userId: string): Promise<string> {
   const agent = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, role: true, isActive: true },
+    select: { id: true, isAgent: true, isActive: true },
   });
-  if (!agent || agent.role !== "AGENT" || !agent.isActive) {
+  if (!agent || !agent.isAgent || !agent.isActive) {
     throw new AppError(
       "VALIDATION_ERROR",
-      "assignedAgentId debe ser un usuario con rol AGENT activo."
+      "assignedAgentId debe ser un usuario activo con isAgent=true."
     );
   }
   return agent.id;
 }
 
-export async function listPeople(actor: AuthorizedUser, rawQuery: unknown) {
-  assertCanListOrView(actor);
-  const { page, pageSize, search, contactStatus } = parseOrThrow(
-    listPeopleQuerySchema,
-    rawQuery
-  );
-
-  const where: Prisma.PersonWhereInput = {
-    ...(contactStatus ? { contactStatus } : {}),
-    ...(search
+// Fase 025.5.1 (UAT-11): filtro de Contactos por agente ASIGNADO
+// (Person.assignedAgentId) — nunca por Policy.processedById, un
+// concepto distinto (ver comentario de política de acceso arriba).
+// Compartido por listPeople y exportContactsCsv para que "lo que ves"
+// y "lo que exportas" midan siempre el mismo universo (mismo patrón
+// que buildPolicyFilterWhere, Fase 025.5 UAT-09).
+export function buildPersonFilterWhere(filters: {
+  search?: string;
+  contactStatus?: ContactStatus;
+  assignedAgentId?: string;
+}): Prisma.PersonWhereInput {
+  return {
+    ...(filters.contactStatus ? { contactStatus: filters.contactStatus } : {}),
+    ...(filters.assignedAgentId
+      ? filters.assignedAgentId === UNASSIGNED_AGENT_FILTER
+        ? { assignedAgentId: null }
+        : { assignedAgentId: filters.assignedAgentId }
+      : {}),
+    ...(filters.search
       ? {
           OR: [
-            { firstName: { contains: search, mode: "insensitive" } },
-            { lastName: { contains: search, mode: "insensitive" } },
-            { phone: { contains: search, mode: "insensitive" } },
-            { email: { contains: search, mode: "insensitive" } },
+            { firstName: { contains: filters.search, mode: "insensitive" } },
+            { lastName: { contains: filters.search, mode: "insensitive" } },
+            { phone: { contains: filters.search, mode: "insensitive" } },
+            { email: { contains: filters.search, mode: "insensitive" } },
           ],
         }
       : {}),
   };
+}
+
+export async function listPeople(actor: AuthorizedUser, rawQuery: unknown) {
+  assertCanListOrView(actor);
+  const { page, pageSize, search, contactStatus, assignedAgentId } = parseOrThrow(
+    listPeopleQuerySchema,
+    rawQuery
+  );
+
+  const where = buildPersonFilterWhere({ search, contactStatus, assignedAgentId });
 
   // Promise.all de dos llamadas top-level independientes, no
   // prisma.$transaction([...]) — ver docs/DECISIONS.md ("Advertencia de
@@ -259,13 +290,15 @@ export async function updatePerson(
 
   const { assignedAgentId: requestedAssignedAgentId, ...rest } = input;
   const data: Prisma.PersonUncheckedUpdateInput = { ...rest };
-  let resolvedAssignedAgentId: string | undefined;
+  let resolvedAssignedAgentId: string | null | undefined;
 
   if (requestedAssignedAgentId !== undefined) {
     if (actor.role !== "ADMIN") {
       throw new AppError("FORBIDDEN", "Solo ADMIN puede reasignar el agente.");
     }
-    resolvedAssignedAgentId = await assertActiveAgent(requestedAssignedAgentId);
+    // "" es la señal explícita de "sin asignar" (ver person.schema.ts)
+    // — nunca se valida como agente, se traduce directo a null.
+    resolvedAssignedAgentId = requestedAssignedAgentId === "" ? null : await assertActiveAgent(requestedAssignedAgentId);
     data.assignedAgentId = resolvedAssignedAgentId;
   }
 
