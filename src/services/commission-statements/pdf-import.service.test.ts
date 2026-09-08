@@ -1072,3 +1072,279 @@ describe("Fase 025.5.5 — TOTAL GENERAL EN REPORTES MULTIPÁGINA: nunca se apli
     expect(paymentCount).toBe(1);
   });
 });
+
+describe("Fase 025.5.5 (UAT-21) — aplicar filas nuevas sobre un statement ya aplicado parcialmente", () => {
+  const headers = [
+    "Member ID", "Name", "Agent", "State", "Carrier", "Status", "Rate", "Members",
+    "Subtotal", "Asistencia", "Total", "Effective Date", "Paid At",
+  ];
+
+  it("DD) statement recién subido, sin aplicaciones, con una fila lista: status PENDING_REVIEW, importStatus READY", async () => {
+    const { person, carrier } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("Pending"), carrierName: uniqueName("OscarUat21"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const row = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("dd") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview.statement.status).toBe("PENDING_REVIEW");
+    expect(preview.rows[0].importStatus).toBe("READY");
+  });
+
+  it("EE) un statement con appliedAt de una fase anterior (status legacy APPLIED) SIGUE permitiendo aplicar una fila nueva que se emparejó después", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("Legacy"), carrierName: uniqueName("OscarLegacy"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const readyRow = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    // Nombre que NO existe como póliza — queda UNMATCHED al subir, para
+    // simular la fila que se resuelve DESPUÉS de la primera aplicación.
+    const laterRow = ["ZZUNMATCHED999", "Nombre Que No Existe Aun", "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "30.00", "0.00", "30.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, readyRow, laterRow]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("ee") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    await applyCommissionStatement(admin, upload.statementId);
+    const afterFirstApply = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(afterFirstApply.statement.status).toBe("PARTIALLY_APPLIED");
+
+    // Simula un statement creado ANTES de esta fase (status legacy
+    // "APPLIED", nunca actualizado por el código nuevo hasta la
+    // próxima mutación) — el bug reportado era exactamente que la UI
+    // ocultaba el botón para siempre en este caso.
+    await prisma.commissionStatement.update({ where: { id: upload.statementId }, data: { status: "APPLIED" } });
+
+    const unmatchedRow = afterFirstApply.rows.find((r) => r.importStatus === "UNMATCHED");
+    if (!unmatchedRow) throw new Error("expected an UNMATCHED row");
+    await manualMatchStatementRow(admin, unmatchedRow.id, { policyId: policy.id });
+
+    const beforeSecondApply = await getCommissionStatementPreview(admin, upload.statementId);
+    // recomputeStatementCounts (disparado por el match manual) ya
+    // corrigió el status legacy hacia el cálculo real por fila.
+    expect(beforeSecondApply.statement.status).toBe("PARTIALLY_APPLIED");
+    expect(beforeSecondApply.rows.find((r) => r.id === unmatchedRow.id)?.importStatus).toBe("READY");
+
+    await applyCommissionStatement(admin, upload.statementId);
+    const afterSecondApply = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(afterSecondApply.statement.status).toBe("COMPLETED");
+    expect(afterSecondApply.rows.every((r) => r.importStatus === "APPLIED")).toBe(true);
+
+    const payments = await prisma.commissionPayment.findMany({ where: { policyId: policy.id }, select: { amount: true } });
+    expect(payments.map((p) => p.amount.toFixed(2)).sort()).toEqual(["25.00", "30.00"]);
+  });
+
+  it("FF) el primer apply crea un pago, el segundo apply (tras emparejar más filas) crea SOLO el nuevo pago — nunca duplica el anterior", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("Sequence"), carrierName: uniqueName("OscarSeq"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const row1 = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    const row2 = ["ZZUNMATCHED888", "Otra Persona Sin Match", "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "40.00", "0.00", "40.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row1, row2]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("ff") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    await applyCommissionStatement(admin, upload.statementId);
+    let payments = await prisma.commissionPayment.findMany({ where: { policyId: policy.id } });
+    expect(payments).toHaveLength(1);
+    expect(payments[0].amount.toFixed(2)).toBe("25.00");
+
+    const preview1 = await getCommissionStatementPreview(admin, upload.statementId);
+    const unmatchedRow = preview1.rows.find((r) => r.importStatus === "UNMATCHED");
+    if (!unmatchedRow) throw new Error("expected an UNMATCHED row");
+    await manualMatchStatementRow(admin, unmatchedRow.id, { policyId: policy.id });
+
+    await applyCommissionStatement(admin, upload.statementId);
+    payments = await prisma.commissionPayment.findMany({ where: { policyId: policy.id }, orderBy: { amount: "asc" } });
+    expect(payments).toHaveLength(2);
+    expect(payments.map((p) => p.amount.toFixed(2))).toEqual(["25.00", "40.00"]);
+  });
+
+  it("GG) un statement CLOSED_WITH_SKIPPED_ROWS (una aplicada, otra ignorada) no genera más pagos aunque se llame apply otra vez", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("Closed"), carrierName: uniqueName("OscarClosed"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const row1 = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    const row2 = ["ZZUNMATCHED777", "Persona Que Se Ignora", "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "15.00", "0.00", "15.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row1, row2]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("gg") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    await applyCommissionStatement(admin, upload.statementId);
+    const preview1 = await getCommissionStatementPreview(admin, upload.statementId);
+    const unmatchedRow = preview1.rows.find((r) => r.importStatus === "UNMATCHED");
+    if (!unmatchedRow) throw new Error("expected an UNMATCHED row");
+    await ignoreStatementRow(admin, unmatchedRow.id);
+
+    const preview2 = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview2.statement.status).toBe("CLOSED_WITH_SKIPPED_ROWS");
+    expect(preview2.rows.every((r) => r.importStatus !== "READY")).toBe(true);
+
+    // Llamar apply de nuevo sobre un statement cerrado es un no-op
+    // seguro — nunca lanza, nunca crea pagos nuevos.
+    await applyCommissionStatement(admin, upload.statementId);
+    const payments = await prisma.commissionPayment.count({ where: { policyId: policy.id } });
+    expect(payments).toBe(1);
+  });
+
+  it("HH) un statement donde TODAS las filas terminan aplicadas queda COMPLETED (nunca CLOSED_WITH_SKIPPED_ROWS)", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("Completed"), carrierName: uniqueName("OscarCompleted"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const row = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("hh") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    await applyCommissionStatement(admin, upload.statementId);
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview.statement.status).toBe("COMPLETED");
+    void policy;
+  });
+
+  it("II) apply con fila sin expectativa: importStatus=READY y reviewState=NO_EXPECTATION AL MISMO TIEMPO — nunca se ocultan como si no estuvieran listas", async () => {
+    const { person, carrier, policy } = await makeHealthPolicyNoExpectation(admin, {
+      firstName: "Uat21", lastName: uniqueName("NoExp"), carrierName: uniqueName("OscarNoExp"), state: "TX",
+    });
+    const row = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("ii") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const beforeApply = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(beforeApply.rows[0].importStatus).toBe("READY");
+    expect(beforeApply.rows[0].reviewState).toBe("NO_EXPECTATION");
+
+    await applyCommissionStatement(admin, upload.statementId);
+    const paymentCount = await prisma.commissionPayment.count({ where: { policyId: policy.id } });
+    expect(paymentCount).toBe(1);
+  });
+
+  it("JJ) doble clic / reintento: dos llamadas seguidas a apply sobre el mismo statement nunca duplican pagos ni fallan", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("DoubleClick"), carrierName: uniqueName("OscarDbl"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const row = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("jj") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    await Promise.all([
+      applyCommissionStatement(admin, upload.statementId),
+      applyCommissionStatement(admin, upload.statementId),
+    ]);
+    const payments = await prisma.commissionPayment.count({ where: { policyId: policy.id } });
+    expect(payments).toBe(1);
+  });
+
+  it("KK) dos administradores aplicando el MISMO statement simultáneamente nunca crean pagos duplicados", async () => {
+    const admin2 = await makeActor("ADMIN", "admin2-uat21");
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("Concurrent"), carrierName: uniqueName("OscarConc"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const rows = [1, 2, 3].map((n) => [
+      uniqueName(`OSC${n}`), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name,
+      "ACTIVE", "25.00", "1", `${10 + n}.00`, "0.00", `${10 + n}.00`, "2026-08-01", PAID_AT,
+    ]);
+    // 3 filas de la MISMA póliza (matching por nombre exacto único
+    // matchea las 3 igual, ver matcher.ts) — el objetivo es tener
+    // varias filas MATCHED reales para que la carrera concurrente
+    // tenga trabajo real que disputar, no una fila vacía.
+    const pdf = buildTestTablePdf([headers, ...rows]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("kk") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    const readyCount = preview.rows.filter((r) => r.importStatus === "READY").length;
+    expect(readyCount).toBeGreaterThan(0);
+
+    await Promise.all([
+      applyCommissionStatement(admin, upload.statementId),
+      applyCommissionStatement(admin2, upload.statementId),
+    ]);
+
+    const payments = await prisma.commissionPayment.findMany({ where: { policyId: policy.id } });
+    expect(payments).toHaveLength(readyCount); // ninguna fila se pagó dos veces
+    const statementRowIds = payments.map((p) => p.statementRowId);
+    expect(new Set(statementRowIds).size).toBe(statementRowIds.length); // sin statementRowId repetido
+  });
+
+  it("LL) el historial de aplicaciones registra cada batch por separado, sin PII, y nunca sobrescribe uno anterior", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("History"), carrierName: uniqueName("OscarHist"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const row1 = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "5.00", "20.00", "2026-08-01", PAID_AT];
+    const row2 = ["ZZUNMATCHED666", "Historial Segunda Fila", "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "35.00", "0.00", "35.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row1, row2]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("ll") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    await applyCommissionStatement(admin, upload.statementId);
+    const afterFirst = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(afterFirst.applyBatches).toHaveLength(1);
+    expect(afterFirst.applyBatches[0].rowsApplied).toBe(1);
+    expect(afterFirst.applyBatches[0].grossAmount.toFixed(2)).toBe("25.00");
+    expect(afterFirst.applyBatches[0].assistanceAmount.toFixed(2)).toBe("5.00");
+    expect(afterFirst.applyBatches[0].netAmount.toFixed(2)).toBe("20.00");
+    expect(afterFirst.applyBatches[0].appliedBy?.id).toBe(admin.id);
+    // Nunca PII: solo id/nombre del ADMIN que aplicó (no del cliente) y
+    // agregados numéricos — nunca nombre de miembro, Member ID, etc.
+    expect(JSON.stringify(afterFirst.applyBatches[0])).not.toContain(person.lastName);
+
+    const unmatchedRow = afterFirst.rows.find((r) => r.importStatus === "UNMATCHED");
+    if (!unmatchedRow) throw new Error("expected an UNMATCHED row");
+    await manualMatchStatementRow(admin, unmatchedRow.id, { policyId: policy.id });
+    await applyCommissionStatement(admin, upload.statementId);
+
+    const afterSecond = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(afterSecond.applyBatches).toHaveLength(2); // el batch anterior sigue existiendo, nunca se sobrescribe
+    const totalRowsApplied = afterSecond.applyBatches.reduce((sum, b) => sum + b.rowsApplied, 0);
+    expect(totalRowsApplied).toBe(2);
+    void policy;
+  });
+
+  it("MM) los conteos matchedRows/appliedRows del statement son siempre coherentes con las filas reales tras match/ignore/apply", async () => {
+    const { person, carrier } = await makeHealthPolicy(admin, {
+      firstName: "Uat21", lastName: uniqueName("Counts"), carrierName: uniqueName("OscarCounts"),
+      state: "TX", own: true, expectedAmount: "25.00", period: PAID_PERIOD,
+    });
+    const row1 = [uniqueName("OSC"), `${person.firstName} ${person.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-08-01", PAID_AT];
+    const row2 = ["ZZUNMATCHED555", "Fila Que Se Ignora Conteo", "Agent A", "TX", carrier.name, "ACTIVE", "25.00", "1", "12.00", "0.00", "12.00", "2026-08-01", PAID_AT];
+    const pdf = buildTestTablePdf([headers, row1, row2]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("mm") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    let preview = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview.statement.matchedRows).toBe(1);
+    expect(preview.statement.unmatchedRows).toBe(1);
+    expect(preview.statement.appliedRows).toBe(0);
+
+    const unmatchedRow = preview.rows.find((r) => r.importStatus === "UNMATCHED");
+    if (!unmatchedRow) throw new Error("expected an UNMATCHED row");
+    await ignoreStatementRow(admin, unmatchedRow.id);
+    await applyCommissionStatement(admin, upload.statementId);
+
+    preview = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview.statement.appliedRows).toBe(1);
+    expect(preview.statement.matchedRows).toBe(0);
+    expect(preview.statement.status).toBe("CLOSED_WITH_SKIPPED_ROWS");
+  });
+});

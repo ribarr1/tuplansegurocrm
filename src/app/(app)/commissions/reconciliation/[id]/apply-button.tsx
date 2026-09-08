@@ -30,7 +30,7 @@ export function ApplyStatementButton({
         });
       }}
     >
-      {isPending ? "Aplicando…" : `Aplicar (${pendingCount} pago(s))`}
+      {isPending ? "Aplicando…" : `Aplicar ${pendingCount} fila${pendingCount === 1 ? "" : "s"} lista${pendingCount === 1 ? "" : "s"}`}
     </Button>
   );
 }

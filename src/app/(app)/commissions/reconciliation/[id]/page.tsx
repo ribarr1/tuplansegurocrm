@@ -11,28 +11,54 @@ import { MatchRowDialog } from "./match-row-dialog";
 import { IgnoreRowButton } from "./ignore-row-button";
 import { ApplyStatementButton } from "./apply-button";
 
-const REVIEW_STATE_LABELS: Record<string, string> = {
-  MATCH: "Lista para aplicar",
-  UNDERPAID: "Pagado de menos",
-  OVERPAID: "Pagado de más",
-  NO_EXPECTATION: "Sin expectativa",
+// Fase 025.5.5 (UAT-21): dos dimensiones SEPARADAS, nunca un solo
+// badge — una fila puede ser simultáneamente Importación="Lista para
+// aplicar" y Conciliación="Sin expectativa"; mezclarlas en un solo
+// estado (como antes) hacía parecer que esas filas no podían aplicarse.
+const IMPORT_STATUS_LABELS: Record<string, string> = {
+  READY: "Lista para aplicar",
+  APPLIED: "Aplicada",
   UNMATCHED: "No encontrada",
   AMBIGUOUS: "Ambigua",
   IGNORED: "Ignorada",
-  INVALID: "Inválida",
   DUPLICATE: "Duplicada",
+  INVALID: "Inválida",
 };
 
-const REVIEW_STATE_VARIANT: Record<string, "default" | "outline" | "destructive" | "secondary"> = {
-  MATCH: "default",
-  UNDERPAID: "destructive",
-  OVERPAID: "secondary",
-  NO_EXPECTATION: "outline",
+const IMPORT_STATUS_VARIANT: Record<string, "default" | "outline" | "destructive" | "secondary"> = {
+  READY: "default",
+  APPLIED: "secondary",
   UNMATCHED: "outline",
   AMBIGUOUS: "outline",
   IGNORED: "outline",
-  INVALID: "destructive",
   DUPLICATE: "outline",
+  INVALID: "destructive",
+};
+
+// Solo tiene sentido para filas con una póliza emparejada (READY o
+// APPLIED) — el resto no tiene nada que conciliar todavía.
+const RECONCILIATION_STATE_LABELS: Record<string, string> = {
+  NO_EXPECTATION: "Sin expectativa",
+  MATCH: "Conciliada",
+  UNDERPAID: "Pagado de menos",
+  OVERPAID: "Pagado de más",
+};
+
+const RECONCILIATION_STATE_VARIANT: Record<string, "default" | "outline" | "destructive" | "secondary"> = {
+  NO_EXPECTATION: "outline",
+  MATCH: "default",
+  UNDERPAID: "destructive",
+  OVERPAID: "secondary",
+};
+
+const STATEMENT_STATUS_LABELS: Record<string, string> = {
+  PENDING_REVIEW: "Pendiente de revisión",
+  PARTIALLY_APPLIED: "Aplicado parcialmente",
+  COMPLETED: "Completado",
+  CLOSED_WITH_SKIPPED_ROWS: "Cerrado (con filas omitidas)",
+  APPLIED: "Completado",
+  PREVIEW: "Pendiente de revisión",
+  DUPLICATE_BLOCKED: "Bloqueado (duplicado)",
 };
 
 const PAYER_AGENCY_LABELS: Record<string, string> = { ORANGE: "Orange", ELITE: "Elite" };
@@ -59,10 +85,44 @@ export default async function ReconciliationDetailPage({
     throw error;
   }
 
-  const { statement, rows, integrityError } = preview;
-  const pendingCount = rows.filter((r) => r.matchStatus === "MATCHED" && !r.alreadyApplied).length;
-  const stateCounts: Record<string, number> = {};
-  for (const row of rows) stateCounts[row.reviewState] = (stateCounts[row.reviewState] ?? 0) + 1;
+  const { statement, rows, integrityError, applyBatches } = preview;
+  // Fase 025.5.5 (UAT-21): "lista para aplicar" es SIEMPRE
+  // importStatus === "READY" — nunca depende de si ya tiene expectativa
+  // (eso es conciliación, un eje aparte, ver reviewState abajo).
+  const readyCount = rows.filter((r) => r.importStatus === "READY").length;
+  const importStatusCounts: Record<string, number> = {};
+  for (const row of rows) importStatusCounts[row.importStatus] = (importStatusCounts[row.importStatus] ?? 0) + 1;
+  const reconciliationCounts: Record<string, number> = {};
+  for (const row of rows) {
+    if (row.importStatus === "READY" || row.importStatus === "APPLIED") {
+      reconciliationCounts[row.reviewState] = (reconciliationCounts[row.reviewState] ?? 0) + 1;
+    }
+  }
+
+  // Fase 025.5.5 (UAT-21): "cerrado definitivamente" — ya no queda
+  // ninguna fila accionable (COMPLETED/CLOSED_WITH_SKIPPED_ROWS son los
+  // estados nuevos; APPLIED se conserva solo para statements aplicados
+  // en una sola pasada ANTES de esta fase, tratado igual que COMPLETED
+  // para no ocultar el botón retroactivamente si de algún modo quedara
+  // una fila lista). DUPLICATE_BLOCKED bloquea todo, incluida la
+  // consulta normal.
+  const isClosed = statement.status === "COMPLETED" || statement.status === "CLOSED_WITH_SKIPPED_ROWS";
+  const isDuplicateBlocked = statement.status === "DUPLICATE_BLOCKED";
+  // Motivo exacto por el que NO se muestra el botón — nunca "no aparece
+  // sin explicación" (ver ficha UAT-21, "Lógica del botón").
+  const hideReason: string | null = isDuplicateBlocked
+    ? "closed"
+    : integrityError
+      ? "integrity"
+      : statement.carrierRecognized === false
+        ? "carrier"
+        : statement.footerAmbiguous
+          ? "footer"
+          : isClosed && readyCount === 0
+            ? "closed"
+            : readyCount === 0
+              ? "zero_ready"
+              : null;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -139,11 +199,24 @@ export default async function ReconciliationDetailPage({
                 </Badge>
               )}
             </span>
+            <span>
+              Estado del reporte:{" "}
+              <strong>{STATEMENT_STATUS_LABELS[statement.status] ?? statement.status}</strong>
+            </span>
             <span className="w-full text-xs text-muted-foreground">
-              {Object.entries(stateCounts)
-                .map(([state, count]) => `${REVIEW_STATE_LABELS[state] ?? state}: ${count}`)
+              Importación —{" "}
+              {Object.entries(importStatusCounts)
+                .map(([state, count]) => `${IMPORT_STATUS_LABELS[state] ?? state}: ${count}`)
                 .join(" · ")}
             </span>
+            {Object.keys(reconciliationCounts).length > 0 && (
+              <span className="w-full text-xs text-muted-foreground">
+                Conciliación —{" "}
+                {Object.entries(reconciliationCounts)
+                  .map(([state, count]) => `${RECONCILIATION_STATE_LABELS[state] ?? state}: ${count}`)
+                  .join(" · ")}
+              </span>
+            )}
           </CardContent>
         </Card>
       )}
@@ -176,30 +249,34 @@ export default async function ReconciliationDetailPage({
         </p>
       )}
 
-      {statement.status === "APPLIED" ? (
+      {/* Fase 025.5.5 (UAT-21): `appliedAt` NUNCA implica que el reporte
+          es inmutable — un statement con aplicaciones anteriores sigue
+          mostrando el botón de aplicar si quedan filas listas. Solo se
+          muestra el aviso histórico (sin el botón) cuando de verdad ya
+          no queda nada accionable. */}
+      {statement.firstAppliedAt && (
         <p className="rounded-md bg-secondary/40 px-3 py-2 text-sm">
-          Este reporte ya fue aplicado el {statement.appliedAt ? formatDateOnlyUS(statement.appliedAt) : "—"}.
+          {isClosed
+            ? `Este reporte ya fue aplicado el ${statement.appliedAt ? formatDateOnlyUS(statement.appliedAt) : "—"}.`
+            : "Este reporte tiene aplicaciones anteriores. Puedes continuar procesando las filas pendientes."}
         </p>
-      ) : integrityError ? (
+      )}
+
+      {hideReason ? (
         <span className="text-xs text-destructive">
-          Aplicar está bloqueado hasta resolver el error de integridad de arriba.
-        </span>
-      ) : statement.carrierRecognized === false ? (
-        <span className="text-xs text-destructive">
-          Aplicar está bloqueado hasta que el carrier detectado sea reconocido.
-        </span>
-      ) : statement.footerAmbiguous ? (
-        <span className="text-xs text-destructive">
-          Aplicar está bloqueado hasta que el total general sea verificable.
+          {hideReason === "integrity" &&
+            "Aplicar está bloqueado hasta resolver el error de integridad de arriba."}
+          {hideReason === "carrier" && "Aplicar está bloqueado hasta que el carrier detectado sea reconocido."}
+          {hideReason === "footer" && "Aplicar está bloqueado hasta que el total general sea verificable."}
+          {hideReason === "closed" &&
+            (isDuplicateBlocked
+              ? "Aplicar está bloqueado — este reporte fue marcado como posible duplicado."
+              : "Este reporte está cerrado — no quedan filas pendientes de aplicar.")}
+          {hideReason === "zero_ready" && "No hay filas listas para aplicar todavía."}
         </span>
       ) : (
         <div className="flex items-center gap-3">
-          <ApplyStatementButton statementId={statement.id} pendingCount={pendingCount} />
-          {pendingCount === 0 && (
-            <span className="text-xs text-muted-foreground">
-              No hay filas emparejadas listas para aplicar todavía.
-            </span>
-          )}
+          <ApplyStatementButton statementId={statement.id} pendingCount={readyCount} />
         </div>
       )}
 
@@ -261,9 +338,14 @@ export default async function ReconciliationDetailPage({
                   <td className="py-2 pr-3">${row.netAmount.toString()}</td>
                   <td className="py-2 pr-3">{row.difference ? `$${row.difference}` : "—"}</td>
                   <td className="py-2 pr-3">
-                    <Badge variant={REVIEW_STATE_VARIANT[row.reviewState] ?? "outline"}>
-                      {REVIEW_STATE_LABELS[row.reviewState] ?? row.reviewState}
+                    <Badge variant={IMPORT_STATUS_VARIANT[row.importStatus] ?? "outline"}>
+                      {IMPORT_STATUS_LABELS[row.importStatus] ?? row.importStatus}
                     </Badge>
+                    {(row.importStatus === "READY" || row.importStatus === "APPLIED") && (
+                      <Badge variant={RECONCILIATION_STATE_VARIANT[row.reviewState] ?? "outline"} className="ml-1">
+                        {RECONCILIATION_STATE_LABELS[row.reviewState] ?? row.reviewState}
+                      </Badge>
+                    )}
                     {row.errorCode && (
                       <p className="mt-1 max-w-[220px] text-xs text-destructive">{row.errorCode}</p>
                     )}
@@ -302,6 +384,44 @@ export default async function ReconciliationDetailPage({
           </table>
         </CardContent>
       </Card>
+
+      {applyBatches.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Historial de aplicaciones ({applyBatches.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-muted-foreground">
+                  <th className="py-2 pr-3">Fecha</th>
+                  <th className="py-2 pr-3">Aplicado por</th>
+                  <th className="py-2 pr-3">Filas aplicadas</th>
+                  <th className="py-2 pr-3">Pagos creados</th>
+                  <th className="py-2 pr-3">Bruto</th>
+                  <th className="py-2 pr-3">Asistencia</th>
+                  <th className="py-2">Neto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {applyBatches.map((batch) => (
+                  <tr key={batch.id} className="border-b last:border-0">
+                    <td className="py-2 pr-3">{formatDateOnlyUS(batch.appliedAt)}</td>
+                    <td className="py-2 pr-3">{batch.appliedBy?.name ?? "—"}</td>
+                    <td className="py-2 pr-3">{batch.rowsApplied}</td>
+                    <td className="py-2 pr-3">{batch.paymentsCreated}</td>
+                    <td className="py-2 pr-3">${batch.grossAmount.toString()}</td>
+                    <td className="py-2 pr-3">${batch.assistanceAmount.toString()}</td>
+                    <td className="py-2">${batch.netAmount.toString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

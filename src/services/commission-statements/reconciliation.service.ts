@@ -17,7 +17,7 @@ import { matchStatementRow, findExpectationForPolicy, inferPeriod, type MatchRes
 import { normalizeCarrierForComparison, MultipleCarriersError } from "./carrier-detection";
 import { PdfParseError, PdfTooManyPagesError, PdfTooManyRowsError, PdfFormatMismatchError } from "./pdf-table-extract";
 import type { NormalizedCommissionRow } from "./types";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type CommissionStatementStatus } from "@/generated/prisma/client";
 
 // ---------------------------------------------------------------------------
 // Orquestador de conciliación de comisiones — Fase 020 (§17: Preview
@@ -96,6 +96,7 @@ const statementSelect = {
   appliedRows: true,
   receivedTotal: true,
   appliedAt: true,
+  firstAppliedAt: true,
   payerAgency: true,
   businessModality: true,
   assistanceTotal: true,
@@ -284,6 +285,7 @@ export async function uploadCommissionStatement(
   let matchedCount = 0;
   let unmatchedCount = 0;
   let ambiguousCount = 0;
+  let duplicateCount = 0;
   let assistanceTotalSum = new Prisma.Decimal(0);
   let netTotalSum = new Prisma.Decimal(0);
   const receivedTotal = parsed.rows
@@ -298,6 +300,7 @@ export async function uploadCommissionStatement(
     if (matchStatus === "MATCHED") matchedCount++;
     else if (matchStatus === "AMBIGUOUS") ambiguousCount++;
     else unmatchedCount++; // UNMATCHED, INVALID o DUPLICATE: nunca se auto-aplican, requieren revisión.
+    if (matchStatus === "DUPLICATE") duplicateCount++;
 
     assistanceTotalSum = assistanceTotalSum.plus(new Prisma.Decimal(row.assistanceAmount ?? "0"));
     netTotalSum = netTotalSum.plus(new Prisma.Decimal(row.netAmount ?? row.receivedAmount));
@@ -364,7 +367,16 @@ export async function uploadCommissionStatement(
         fileName,
         fingerprint,
         uploadedById: actor.id,
-        status: "PREVIEW",
+        // Fase 025.5.5 (UAT-21): calculado igual que recomputeStatementCounts
+        // — al subir, appliedRows siempre es 0, así que solo puede salir
+        // PENDING_REVIEW (quedan filas accionables) o, en el caso límite de
+        // un archivo modificado donde TODAS las filas ya fueron aplicadas
+        // antes en otro reporte, CLOSED_WITH_SKIPPED_ROWS de inmediato.
+        status: computeStatementStatus({
+          totalRows: parsed.rows.length,
+          appliedRows: 0,
+          actionableRows: parsed.rows.length - duplicateCount,
+        }),
         totalRows: parsed.rows.length,
         matchedRows: matchedCount,
         unmatchedRows: unmatchedCount,
@@ -490,6 +502,23 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
     orderBy: { rowNumber: "asc" },
   });
 
+  // Fase 025.5.5 (UAT-21): historial de cada aplicación parcial — nunca
+  // PII (solo agregados y quién/cuándo aplicó), más reciente primero.
+  const applyBatches = await prisma.commissionStatementApplyBatch.findMany({
+    where: { statementId: id },
+    select: {
+      id: true,
+      appliedAt: true,
+      rowsApplied: true,
+      paymentsCreated: true,
+      grossAmount: true,
+      assistanceAmount: true,
+      netAmount: true,
+      appliedBy: { select: { id: true, name: true } },
+    },
+    orderBy: { appliedAt: "desc" },
+  });
+
   const enriched = rows.map((row) => {
     const hasExpectation = !!row.matchedExpectation;
     const received = new Prisma.Decimal(row.receivedAmount);
@@ -561,6 +590,12 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
       difference: difference.toFixed(2),
       hasExpectation,
       matchStatus: row.matchStatus,
+      // Fase 025.5.5 (UAT-21): "Estado de importación" — SIEMPRE
+      // independiente de si existe expectativa. Una fila MATCHED sin
+      // expectativa sigue siendo "READY" (lista para aplicar); el
+      // reviewState de abajo describe la conciliación por separado,
+      // nunca sustituye a este estado operativo.
+      importStatus: row.matchStatus === "MATCHED" ? "READY" : row.matchStatus,
       reviewState,
       errorCode: row.errorCode,
       matchedPolicy: row.matchedPolicy,
@@ -582,7 +617,7 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
       ? `Inconsistencia de integridad: el reporte registra ${statement.totalRows} fila(s) pero se encontraron ${rows.length} — revisión manual requerida antes de aplicar.`
       : null;
 
-  return { statement, rows: enriched, integrityError };
+  return { statement, rows: enriched, integrityError, applyBatches };
 }
 
 // Candidatos elegibles para un match manual (filas UNMATCHED/AMBIGUOUS)
@@ -716,6 +751,26 @@ export async function ignoreStatementRow(actor: AuthorizedUser, rawRowId: unknow
 // sola conexión pinneada — lanzarlas en paralelo dispara la advertencia
 // real de pg "Calling client.query() when the client is already
 // executing a query" (ver docs/DECISIONS.md, Fase 020 §6).
+// Fase 025.5.5 (UAT-21): estado del statement calculado POR FILA, nunca
+// una bandera manual — "accionable" = una fila que todavía puede
+// terminar en un pago (MATCHED listo, o UNMATCHED/AMBIGUOUS/INVALID que
+// un ADMIN puede resolver via match manual). IGNORED/DUPLICATE/APPLIED
+// son terminales: nunca vuelven a contarse como accionables (ver
+// docs — reabrir una fila IGNORED queda fuera de alcance de esta fase).
+function computeStatementStatus(counts: {
+  totalRows: number;
+  appliedRows: number;
+  actionableRows: number;
+}): Extract<
+  CommissionStatementStatus,
+  "PENDING_REVIEW" | "PARTIALLY_APPLIED" | "COMPLETED" | "CLOSED_WITH_SKIPPED_ROWS"
+> {
+  if (counts.actionableRows > 0) {
+    return counts.appliedRows === 0 ? "PENDING_REVIEW" : "PARTIALLY_APPLIED";
+  }
+  return counts.appliedRows === counts.totalRows ? "COMPLETED" : "CLOSED_WITH_SKIPPED_ROWS";
+}
+
 async function recomputeStatementCounts(tx: Prisma.TransactionClient, statementId: string) {
   const matchedRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "MATCHED" } });
   const unmatchedRows = await tx.commissionStatementRow.count({
@@ -723,9 +778,26 @@ async function recomputeStatementCounts(tx: Prisma.TransactionClient, statementI
   });
   const ambiguousRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "AMBIGUOUS" } });
   const appliedRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "APPLIED" } });
+  const ignoredRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "IGNORED" } });
+  const duplicateRows = await tx.commissionStatementRow.count({ where: { statementId, matchStatus: "DUPLICATE" } });
+  const totalRows = await tx.commissionStatementRow.count({ where: { statementId } });
+  const actionableRows = totalRows - appliedRows - ignoredRows - duplicateRows;
+  const status = computeStatementStatus({ totalRows, appliedRows, actionableRows });
+
+  const current = await tx.commissionStatement.findUniqueOrThrow({
+    where: { id: statementId },
+    select: { firstAppliedAt: true },
+  });
   await tx.commissionStatement.update({
     where: { id: statementId },
-    data: { matchedRows, unmatchedRows, ambiguousRows, appliedRows },
+    data: {
+      matchedRows,
+      unmatchedRows,
+      ambiguousRows,
+      appliedRows,
+      status,
+      firstAppliedAt: current.firstAppliedAt ?? (appliedRows > 0 ? new Date() : null),
+    },
   });
 }
 
@@ -788,21 +860,41 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
   // restricción, así que la revalidación de abajo nunca los alcanza.
   const requiresHealthOnly = statement.payerAgency !== null;
 
-  const rowsToApply = await prisma.commissionStatementRow.findMany({
-    where: { statementId: id, matchStatus: "MATCHED", matchedPolicyId: { not: null } },
-    select: {
-      id: true,
-      matchedPolicyId: true,
-      matchedExpectationId: true,
-      receivedAmount: true,
-      paidAt: true,
-      effectiveDate: true,
-    },
-  });
-
+  // Fase 025.5.5 (UAT-21): la lista de candidatas se relee DENTRO de la
+  // transacción (nunca antes) y cada fila se marca APPLIED mediante un
+  // updateMany CONDICIONADO a que su matchStatus siga siendo MATCHED
+  // justo antes de crear el pago — el UPDATE toma el lock de fila de
+  // Postgres, así que dos ADMIN aplicando el mismo statement en
+  // paralelo nunca pueden crear dos pagos para la misma fila: la
+  // segunda transacción espera a que la primera confirme, relee el
+  // estado ya APPLIED y descarta la fila (`guard.count === 0`) en vez
+  // de reprocesarla. `CommissionPayment.statementRowId` es además
+  // @unique como segunda barrera de defensa en profundidad.
   let appliedCount = 0;
+  let grossAmount = new Prisma.Decimal(0);
+  let assistanceAmount = new Prisma.Decimal(0);
+  let netAmount = new Prisma.Decimal(0);
   await prisma.$transaction(async (tx) => {
+    const rowsToApply = await tx.commissionStatementRow.findMany({
+      where: { statementId: id, matchStatus: "MATCHED", matchedPolicyId: { not: null } },
+      select: {
+        id: true,
+        matchedPolicyId: true,
+        matchedExpectationId: true,
+        receivedAmount: true,
+        assistanceAmount: true,
+        netAmount: true,
+        paidAt: true,
+        effectiveDate: true,
+      },
+    });
+
     for (const row of rowsToApply) {
+      const guard = await tx.commissionStatementRow.updateMany({
+        where: { id: row.id, matchStatus: "MATCHED" },
+        data: { matchStatus: "APPLIED" },
+      });
+      if (guard.count === 0) continue; // otra aplicación concurrente ya la resolvió
       // Fase 025.5.5 (UAT-16/17): un pago real puede llegar ANTES de
       // que exista una CommissionExpectation para esa Policy+período —
       // ya NO se salta la fila por falta de expectativa (antes de esta
@@ -874,10 +966,6 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
           statementRowId: row.id,
         },
       });
-      await tx.commissionStatementRow.update({
-        where: { id: row.id },
-        data: { matchStatus: "APPLIED" },
-      });
 
       await recordAuditEvent(tx, {
         actor,
@@ -893,21 +981,40 @@ export async function applyCommissionStatement(actor: AuthorizedUser, rawId: unk
         metadata: { statementRowId: row.id },
       });
       appliedCount++;
+      grossAmount = grossAmount.plus(row.receivedAmount);
+      assistanceAmount = assistanceAmount.plus(row.assistanceAmount);
+      netAmount = netAmount.plus(row.netAmount);
     }
 
-    await tx.commissionStatement.update({
-      where: { id },
-      data: { status: "APPLIED", appliedAt: new Date() },
-    });
+    // Fase 025.5.5 (UAT-21): un batch solo se registra si esta llamada
+    // realmente aplicó algo — una segunda llamada sin filas nuevas
+    // listas (doble clic, reintento, o ya no queda nada por aplicar)
+    // es un no-op silencioso, nunca crea un batch vacío ni mueve
+    // `appliedAt`. El historial de aplicaciones nunca se sobrescribe:
+    // cada llamada exitosa agrega un registro nuevo, inmutable.
+    if (appliedCount > 0) {
+      await tx.commissionStatementApplyBatch.create({
+        data: {
+          statementId: id,
+          appliedById: actor.id,
+          rowsApplied: appliedCount,
+          paymentsCreated: appliedCount,
+          grossAmount: grossAmount.toFixed(2),
+          assistanceAmount: assistanceAmount.toFixed(2),
+          netAmount: netAmount.toFixed(2),
+        },
+      });
+      await tx.commissionStatement.update({ where: { id }, data: { appliedAt: new Date() } });
+      await recordAuditEvent(tx, {
+        actor,
+        entityType: "CommissionStatement",
+        entityId: id,
+        action: "COMMISSION_STATEMENT_APPLY",
+        summary: `Reporte de comisiones aplicado parcialmente (${appliedCount} pagos creados en esta aplicación)`,
+        metadata: { appliedCount },
+      });
+    }
     await recomputeStatementCounts(tx, id);
-    await recordAuditEvent(tx, {
-      actor,
-      entityType: "CommissionStatement",
-      entityId: id,
-      action: "COMMISSION_STATEMENT_APPLY",
-      summary: `Reporte de comisiones aplicado (${appliedCount} pagos creados)`,
-      metadata: { appliedCount },
-    });
   });
 
   return getCommissionStatementPreview(actor, id);

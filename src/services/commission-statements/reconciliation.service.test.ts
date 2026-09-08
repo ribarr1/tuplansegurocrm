@@ -188,7 +188,9 @@ describe("reconciliation.service — pipeline de conciliación", () => {
     createdStatementIds.push(upload.statementId);
     const preview = await getCommissionStatementPreview(admin, upload.statementId);
     expect(preview.rows[0].matchStatus).toBe("UNMATCHED");
-    expect(preview.statement.status).toBe("PREVIEW");
+    // Fase 025.5.5 (UAT-21): PENDING_REVIEW reemplaza PREVIEW — sigue
+    // habiendo filas accionables (esta UNMATCHED) y ninguna aplicada.
+    expect(preview.statement.status).toBe("PENDING_REVIEW");
   });
 
   it("J) manual match resuelve una fila AMBIGUOUS/UNMATCHED hacia una póliza elegida", async () => {

@@ -103,6 +103,7 @@ model User {
   overriddenCommissionExpectations CommissionExpectation[] @relation("CommissionExpectationOverriddenBy")
   uploadedDocuments                PolicyDocument[]
   uploadedCommissionStatements     CommissionStatement[]
+  commissionStatementApplyBatches  CommissionStatementApplyBatch[]
   sessions                         Session[]
   accounts                         Account[]
   auditEvents                      AuditEvent[]
@@ -1237,10 +1238,31 @@ model PolicyExternalReference {
   @@map("policy_external_references")
 }
 
+// Fase 025.5.5 (UAT-21): PREVIEW/APPLIED se conservan solo por
+// compatibilidad con datos históricos — ya NO se asignan a partir de
+// esta fase (ver computeStatementStatus en reconciliation.service.ts).
+// La aplicación se controla POR FILA, nunca por el statement completo:
+// un statement puede recibir varias aplicaciones parciales a medida
+// que el ADMIN resuelve más filas, y `appliedAt` (no nulo) nunca debe
+// interpretarse como "este reporte es inmutable".
+//   PENDING_REVIEW: ninguna fila aplicada todavía y existen filas
+//     accionables (MATCHED/UNMATCHED/AMBIGUOUS/INVALID).
+//   PARTIALLY_APPLIED: al menos una fila aplicada y todavía existen
+//     filas accionables.
+//   COMPLETED: cero filas accionables restantes y TODAS terminaron
+//     aplicadas (appliedRows === totalRows).
+//   CLOSED_WITH_SKIPPED_ROWS: cero filas accionables restantes pero no
+//     todas se aplicaron (el resto quedó IGNORED/DUPLICATE) — cerrado,
+//     nunca vuelve a mostrar el botón de aplicar salvo que una fila
+//     ignorada se reabra (fuera de alcance de esta fase).
 enum CommissionStatementStatus {
   PREVIEW
   APPLIED
   DUPLICATE_BLOCKED
+  PENDING_REVIEW
+  PARTIALLY_APPLIED
+  COMPLETED
+  CLOSED_WITH_SKIPPED_ROWS
 }
 
 // Un archivo de reporte de comisiones subido para conciliar (Orange/
@@ -1286,7 +1308,15 @@ model CommissionStatement {
   ambiguousRows   Int                       @default(0)
   appliedRows     Int                       @default(0)
   receivedTotal   Decimal                   @db.Decimal(12, 2)
+  // Fase 025.5.5 (UAT-21): un statement puede recibir VARIAS
+  // aplicaciones parciales — `appliedAt` queda como la fecha de la
+  // aplicación MÁS RECIENTE (nunca se sobrescribe con null), y
+  // `firstAppliedAt` se fija UNA sola vez, la primera vez que se aplica
+  // al menos una fila. El detalle de cada aplicación individual (quién,
+  // cuántas filas, montos) vive en `applyBatches`, nunca en estos dos
+  // campos escalares.
   appliedAt       DateTime?
+  firstAppliedAt  DateTime?
   // Nullable: los adaptadores CSV/XLSX de Fase 020 no los establecen
   // (siguen sin agencia/modalidad explícitas, fuera del alcance de
   // esta fase) — solo los adaptadores PDF nuevos los fijan siempre.
@@ -1318,11 +1348,37 @@ model CommissionStatement {
   // quedan bloqueados retroactivamente por este campo.
   footerAmbiguous Boolean @default(false)
 
-  uploadedBy User?                    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
-  rows       CommissionStatementRow[]
+  uploadedBy   User?                          @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  rows         CommissionStatementRow[]
+  applyBatches CommissionStatementApplyBatch[]
 
   @@index([source, uploadedAt])
   @@map("commission_statements")
+}
+
+// Fase 025.5.5 (UAT-21): historial de cada aplicación PARCIAL sobre un
+// statement — un statement puede aplicarse varias veces a medida que el
+// ADMIN resuelve más filas, así que un solo `appliedAt` escalar no
+// alcanza para representar quién aplicó qué y cuánto en cada ocasión.
+// Nunca se sobrescribe un batch anterior; cada aplicación crea uno
+// nuevo, inmutable. Nunca guarda PII (nombres/Member ID) — solo
+// agregados numéricos y el conteo de filas/pagos.
+model CommissionStatementApplyBatch {
+  id               String   @id @default(uuid()) @db.Uuid
+  statementId      String   @db.Uuid
+  appliedById      String?  @db.Uuid
+  appliedAt        DateTime @default(now())
+  rowsApplied      Int
+  paymentsCreated  Int
+  grossAmount      Decimal  @db.Decimal(12, 2)
+  assistanceAmount Decimal  @db.Decimal(12, 2)
+  netAmount        Decimal  @db.Decimal(12, 2)
+
+  statement CommissionStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  appliedBy User?               @relation(fields: [appliedById], references: [id], onDelete: SetNull)
+
+  @@index([statementId])
+  @@map("commission_statement_apply_batches")
 }
 
 // Fase 025.5: agrega INVALID (fila con datos inconsistentes — ej.

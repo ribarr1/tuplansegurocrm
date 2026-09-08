@@ -10,11 +10,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTimeUS, formatPeriodUS } from "@/lib/business-time";
 import { UploadStatementForm } from "./upload-form";
 
+// Fase 025.5.5 (UAT-21): PREVIEW/APPLIED solo aparecen en statements
+// creados antes de esta fase — nuevos statements siempre usan uno de
+// los 4 estados calculados por fila (ver computeStatementStatus).
 const STATUS_LABELS: Record<string, string> = {
   PREVIEW: "En revisión",
-  APPLIED: "Aplicado",
+  APPLIED: "Completado",
   DUPLICATE_BLOCKED: "Bloqueado (duplicado)",
+  PENDING_REVIEW: "Pendiente de revisión",
+  PARTIALLY_APPLIED: "Aplicado parcialmente",
+  COMPLETED: "Completado",
+  CLOSED_WITH_SKIPPED_ROWS: "Cerrado (con filas omitidas)",
 };
+
+const CLOSED_STATUSES = new Set(["APPLIED", "COMPLETED", "CLOSED_WITH_SKIPPED_ROWS"]);
 
 // Fase 025.5.5 (UAT-19): nunca la fecha de subida — el rango real de
 // meses de comisión cubiertos por el reporte.
@@ -90,7 +99,7 @@ export default async function ReconciliationPage() {
                     {s.assistanceTotal.toString()} · Neto ${s.netTotal.toString()}
                   </span>
                 </div>
-                <Badge variant={s.status === "APPLIED" ? "default" : "outline"}>
+                <Badge variant={CLOSED_STATUSES.has(s.status) ? "default" : "outline"}>
                   {STATUS_LABELS[s.status] ?? s.status}
                 </Badge>
               </Link>
