@@ -105,6 +105,15 @@ export function EditTaskForm({
         {state?.fieldErrors?.dueAt && (
           <p className="text-sm text-destructive">{state.fieldErrors.dueAt}</p>
         )}
+        {/* CORRECCIÓN (vencimiento de tareas): única forma de borrar un
+            vencimiento existente — dejar los campos de arriba vacíos
+            nunca lo borra, solo significa "no tocar". */}
+        {!!values.dueAt && (
+          <label className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+            <input type="checkbox" name="clearDueAt" value="true" />
+            Quitar la fecha de vencimiento
+          </label>
+        )}
       </div>
 
       {showAssigneeSelect && (

@@ -332,7 +332,15 @@ export async function updateTask(actor: AuthorizedUser, rawId: unknown, rawInput
   // guarda) como para el diff de auditoría — nunca comparar el string
   // crudo "YYYY-MM-DDTHH:mm" contra el Date ya existente, formatos
   // distintos que nunca coincidirían aunque el valor real no cambiara.
-  const resolvedDueAt = input.dueAt !== undefined ? resolveDueAt(input.dueAt) : undefined;
+  // CORRECCIÓN (vencimiento de tareas): `clearDueAt` es la ÚNICA vía
+  // para borrar un vencimiento existente — `input.dueAt === undefined`
+  // (campo vacío o no enviado) SIEMPRE significa "no tocar", nunca
+  // "borrar" (ver optionalDueAtUpdate en task.schema.ts).
+  const resolvedDueAt = input.clearDueAt
+    ? null
+    : input.dueAt !== undefined
+      ? resolveDueAt(input.dueAt)
+      : undefined;
 
   const data: Prisma.TaskUncheckedUpdateInput = {};
   if (input.title !== undefined) data.title = input.title;

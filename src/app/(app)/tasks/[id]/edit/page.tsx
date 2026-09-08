@@ -43,7 +43,14 @@ export default async function EditTaskPage({
   return (
     <div className="flex flex-col gap-6 p-6">
       <h2 className="font-heading text-lg font-semibold">Editar tarea — {task.title}</h2>
+      {/* CORRECCIÓN (vencimiento de tareas): key={id} fuerza un remount
+          completo (incluido USDateTimeInput, cuyo estado interno solo
+          se inicializa una vez) si el ADMIN navega de editar una tarea
+          a otra sin recarga completa — sin esto, Next.js reutiliza la
+          misma instancia del formulario y los campos pueden quedar con
+          los valores de la tarea anterior en vez de los de esta. */}
       <EditTaskForm
+        key={id}
         action={updateTaskAction.bind(null, id)}
         defaultValues={{
           title: task.title,

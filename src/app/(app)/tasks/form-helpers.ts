@@ -29,7 +29,7 @@ export function formDataToCreateTaskInput(formData: FormData): Record<string, st
   return raw;
 }
 
-const UPDATE_FIELDS = ["title", "description", "status", "priority", "dueAt", "assignedToId"] as const;
+const UPDATE_FIELDS = ["title", "description", "status", "priority", "dueAt", "clearDueAt", "assignedToId"] as const;
 
 // Solo incluye una clave si el campo realmente vino en el <form> — así
 // "Responsable" ausente del formulario de un AGENT (que nunca puede

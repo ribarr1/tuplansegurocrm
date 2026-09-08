@@ -52,6 +52,20 @@ function assertAdminOnly(actor: AuthorizedUser) {
   }
 }
 
+// CORRECCIÓN (editar licencias): el modelo nunca validó que el
+// vencimiento no fuera anterior a la fecha efectiva — se aplica tanto
+// al crear como al editar, comparando siempre el estado RESULTANTE
+// (fecha ya existente + lo que se está cambiando), nunca solo los
+// campos que llegaron en esta llamada.
+function assertValidLicenseDateRange(effectiveDate: Date | null, expirationDate: Date | null) {
+  if (effectiveDate && expirationDate && expirationDate.getTime() < effectiveDate.getTime()) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "expirationDate: La fecha de vencimiento no puede ser anterior a la fecha efectiva."
+    );
+  }
+}
+
 export async function listAgentLicenses(actor: AuthorizedUser, rawUserId: unknown) {
   const userId = parseOrThrow(userIdSchema, rawUserId);
   assertCanView(actor, userId);
@@ -68,6 +82,7 @@ export async function createAgentLicense(actor: AuthorizedUser, rawInput: unknow
 
   const user = await prisma.user.findUnique({ where: { id: input.userId }, select: { id: true } });
   if (!user) throw new AppError("NOT_FOUND", "Usuario no encontrado.");
+  assertValidLicenseDateRange(input.effectiveDate ?? null, input.expirationDate ?? null);
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -106,6 +121,10 @@ export async function updateAgentLicense(actor: AuthorizedUser, rawId: unknown, 
 
   const existing = await prisma.agentLicense.findUnique({ where: { id }, select: licenseSelect });
   if (!existing) throw new AppError("NOT_FOUND", "Licencia no encontrada.");
+
+  const resolvedEffectiveDate = input.effectiveDate !== undefined ? input.effectiveDate : existing.effectiveDate;
+  const resolvedExpirationDate = input.expirationDate !== undefined ? input.expirationDate : existing.expirationDate;
+  assertValidLicenseDateRange(resolvedEffectiveDate, resolvedExpirationDate);
 
   const data: Prisma.AgentLicenseUpdateInput = {};
   if (input.status !== undefined) data.status = input.status;

@@ -7,9 +7,10 @@ import { AppError } from "@/services/errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDateOnlyUS } from "@/lib/date-only";
+import { formatDateOnlyUS, toDateOnlyIso } from "@/lib/date-only";
 import { CreateLicenseForm } from "./create-license-form";
 import { ToggleLicenseStatusButton } from "./toggle-license-status-button";
+import { EditLicenseDialog } from "./edit-license-dialog";
 
 const LICENSE_STATUS_BADGE: Record<string, "default" | "outline" | "destructive"> = {
   ACTIVE: "default",
@@ -94,11 +95,21 @@ export default async function AgentLicensesPage({ params }: { params: Promise<{ 
                   </TableCell>
                   {actor.role === "ADMIN" && (
                     <TableCell className="text-right">
-                      <ToggleLicenseStatusButton
-                        licenseId={license.id}
-                        userId={id}
-                        status={license.status}
-                      />
+                      <div className="flex justify-end gap-1">
+                        <EditLicenseDialog
+                          licenseId={license.id}
+                          userId={id}
+                          state={license.state}
+                          licenseNumber={license.licenseNumber}
+                          effectiveDateIso={toDateOnlyIso(license.effectiveDate)}
+                          expirationDateIso={toDateOnlyIso(license.expirationDate)}
+                        />
+                        <ToggleLicenseStatusButton
+                          licenseId={license.id}
+                          userId={id}
+                          status={license.status}
+                        />
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>

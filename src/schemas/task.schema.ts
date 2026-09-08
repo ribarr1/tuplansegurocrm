@@ -62,12 +62,24 @@ const dueAtCreateSchema = z
   .transform((v) => (v.trim() === "" ? undefined : v.trim()))
   .optional();
 
-function nullableDueAt() {
+// CORRECCIÓN (vencimiento de tareas): el <input type="hidden"> que
+// combina fecha/hora/AM-PM (USDateTimeInput) SIEMPRE está presente en
+// el formulario de edición, así que el servidor nunca puede distinguir
+// "el campo llegó vacío porque el usuario no lo tocó" de "" a secas —
+// antes esta función transformaba "" en `null`, y tasks.service.ts
+// interpretaba `null` como "borrar el vencimiento", así que CUALQUIER
+// guardado con el campo vacío (p. ej. una tarea sin vencimiento, o el
+// campo todavía sin inicializar) borraba silenciosamente el
+// vencimiento existente. Ahora "" se traduce a `undefined` (no tocar,
+// mismo criterio que el resto de campos opcionales de este schema) —
+// borrar el vencimiento es SOLO posible mediante el campo explícito
+// `clearDueAt` (ver updateTaskSchema y tasks.service.ts::updateTask).
+function optionalDueAtUpdate() {
   return z
     .string()
     .transform((v, ctx) => {
       const trimmed = v.trim();
-      if (trimmed === "") return null;
+      if (trimmed === "") return undefined;
       if (!isValidLocalDateTime(trimmed)) {
         ctx.addIssue({ code: "custom", message: "Fecha/hora inválida." });
         return z.NEVER;
@@ -117,7 +129,15 @@ export const updateTaskSchema = z.object({
   description: nullableDescription(),
   status: z.enum(TASK_STATUS_VALUES).optional(),
   priority: z.enum(TASK_PRIORITY_VALUES).optional(),
-  dueAt: nullableDueAt(),
+  dueAt: optionalDueAtUpdate(),
+  // CORRECCIÓN (vencimiento de tareas): única vía para borrar un
+  // vencimiento existente — nunca se infiere de un campo dueAt vacío
+  // (ver optionalDueAtUpdate arriba). Checkbox explícito en el
+  // formulario, nunca marcado por defecto.
+  clearDueAt: z
+    .string()
+    .optional()
+    .transform((v) => v === "true"),
   assignedToId: nullableAssignedTo(),
 });
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;

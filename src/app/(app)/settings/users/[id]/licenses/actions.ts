@@ -36,6 +36,39 @@ export async function createAgentLicenseAction(
   return undefined;
 }
 
+// CORRECCIÓN (editar licencias): a diferencia de setAgentLicenseStatusAction
+// (solo status), esta acción permite modificar número de
+// licencia/fecha efectiva/fecha de vencimiento — nunca el estado
+// geográfico (updateAgentLicenseSchema ni siquiera acepta `state`).
+// Las fechas vacías se tratan como "no tocar" (mismo criterio que
+// createAgentLicenseAction) — este formulario no ofrece una forma de
+// borrar una fecha ya registrada, fuera del alcance de esta corrección.
+export async function updateAgentLicenseAction(
+  licenseId: string,
+  userId: string,
+  formData: FormData
+): Promise<{ error?: string }> {
+  const actor = await requireSessionUser();
+  try {
+    await updateAgentLicense(actor, licenseId, {
+      licenseNumber: String(formData.get("licenseNumber") ?? ""),
+      effectiveDate: String(formData.get("effectiveDate") ?? "") || undefined,
+      expirationDate: String(formData.get("expirationDate") ?? "") || undefined,
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      const sep = error.message.indexOf(": ");
+      if (error.code === "VALIDATION_ERROR" && sep > 0) {
+        return { error: error.message.slice(sep + 2) };
+      }
+      return { error: error.message };
+    }
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  revalidatePath(`/settings/users/${userId}/licenses`);
+  return {};
+}
+
 export async function setAgentLicenseStatusAction(
   licenseId: string,
   userId: string,

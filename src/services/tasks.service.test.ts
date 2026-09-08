@@ -11,6 +11,7 @@ import {
   isTaskOverdue,
 } from "@/services/tasks.service";
 import { createPolicy } from "@/services/policies.service";
+import { getTodayBusinessRange, toBusinessDateTimeLocalString } from "@/lib/business-time";
 import type { AuthorizedUser } from "@/lib/authorization";
 
 const createdUserIds: string[] = [];
@@ -251,6 +252,62 @@ describe("tasks.service", () => {
     expect(ids).not.toContain(tomorrowTask.id);
   });
 
+  // CORRECCIÓN (filtro "Hoy"): día completo en APP_TIME_ZONE
+  // (dueDate >= inicio de hoy, < inicio de mañana) — casos límite
+  // explícitos (medianoche, mediodía, ayer, mañana) usando el mismo
+  // cálculo de calendario que getTodayBusinessRange, nunca getters
+  // locales del proceso de test (evita depender de que la zona
+  // horaria del entorno de CI coincida con APP_TIME_ZONE).
+  function localDateTimeAt(dayOffset: number, hour: string, minute: string): string {
+    const { year, month, day } = getTodayBusinessRange();
+    const anchor = new Date(Date.UTC(year, month - 1, day));
+    anchor.setUTCDate(anchor.getUTCDate() + dayOffset);
+    const y = anchor.getUTCFullYear();
+    const m = String(anchor.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(anchor.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}T${hour}:${minute}`;
+  }
+
+  it("R2) filtro Hoy incluye medianoche (00:00) de hoy", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea R2 Medianoche"), dueAt: localDateTimeAt(0, "00", "00") })
+    );
+    const { items } = await listTasks(admin, { dueToday: "true" });
+    expect(items.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("R3) filtro Hoy incluye mediodía (12:00) de hoy", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea R3 Mediodia"), dueAt: localDateTimeAt(0, "12", "00") })
+    );
+    const { items } = await listTasks(admin, { dueToday: "true" });
+    expect(items.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("R4) filtro Hoy incluye las 23:59 de hoy (último minuto del día)", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea R4 FinDia"), dueAt: localDateTimeAt(0, "23", "59") })
+    );
+    const { items } = await listTasks(admin, { dueToday: "true" });
+    expect(items.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("R5) filtro Hoy excluye las 23:59 de AYER", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea R5 Ayer"), dueAt: localDateTimeAt(-1, "23", "59") })
+    );
+    const { items } = await listTasks(admin, { dueToday: "true" });
+    expect(items.map((t) => t.id)).not.toContain(task.id);
+  });
+
+  it("R6) filtro Hoy excluye las 00:00 de MAÑANA", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea R6 Manana"), dueAt: localDateTimeAt(1, "00", "00") })
+    );
+    const { items } = await listTasks(admin, { dueToday: "true" });
+    expect(items.map((t) => t.id)).not.toContain(task.id);
+  });
+
   it("S) status filter", async () => {
     const task = trackTask(await createTask(admin, { title: uniqueName("Tarea S") }));
     await completeTask(admin, task.id);
@@ -349,6 +406,52 @@ describe("tasks.service", () => {
     await expect(
       listTasks(admin, { status: "", priority: "", dueToday: "", overdueOnly: "" })
     ).resolves.toBeDefined();
+  });
+
+  // CORRECCIÓN (vencimiento de tareas): el <input type="hidden"> del
+  // formulario de edición SIEMPRE está presente en el FormData —
+  // simular exactamente eso (dueAt: "" en el input, nunca ausente del
+  // objeto) reproduce el bug real reportado, no una versión simplificada.
+  it("Z1) editar otros campos con dueAt='' (simula el hidden input sin tocar) NUNCA borra un vencimiento existente", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea Z1"), dueAt: localDateTimeAt(0, "10", "00") })
+    );
+    expect(task.dueAt).not.toBeNull();
+    const updated = await updateTask(admin, task.id, { title: uniqueName("Tarea Z1 editada"), dueAt: "" });
+    expect(updated.dueAt?.toISOString()).toBe(task.dueAt!.toISOString());
+  });
+
+  it("Z2) crear una tarea SIN vencimiento y luego editar otros campos con dueAt='' sigue sin vencimiento (nunca inventa uno)", async () => {
+    const task = trackTask(await createTask(admin, { title: uniqueName("Tarea Z2") }));
+    expect(task.dueAt).toBeNull();
+    const updated = await updateTask(admin, task.id, { title: uniqueName("Tarea Z2 editada"), dueAt: "" });
+    expect(updated.dueAt).toBeNull();
+  });
+
+  it("Z3) clearDueAt='true' SÍ borra un vencimiento existente — única vía explícita", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea Z3"), dueAt: localDateTimeAt(0, "10", "00") })
+    );
+    const updated = await updateTask(admin, task.id, { dueAt: "", clearDueAt: "true" });
+    expect(updated.dueAt).toBeNull();
+  });
+
+  it("Z4) clearDueAt ausente (checkbox sin marcar) nunca borra, aunque dueAt llegue vacío", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea Z4"), dueAt: localDateTimeAt(0, "10", "00") })
+    );
+    const updated = await updateTask(admin, task.id, { dueAt: "" });
+    expect(updated.dueAt).not.toBeNull();
+  });
+
+  it("Z5) editar y cargar de nuevo con getTaskById conserva fecha, hora y AM/PM exactos (round-trip completo)", async () => {
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea Z5"), dueAt: localDateTimeAt(0, "14", "30") })
+    );
+    await updateTask(admin, task.id, { title: uniqueName("Tarea Z5 renombrada") });
+    const fetched = await getTaskById(admin, task.id);
+    const localString = toBusinessDateTimeLocalString(fetched.dueAt);
+    expect(localString.endsWith("T14:30")).toBe(true);
   });
 });
 
