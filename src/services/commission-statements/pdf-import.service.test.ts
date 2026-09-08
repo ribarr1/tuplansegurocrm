@@ -11,6 +11,7 @@ import {
   listCommissionStatements,
 } from "./reconciliation.service";
 import { createCommissionExpectation, addCommissionPayment } from "@/services/commissions.service";
+import { searchPolicyCandidatesForRow } from "./policy-candidates";
 import { OrangeOwnPdfAdapter } from "./orange-own-pdf-adapter";
 import { OrangeReferralPdfAdapter } from "./orange-referral-pdf-adapter";
 import { EliteReferralPdfAdapter } from "./elite-referral-pdf-adapter";
@@ -95,12 +96,16 @@ async function makeHealthPolicy(
     createdContractIds.push(contract.id);
   }
 
+  // Fase 025.5.6 (UAT-22): effectiveDate en el mismo año que el período
+  // de la comisión (opts.period) — de lo contrario la nueva validación
+  // de vigencia (computePeriodMatch) exige un motivo administrativo
+  // explícito para el match manual, que estas pruebas no ejercitan.
   const policy = await createPolicy(admin, {
     holderId: person.id,
     productId: product.id,
     holderCovered: "false",
     status: "ACTIVE",
-    effectiveDate: new Date("2020-01-01"),
+    effectiveDate: new Date(Date.UTC(opts.period.getUTCFullYear(), 0, 1)),
   });
   createdPolicyIds.push(policy.id);
   createdRuleProductIds.push(product.id);
@@ -145,12 +150,17 @@ async function makeHealthPolicyNoExpectation(
   });
   createdContractIds.push(contract.id);
 
+  // Fase 025.5.6 (UAT-22): los reportes de este archivo de prueba
+  // siempre pagan períodos de 2026 (ver PAID_PERIOD/PAID_AT) — la
+  // effectiveDate debe cubrir ese año para que la nueva validación de
+  // vigencia no exija un motivo administrativo en pruebas que no lo
+  // están ejercitando.
   const policy = await createPolicy(admin, {
     holderId: person.id,
     productId: product.id,
     holderCovered: "false",
     status: "ACTIVE",
-    effectiveDate: new Date("2020-01-01"),
+    effectiveDate: new Date("2026-01-01"),
   });
   createdPolicyIds.push(policy.id);
   createdRuleProductIds.push(product.id);
@@ -1346,5 +1356,299 @@ describe("Fase 025.5.5 (UAT-21) — aplicar filas nuevas sobre un statement ya a
     expect(preview.statement.appliedRows).toBe(1);
     expect(preview.statement.matchedRows).toBe(0);
     expect(preview.statement.status).toBe("CLOSED_WITH_SKIPPED_ROWS");
+  });
+});
+
+describe("Fase 025.5.6 (UAT-22) — información suficiente y periodo correcto al emparejar", () => {
+  const headers = [
+    "Member ID", "Name", "Agent", "State", "Carrier", "Status", "Rate", "Members",
+    "Subtotal", "Asistencia", "Total", "Effective Date", "Paid At",
+  ];
+  const referralHeaders = ["Name", "Agent", "State", "Carrier", "Status", "Rate", "Members", "Subtotal", "Asistencia", "Total", "Effective Date", "Paid At"];
+
+  async function uploadUnmatchedRow(source: "ORANGE_OWN" | "ORANGE_REFERRAL", carrierName: string, extra?: string[][]) {
+    const memberName = `Buscar${uniqueName("Persona")}`;
+    const row =
+      source === "ORANGE_OWN"
+        ? [uniqueName("OSC"), memberName, "Agent A", "TX", carrierName, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-07-01", "2026-07-15"]
+        : [memberName, "Agent A", "TX", carrierName, "ACTIVE", "25.00", "1", "25.00", "0.00", "25.00", "2026-07-01", "2026-07-15"];
+    const hdrs = source === "ORANGE_OWN" ? headers : referralHeaders;
+    const pdf = buildTestTablePdf([hdrs, row, ...(extra ?? [])]);
+    const upload = await uploadCommissionStatement(admin, source, makePdfFile(pdf, uniqueName("uat22") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    const row0 = preview.rows.find((r) => r.matchStatus === "UNMATCHED");
+    if (!row0) throw new Error("expected an UNMATCHED row");
+    return { rowId: row0.id, memberName };
+  }
+
+  it("NN) candidatas muestran año, producto, vigencia, estado, OWN/REFERRAL, número enmascarado y periodo de comisión", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Visible", lastName: uniqueName("Campos"), carrierName: uniqueName("OscarVisible"),
+      state: "TX", own: true, expectedAmount: "25.00", period: new Date(Date.UTC(2026, 6, 1)),
+    });
+    await prisma.policy.update({ where: { id: policy.id }, data: { policyNumber: "POL-VISIBLE-778899" } });
+    await prisma.product.update({ where: { id: (await prisma.policy.findUniqueOrThrow({ where: { id: policy.id }, select: { productId: true } })).productId }, data: { planYear: 2026 } });
+
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+    const candidates = await searchPolicyCandidatesForRow(admin, rowId, person.lastName);
+    const match = candidates.find((c) => c.policyId === policy.id);
+    if (!match) throw new Error("expected the created policy to appear as a candidate");
+    expect(match.planYear).toBe(2026);
+    expect(match.productName).toBeTruthy();
+    expect(match.effectiveDate).not.toBeNull();
+    expect(match.status).toBe("ACTIVE");
+    expect(match.businessSource).toBe("OWN");
+    expect(match.maskedPolicyNumber).toBe("*".repeat("POL-VISIBLE-778899".length - 4) + "8899");
+    expect(match.maskedPolicyNumber).not.toContain("POL-VISIBLE");
+    expect(match.periodMatch).toBe("MATCH");
+    expect(match.recommended).toBe(true);
+  });
+
+  it("OO) misma persona con póliza 2025 y 2026: la comisión de 2026 recomienda la póliza 2026 primero; la 2025 aparece fuera del periodo", async () => {
+    const sharedName = { firstName: "Historial", lastName: uniqueName("DosAnios") };
+    const { policy: policy2025 } = await makeHealthPolicy(admin, {
+      ...sharedName, carrierName: uniqueName("OscarDosAnios2025"), state: "TX", own: true, expectedAmount: "25.00", period: new Date(Date.UTC(2025, 6, 1)),
+    });
+    const { person, policy: policy2026, carrier } = await makeHealthPolicy(admin, {
+      firstName: sharedName.firstName, lastName: sharedName.lastName, carrierName: uniqueName("OscarDosAnios2026"), state: "TX", own: true,
+      expectedAmount: "25.00", period: new Date(Date.UTC(2026, 6, 1)),
+    });
+
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+    const candidates = await searchPolicyCandidatesForRow(admin, rowId, person.lastName);
+    expect(candidates.length).toBeGreaterThanOrEqual(2);
+    expect(candidates[0].policyId).toBe(policy2026.id); // recomendada primero
+    expect(candidates[0].periodMatch).toBe("MATCH");
+    const found2025 = candidates.find((c) => c.policyId === policy2025.id);
+    expect(found2025?.periodMatch).toBe("OUT_OF_PERIOD");
+    expect(found2025?.recommended).toBe(false);
+  });
+
+  it("PP) Policy HEALTH aparece como candidata, Policy DENTAL del mismo nombre nunca aparece", async () => {
+    const { person, household } = await makePerson("Dental", uniqueName("Filtro"), "TX");
+    const carrier = await prisma.carrier.create({ data: { name: uniqueName("DentalCarrier22") } });
+    createdCarrierIds.push(carrier.id);
+    const dentalProduct = await prisma.product.create({
+      data: { carrierId: carrier.id, name: uniqueName("Plan Dental"), policyType: "DENTAL" },
+    });
+    createdProductIds.push(dentalProduct.id);
+    const dentalPolicy = await createPolicy(admin, {
+      holderId: person.id, productId: dentalProduct.id, holderCovered: "false", status: "ACTIVE",
+      effectiveDate: new Date("2026-01-01"),
+    });
+    createdPolicyIds.push(dentalPolicy.id);
+    void household;
+
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+    const candidates = await searchPolicyCandidatesForRow(admin, rowId, person.lastName);
+    expect(candidates.some((c) => c.policyId === dentalPolicy.id)).toBe(false);
+  });
+
+  it("QQ) carrier incompatible se marca con advertencia y nunca se recomienda", async () => {
+    const { person, policy } = await makeHealthPolicy(admin, {
+      firstName: "CarrierMismatch", lastName: uniqueName("Persona"), carrierName: uniqueName("CarrierReal"),
+      state: "TX", own: true, expectedAmount: "25.00", period: new Date(Date.UTC(2026, 6, 1)),
+    });
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", uniqueName("CarrierDetectadoDistinto"));
+    const candidates = await searchPolicyCandidatesForRow(admin, rowId, person.lastName);
+    const found = candidates.find((c) => c.policyId === policy.id);
+    expect(found?.recommended).toBe(false);
+    expect(found?.warnings.some((w) => w.toLowerCase().includes("carrier"))).toBe(true);
+  });
+
+  it("RR) una póliza UNKNOWN aparece pero nunca recomendada, y el match manual la bloquea cuando el reporte exige modalidad", async () => {
+    // Persona SIN household (nunca se le asigna uno) — createPolicy
+    // deja householdId null en ese caso, y getPolicyEligibility resuelve
+    // businessSource=UNKNOWN honestamente (nunca REFERRAL por defecto)
+    // cuando no hay household que dé el estado de residencia.
+    const person = await prisma.person.create({
+      data: { firstName: "SinClasificar", lastName: uniqueName("Persona"), contactStatus: "CLIENT" },
+    });
+    createdPersonIds.push(person.id);
+    const carrier = await prisma.carrier.create({ data: { name: uniqueName("OscarUnknown") } });
+    createdCarrierIds.push(carrier.id);
+    const product = await prisma.product.create({
+      data: { carrierId: carrier.id, name: uniqueName("Plan Unknown"), policyType: "HEALTH", planYear: 2026 },
+    });
+    createdProductIds.push(product.id);
+    const policy = await createPolicy(admin, {
+      holderId: person.id, productId: product.id, holderCovered: "false", status: "ACTIVE",
+      effectiveDate: new Date("2026-01-01"),
+    });
+    createdPolicyIds.push(policy.id);
+    const before = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id }, select: { businessSource: true } });
+    expect(before.businessSource).toBe("UNKNOWN");
+
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+    const candidates = await searchPolicyCandidatesForRow(admin, rowId, person.lastName);
+    const found = candidates.find((c) => c.policyId === policy.id);
+    expect(found?.recommended).toBe(false);
+    expect(found?.businessSource).toBe("UNKNOWN");
+
+    await expect(manualMatchStatementRow(admin, rowId, { policyId: policy.id })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("clasificación"),
+    });
+    const afterAttempt = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id }, select: { businessSource: true } });
+    expect(afterAttempt.businessSource).toBe("UNKNOWN"); // el intento fallido nunca reclasifica
+  });
+
+  it("SS) seleccionar una póliza fuera del periodo sin motivo se rechaza; con motivo se acepta, se registra READY y se audita sin PII", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "FueraPeriodo", lastName: uniqueName("Persona"), carrierName: uniqueName("OscarFueraPeriodo"),
+      state: "TX", own: true, expectedAmount: "25.00", period: new Date(Date.UTC(2025, 6, 1)), // póliza de 2025
+    });
+    // El reporte que se sube paga julio 2026 — fuera de la vigencia
+    // 2025 de la póliza (terminationDate default = 2025-12-31).
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+
+    await expect(manualMatchStatementRow(admin, rowId, { policyId: policy.id })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("periodo de comisión"),
+    });
+
+    const preview = await manualMatchStatementRow(admin, rowId, {
+      policyId: policy.id,
+      outOfPeriodReason: "Pago atrasado del carrier confirmado por el agente.",
+    });
+    const row = preview.rows.find((r) => r.id === rowId);
+    expect(row?.importStatus).toBe("READY"); // no existe cola de segunda revisión en esta arquitectura
+
+    const auditEvent = await prisma.auditEvent.findFirst({
+      where: { entityId: rowId, action: "COMMISSION_STATEMENT_MATCH" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(auditEvent?.metadata).toMatchObject({ periodMatch: "OUT_OF_PERIOD" });
+    expect(JSON.stringify(auditEvent?.metadata)).not.toContain(person.lastName);
+    void carrier;
+  });
+
+  it("TT) Orange Referida exige PolicyMember: sin miembro se rechaza, con miembro de OTRA póliza se rechaza, con el miembro correcto se acepta", async () => {
+    const { person, household } = await makePerson("Familia", uniqueName("Referida"), "TX");
+    const carrier = await prisma.carrier.create({ data: { name: uniqueName("KaiserRef") } });
+    createdCarrierIds.push(carrier.id);
+    const product = await prisma.product.create({
+      data: { carrierId: carrier.id, name: uniqueName("Plan Referida"), policyType: "HEALTH", planYear: 2026 },
+    });
+    createdProductIds.push(product.id);
+    const policy = await createPolicy(admin, {
+      holderId: person.id, productId: product.id, holderCovered: "true", status: "ACTIVE",
+      effectiveDate: new Date("2026-01-01"),
+    });
+    createdPolicyIds.push(policy.id);
+    void household;
+    const primaryMember = await prisma.policyMember.findFirstOrThrow({ where: { policyId: policy.id, role: "PRIMARY" } });
+
+    // Póliza de OTRA persona, con su propio PolicyMember — nunca debe
+    // poder vincularse a la póliza de arriba.
+    const { person: otherPerson } = await makePerson("Otra", uniqueName("Persona"), "TX");
+    const otherPolicy = await createPolicy(admin, {
+      holderId: otherPerson.id, productId: product.id, holderCovered: "true", status: "ACTIVE",
+      effectiveDate: new Date("2026-01-01"),
+    });
+    createdPolicyIds.push(otherPolicy.id);
+    const otherMember = await prisma.policyMember.findFirstOrThrow({ where: { policyId: otherPolicy.id, role: "PRIMARY" } });
+
+    const { rowId } = await uploadUnmatchedRow("ORANGE_REFERRAL", carrier.name);
+
+    await expect(manualMatchStatementRow(admin, rowId, { policyId: policy.id })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("miembro"),
+    });
+    await expect(
+      manualMatchStatementRow(admin, rowId, { policyId: policy.id, policyMemberId: otherMember.id })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("no pertenece") });
+
+    const preview = await manualMatchStatementRow(admin, rowId, { policyId: policy.id, policyMemberId: primaryMember.id });
+    const row = preview.rows.find((r) => r.id === rowId);
+    expect(row?.matchedPolicyMember?.id).toBe(primaryMember.id);
+    expect(row?.importStatus).toBe("READY");
+  });
+
+  it("UU) dos filas del mismo periodo no pueden vincularse silenciosamente al mismo PolicyMember — la segunda se bloquea para revisión", async () => {
+    const { person, household } = await makePerson("Duplicado", uniqueName("Miembro"), "TX");
+    const carrier = await prisma.carrier.create({ data: { name: uniqueName("KaiserDupMember") } });
+    createdCarrierIds.push(carrier.id);
+    const product = await prisma.product.create({
+      data: { carrierId: carrier.id, name: uniqueName("Plan DupMember"), policyType: "HEALTH", planYear: 2026 },
+    });
+    createdProductIds.push(product.id);
+    const policy = await createPolicy(admin, {
+      holderId: person.id, productId: product.id, holderCovered: "true", status: "ACTIVE",
+      effectiveDate: new Date("2026-01-01"),
+    });
+    createdPolicyIds.push(policy.id);
+    void household;
+    const member = await prisma.policyMember.findFirstOrThrow({ where: { policyId: policy.id, role: "PRIMARY" } });
+
+    const { rowId: rowId1 } = await uploadUnmatchedRow("ORANGE_REFERRAL", carrier.name);
+    await manualMatchStatementRow(admin, rowId1, { policyId: policy.id, policyMemberId: member.id });
+
+    const { rowId: rowId2 } = await uploadUnmatchedRow("ORANGE_REFERRAL", carrier.name);
+    await expect(
+      manualMatchStatementRow(admin, rowId2, { policyId: policy.id, policyMemberId: member.id })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("duplicado") });
+  });
+
+  it("VV) Orange Propia y Elite Referida permanecen agregadas por Policy — nunca exigen ni aceptan PolicyMember", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Agregada", lastName: uniqueName("Propia"), carrierName: uniqueName("OscarAgregada"),
+      state: "TX", own: true, expectedAmount: "25.00", period: new Date(Date.UTC(2026, 6, 1)),
+    });
+    void person;
+    const member = await prisma.policyMember.create({
+      data: { policyId: policy.id, personId: (await makePerson("Miembro", uniqueName("Extra"), "TX")).person.id, role: "DEPENDENT" },
+    });
+
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+    await expect(
+      manualMatchStatementRow(admin, rowId, { policyId: policy.id, policyMemberId: member.id })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("nivel póliza") });
+
+    const preview = await manualMatchStatementRow(admin, rowId, { policyId: policy.id });
+    expect(preview.rows.find((r) => r.id === rowId)?.matchedPolicyMember).toBeNull();
+  });
+
+  it("WW) manipular policyId inexistente o policyMemberId ajeno se rechaza server-side; nunca se crea CommissionPayment al emparejar", async () => {
+    const { carrier } = await makeHealthPolicy(admin, {
+      firstName: "Seguridad", lastName: uniqueName("Match"), carrierName: uniqueName("OscarSeg"),
+      state: "TX", own: true, expectedAmount: "25.00", period: new Date(Date.UTC(2026, 6, 1)),
+    });
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+
+    await expect(
+      manualMatchStatementRow(admin, rowId, { policyId: "00000000-0000-0000-0000-000000000000" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const paymentCount = await prisma.commissionPayment.count();
+    const beforeCount = paymentCount;
+    const preview = await getCommissionStatementPreview(admin, (await prisma.commissionStatementRow.findUniqueOrThrow({ where: { id: rowId }, select: { statementId: true } })).statementId);
+    expect(preview.rows.find((r) => r.id === rowId)?.matchStatus).toBe("UNMATCHED");
+    expect(await prisma.commissionPayment.count()).toBe(beforeCount); // el emparejamiento nunca crea pagos
+  });
+
+  it("XX) el diagnóstico de mappings existentes reporta conteos por categoría, nunca corrige nada automáticamente", async () => {
+    const { person, carrier, policy } = await makeHealthPolicy(admin, {
+      firstName: "Diagnostico", lastName: uniqueName("Persona"), carrierName: uniqueName("OscarDiag"),
+      state: "TX", own: true, expectedAmount: "25.00", period: new Date(Date.UTC(2025, 6, 1)), // vigente en 2025
+    });
+    const { rowId } = await uploadUnmatchedRow("ORANGE_OWN", carrier.name);
+    await manualMatchStatementRow(admin, rowId, {
+      policyId: policy.id,
+      outOfPeriodReason: "Corrección administrativa de prueba.",
+    });
+    const statementId = (await prisma.commissionStatementRow.findUniqueOrThrow({ where: { id: rowId }, select: { statementId: true } })).statementId;
+    const beforePreview = await getCommissionStatementPreview(admin, statementId);
+    const beforeBusinessSource = (await prisma.policy.findUniqueOrThrow({ where: { id: policy.id }, select: { businessSource: true, effectiveDate: true } }));
+
+    expect(beforePreview.mappingDiagnosticSummary.periodMismatch).toBeGreaterThanOrEqual(1);
+
+    // El diagnóstico es de solo lectura — releerlo no cambia nada de la Policy.
+    await getCommissionStatementPreview(admin, statementId);
+    const afterBusinessSource = await prisma.policy.findUniqueOrThrow({ where: { id: policy.id }, select: { businessSource: true, effectiveDate: true } });
+    expect(afterBusinessSource).toEqual(beforeBusinessSource);
+    void person;
   });
 });

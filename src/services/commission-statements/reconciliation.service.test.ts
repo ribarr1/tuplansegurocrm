@@ -94,11 +94,16 @@ async function makePolicyWithExpectation(
     data: { carrierId: carrier.id, name: uniqueName("Plan Recon"), policyType: "HEALTH" },
   });
   createdProductIds.push(product.id);
+  // Fase 025.5.6 (UAT-22): effectiveDate SIEMPRE en el mismo año que el
+  // período de la comisión que se va a conciliar — de lo contrario la
+  // nueva validación de vigencia (computePeriodMatch) exige un motivo
+  // administrativo explícito, cosa que estos tests no están probando
+  // aquí (eso lo cubre pdf-import.service.test.ts).
   const policy = await createPolicy(admin, {
     holderId: person.id,
     productId: product.id,
     holderCovered: "false",
-    effectiveDate: new Date("2020-01-01"),
+    effectiveDate: new Date(Date.UTC(period.getUTCFullYear(), 0, 1)),
     status: "ACTIVE",
   });
   createdPolicyIds.push(policy.id);

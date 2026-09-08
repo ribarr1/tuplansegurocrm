@@ -8,8 +8,8 @@ import {
   manualMatchStatementRow,
   ignoreStatementRow,
   applyCommissionStatement,
-  searchPoliciesForManualMatch,
 } from "@/services/commission-statements/reconciliation.service";
+import { searchPolicyCandidatesForRow } from "@/services/commission-statements/policy-candidates";
 import { AppError } from "@/services/errors";
 
 export type ReconciliationFormState = { error?: string; success?: true } | undefined;
@@ -41,11 +41,11 @@ export async function uploadCommissionStatementAction(
 
 export async function manualMatchRowAction(
   rowId: string,
-  policyId: string
+  input: { policyId: string; policyMemberId?: string | null; outOfPeriodReason?: string | null }
 ): Promise<{ error?: string }> {
   const actor = await requireSessionUser();
   try {
-    const preview = await manualMatchStatementRow(actor, rowId, { policyId });
+    const preview = await manualMatchStatementRow(actor, rowId, input);
     revalidatePath(`/commissions/reconciliation/${preview.statement.id}`);
     return {};
   } catch (error) {
@@ -66,10 +66,10 @@ export async function ignoreStatementRowAction(rowId: string): Promise<{ error?:
   }
 }
 
-export async function searchPoliciesForManualMatchAction(search: string) {
+export async function searchPolicyCandidatesForRowAction(rowId: string, search: string) {
   const actor = await requireSessionUser();
   try {
-    return await searchPoliciesForManualMatch(actor, search);
+    return await searchPolicyCandidatesForRow(actor, rowId, search);
   } catch {
     return [];
   }

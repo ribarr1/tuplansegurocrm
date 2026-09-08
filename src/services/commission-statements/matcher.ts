@@ -65,6 +65,13 @@ async function checkModalityCompatibility(
   });
   if (!policy) return "Póliza no encontrada.";
   if (policy.businessSource !== businessModality) {
+    // Fase 025.5.6 (UAT-22): UNKNOWN nunca se describe como "referida"
+    // — sería un dato inventado. Un mensaje distinto y correcto para
+    // el caso "todavía sin clasificar" vs. una incompatibilidad real
+    // OWN/REFERRAL confirmada.
+    if (policy.businessSource === "UNKNOWN") {
+      return "Esta póliza todavía no tiene clasificación Propia/Referida definida — resuélvela antes de emparejar un pago.";
+    }
     return `El reporte es de pólizas ${businessModality === "OWN" ? "propias" : "referidas"}, pero esta póliza está clasificada como ${policy.businessSource === "OWN" ? "propia" : "referida"}.`;
   }
   return null;
@@ -152,6 +159,9 @@ export async function matchStatementRow(
   return { status: "UNMATCHED" };
 }
 
-// Reutilizada por manualMatchRow — expuesta para no duplicar la lógica
-// de inferencia de período.
-export { inferPeriod, findExpectationForPolicy };
+// Reutilizada por manualMatchRow/policy-candidates.ts — expuesta para
+// no duplicar la lógica de inferencia de período ni de compatibilidad
+// de modalidad (Fase 025.5.6, UAT-22: el match manual ahora corre la
+// MISMA validación que el matching automático, nunca una versión
+// distinta o más permisiva).
+export { inferPeriod, findExpectationForPolicy, checkModalityCompatibility };

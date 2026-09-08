@@ -8,8 +8,15 @@ export const uploadCommissionStatementSchema = z.object({
 });
 export type UploadCommissionStatementInput = z.infer<typeof uploadCommissionStatementSchema>;
 
+// Fase 025.5.6 (UAT-22): policyMemberId solo aplica a Orange Referidas
+// (paga por miembro, no por póliza agregada); outOfPeriodReason es
+// obligatorio SOLO cuando la póliza elegida no cubre el periodo de
+// comisión — esa validación cruzada vive en reconciliation.service.ts
+// (requiere leer el periodo real de la fila), nunca aquí en el schema.
 export const manualMatchRowSchema = z.object({
   policyId: z.uuid("Selecciona una póliza válida."),
+  policyMemberId: z.uuid("Selecciona un miembro válido.").nullish(),
+  outOfPeriodReason: z.string().trim().min(3, "Escribe un motivo breve.").max(500).nullish(),
 });
 export type ManualMatchRowInput = z.infer<typeof manualMatchRowSchema>;
 

@@ -85,7 +85,12 @@ export default async function ReconciliationDetailPage({
     throw error;
   }
 
-  const { statement, rows, integrityError, applyBatches } = preview;
+  const { statement, rows, integrityError, applyBatches, mappingDiagnosticSummary } = preview;
+  const diagnosticTotal =
+    mappingDiagnosticSummary.periodMismatch +
+    mappingDiagnosticSummary.modalityMismatch +
+    mappingDiagnosticSummary.carrierMismatch +
+    mappingDiagnosticSummary.missingRequiredMember;
   // Fase 025.5.5 (UAT-21): "lista para aplicar" es SIEMPRE
   // importStatus === "READY" — nunca depende de si ya tiene expectativa
   // (eso es conciliación, un eje aparte, ver reviewState abajo).
@@ -215,6 +220,15 @@ export default async function ReconciliationDetailPage({
                 {Object.entries(reconciliationCounts)
                   .map(([state, count]) => `${RECONCILIATION_STATE_LABELS[state] ?? state}: ${count}`)
                   .join(" · ")}
+              </span>
+            )}
+            {diagnosticTotal > 0 && (
+              <span className="w-full text-xs text-amber-600 dark:text-amber-400">
+                Diagnóstico de mappings ya confirmados (revisión manual, nunca corregido automáticamente) —{" "}
+                {mappingDiagnosticSummary.periodMismatch > 0 && `Fuera de periodo: ${mappingDiagnosticSummary.periodMismatch} · `}
+                {mappingDiagnosticSummary.modalityMismatch > 0 && `Modalidad incompatible: ${mappingDiagnosticSummary.modalityMismatch} · `}
+                {mappingDiagnosticSummary.carrierMismatch > 0 && `Carrier incompatible: ${mappingDiagnosticSummary.carrierMismatch} · `}
+                {mappingDiagnosticSummary.missingRequiredMember > 0 && `Sin miembro requerido: ${mappingDiagnosticSummary.missingRequiredMember}`}
               </span>
             )}
           </CardContent>
@@ -369,13 +383,41 @@ export default async function ReconciliationDetailPage({
                         <MatchRowDialog
                           rowId={row.id}
                           rowLabel={`${row.displayName ?? "Sin nombre"} — $${row.receivedAmount.toString()}`}
+                          rowContext={{
+                            displayName: row.displayName,
+                            carrier: row.carrier,
+                            state: row.state,
+                            commissionPeriod: row.commissionPeriod ? row.commissionPeriod.toISOString() : null,
+                            payerAgency: statement.payerAgency,
+                            businessModality: statement.businessModality,
+                            receivedAmount: row.receivedAmount.toString(),
+                          }}
                         />
                         <IgnoreRowButton rowId={row.id} />
                       </div>
                     ) : row.matchStatus === "IGNORED" ? (
                       <span className="text-xs text-muted-foreground">Ignorada</span>
                     ) : (
-                      <IgnoreRowButton rowId={row.id} />
+                      // Fase 025.5.6 (UAT-22): una fila MATCHED (todavía no
+                      // aplicada) puede corregirse — antes no había forma
+                      // de reabrir un mapping ya confirmado sin aplicar.
+                      <div className="flex items-center gap-2">
+                        <MatchRowDialog
+                          rowId={row.id}
+                          rowLabel={`${row.displayName ?? "Sin nombre"} — $${row.receivedAmount.toString()}`}
+                          rowContext={{
+                            displayName: row.displayName,
+                            carrier: row.carrier,
+                            state: row.state,
+                            commissionPeriod: row.commissionPeriod ? row.commissionPeriod.toISOString() : null,
+                            payerAgency: statement.payerAgency,
+                            businessModality: statement.businessModality,
+                            receivedAmount: row.receivedAmount.toString(),
+                          }}
+                          triggerLabel="Corregir"
+                        />
+                        <IgnoreRowButton rowId={row.id} />
+                      </div>
                     )}
                   </td>
                 </tr>

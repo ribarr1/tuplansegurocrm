@@ -573,6 +573,7 @@ model PolicyMember {
 
   policy Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
   person Person @relation("PolicyMemberPerson", fields: [personId], references: [id], onDelete: Restrict)
+  matchedByStatementRows CommissionStatementRow[]
 
   @@unique([policyId, personId])
   @@index([personId])
@@ -1427,6 +1428,13 @@ model CommissionStatementRow {
   matchStatus          CommissionStatementRowMatchStatus @default(UNMATCHED)
   matchedPolicyId      String?                           @db.Uuid
   matchedExpectationId String?                           @db.Uuid
+  // Fase 025.5.6 (UAT-22): solo se usa/exige para Orange Referidas —
+  // esa modalidad paga por MIEMBRO cubierto, no por póliza agregada
+  // (una póliza familiar puede tener 3 filas, una por miembro). Orange
+  // Propias y Elite Referidas mantienen la vinculación agregada a
+  // Policy y dejan esto null. Nunca se infiere solo por nombre — debe
+  // pertenecer a `matchedPolicyId` (ver policy-candidates.ts).
+  matchedPolicyMemberId String?                          @db.Uuid
   errorCode            String?
   metadata             Json?
   // Hash de (fuente + externalId/nombre normalizado + periodo + monto)
@@ -1440,11 +1448,13 @@ model CommissionStatementRow {
   statement          CommissionStatement    @relation(fields: [statementId], references: [id], onDelete: Cascade)
   matchedPolicy      Policy?                @relation(fields: [matchedPolicyId], references: [id], onDelete: SetNull)
   matchedExpectation CommissionExpectation? @relation(fields: [matchedExpectationId], references: [id], onDelete: SetNull)
+  matchedPolicyMember PolicyMember?         @relation(fields: [matchedPolicyMemberId], references: [id], onDelete: SetNull)
   payment            CommissionPayment?
 
   @@index([statementId])
   @@index([matchedPolicyId])
   @@index([matchedExpectationId])
+  @@index([matchedPolicyMemberId])
   @@index([rowFingerprint])
   @@map("commission_statement_rows")
 }

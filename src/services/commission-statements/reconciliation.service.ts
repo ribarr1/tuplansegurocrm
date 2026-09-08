@@ -13,11 +13,19 @@ import {
   MAX_STATEMENT_SIZE_BYTES,
 } from "@/schemas/commission-statement.schema";
 import { getStatementAdapter } from "./registry";
-import { matchStatementRow, findExpectationForPolicy, inferPeriod, type MatchResult } from "./matcher";
+import {
+  matchStatementRow,
+  findExpectationForPolicy,
+  inferPeriod,
+  checkModalityCompatibility,
+  type MatchResult,
+} from "./matcher";
+import { computePeriodMatch } from "./policy-candidates";
 import { normalizeCarrierForComparison, MultipleCarriersError } from "./carrier-detection";
 import { PdfParseError, PdfTooManyPagesError, PdfTooManyRowsError, PdfFormatMismatchError } from "./pdf-table-extract";
 import type { NormalizedCommissionRow } from "./types";
 import { Prisma, type CommissionStatementStatus } from "@/generated/prisma/client";
+import { formatPeriodUS } from "@/lib/business-time";
 
 // ---------------------------------------------------------------------------
 // Orquestador de conciliación de comisiones — Fase 020 (§17: Preview
@@ -122,6 +130,7 @@ const rowSelect = {
   matchStatus: true,
   matchedPolicyId: true,
   matchedExpectationId: true,
+  matchedPolicyMemberId: true,
   errorCode: true,
   metadata: true,
   matchedPolicy: {
@@ -129,9 +138,15 @@ const rowSelect = {
       id: true,
       policyNumber: true,
       businessSource: true,
+      status: true,
+      effectiveDate: true,
+      terminationDate: true,
       holder: { select: { id: true, firstName: true, lastName: true } },
-      product: { select: { carrier: { select: { name: true } } } },
+      product: { select: { name: true, planYear: true, carrier: { select: { name: true } } } },
     },
+  },
+  matchedPolicyMember: {
+    select: { id: true, role: true, person: { select: { firstName: true, lastName: true } } },
   },
   matchedExpectation: { select: { id: true, expectedAmount: true, period: true } },
   payment: { select: { id: true } },
@@ -599,9 +614,48 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
       reviewState,
       errorCode: row.errorCode,
       matchedPolicy: row.matchedPolicy,
+      matchedPolicyMember: row.matchedPolicyMember,
       alreadyApplied: !!row.payment,
+      // Fase 025.5.6 (UAT-22) — diagnóstico de mappings YA confirmados,
+      // solo lectura: nunca corrige nada automáticamente, solo señala
+      // qué filas convendría que el ADMIN revise manualmente (nunca
+      // filas sin póliza emparejada — ahí no hay nada que diagnosticar
+      // todavía).
+      mappingDiagnostic: row.matchedPolicy
+        ? {
+            periodMismatch:
+              computePeriodMatch(
+                inferPeriod({
+                  source: "",
+                  receivedAmount: "0",
+                  sourceRowNumber: 0,
+                  paidAt: row.paidAt,
+                  effectiveDate: row.effectiveDate,
+                } as NormalizedCommissionRow),
+                row.matchedPolicy.effectiveDate,
+                row.matchedPolicy.terminationDate
+              ) !== "MATCH",
+            modalityMismatch:
+              !!statement.businessModality && row.matchedPolicy.businessSource !== statement.businessModality,
+            carrierMismatch:
+              !!statement.detectedCarrierName &&
+              row.matchedPolicy.product.carrier.name.trim().toLowerCase() !==
+                statement.detectedCarrierName.trim().toLowerCase(),
+            missingRequiredMember:
+              statement.payerAgency === "ORANGE" &&
+              statement.businessModality === "REFERRAL" &&
+              !row.matchedPolicyMemberId,
+          }
+        : null,
     };
   });
+
+  const mappingDiagnosticSummary = {
+    periodMismatch: enriched.filter((r) => r.mappingDiagnostic?.periodMismatch).length,
+    modalityMismatch: enriched.filter((r) => r.mappingDiagnostic?.modalityMismatch).length,
+    carrierMismatch: enriched.filter((r) => r.mappingDiagnostic?.carrierMismatch).length,
+    missingRequiredMember: enriched.filter((r) => r.mappingDiagnostic?.missingRequiredMember).length,
+  };
 
   // Fase 025.5.2 (Corrección 3) — invariante de integridad: la misma
   // colección de filas normalizadas alimenta la tabla del preview, los
@@ -617,33 +671,17 @@ export async function getCommissionStatementPreview(actor: AuthorizedUser, rawId
       ? `Inconsistencia de integridad: el reporte registra ${statement.totalRows} fila(s) pero se encontraron ${rows.length} — revisión manual requerida antes de aplicar.`
       : null;
 
-  return { statement, rows: enriched, integrityError, applyBatches };
+  return { statement, rows: enriched, integrityError, applyBatches, mappingDiagnosticSummary };
 }
 
 // Candidatos elegibles para un match manual (filas UNMATCHED/AMBIGUOUS)
 // — búsqueda simple por nombre, misma UX que el resto de la app
 // (nunca una lista global sin filtro).
-export async function searchPoliciesForManualMatch(actor: AuthorizedUser, search: string) {
-  assertModuleAccess(actor);
-  assertAdminOnly(actor);
-  if (!search || search.trim().length < 2) return [];
-  return prisma.policy.findMany({
-    where: {
-      OR: [
-        { holder: { firstName: { contains: search, mode: "insensitive" } } },
-        { holder: { lastName: { contains: search, mode: "insensitive" } } },
-        { policyNumber: { contains: search, mode: "insensitive" } },
-      ],
-    },
-    select: {
-      id: true,
-      policyNumber: true,
-      holder: { select: { firstName: true, lastName: true } },
-      product: { select: { carrier: { select: { name: true } } } },
-    },
-    take: 10,
-  });
-}
+// Fase 025.5.6 (UAT-22): reemplazada por searchPolicyCandidatesForRow en
+// ./policy-candidates.ts — servicio ÚNICO de búsqueda de candidatas
+// (contexto del período/modalidad de la fila, enriquecido con
+// año/vigencia/estado/PolicyMembers), nunca dos implementaciones
+// separadas de la misma búsqueda.
 
 export async function manualMatchStatementRow(actor: AuthorizedUser, rawRowId: unknown, rawInput: unknown) {
   assertModuleAccess(actor);
@@ -666,8 +704,42 @@ export async function manualMatchStatementRow(actor: AuthorizedUser, rawRowId: u
     );
   }
 
-  const policy = await prisma.policy.findUnique({ where: { id: input.policyId }, select: { id: true } });
+  const statement = await prisma.commissionStatement.findUniqueOrThrow({
+    where: { id: row.statementId },
+    select: { source: true, payerAgency: true, businessModality: true, detectedCarrierName: true },
+  });
+
+  // Fase 025.5.6 (UAT-22): la ventana de emparejamiento nunca confía
+  // ciegamente en lo que envía el navegador — se revalida TODO lo que
+  // ya valida el matching automático (nunca una versión más permisiva),
+  // más las validaciones nuevas de periodo y miembro.
+  const policy = await prisma.policy.findUnique({
+    where: { id: input.policyId },
+    select: {
+      id: true,
+      businessSource: true,
+      effectiveDate: true,
+      terminationDate: true,
+      product: { select: { policyType: true } },
+    },
+  });
   if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
+
+  if (statement.payerAgency !== null && policy.product.policyType !== "HEALTH") {
+    throw new AppError("VALIDATION_ERROR", "Esta póliza no es de tipo HEALTH — este reporte solo concilia pagos HEALTH.");
+  }
+
+  // Fase 025.5.6 (UAT-22): solo se exige modalidad/clasificación
+  // definida cuando el reporte en sí la impone (los 3 adapters PDF
+  // reales) — los adaptadores CSV/XLSX de Fase 020 nunca declararon
+  // businessModality y nunca exigieron esta validación; exigirla
+  // retroactivamente ahí sería una regla nueva fuera del alcance de
+  // esta fase. checkModalityCompatibility ya cubre UNKNOWN con un
+  // mensaje correcto (nunca lo describe como "referida").
+  if (statement.businessModality) {
+    const modalityReason = await checkModalityCompatibility(input.policyId, statement.businessModality);
+    if (modalityReason) throw new AppError("VALIDATION_ERROR", modalityReason);
+  }
 
   const normalizedRow: NormalizedCommissionRow = {
     source: "", // no se usa dentro de findExpectationForPolicy
@@ -676,17 +748,86 @@ export async function manualMatchStatementRow(actor: AuthorizedUser, rawRowId: u
     effectiveDate: row.effectiveDate,
     paidAt: row.paidAt,
   };
-  const expectationId = await findExpectationForPolicy(input.policyId, normalizedRow);
+  const period = inferPeriod(normalizedRow);
 
-  const statement = await prisma.commissionStatement.findUniqueOrThrow({
-    where: { id: row.statementId },
-    select: { source: true },
-  });
+  // Fase 025.5.6 (UAT-22): una póliza que no cubre el periodo de
+  // comisión NUNCA se acepta en silencio — el ADMIN debe confirmar
+  // explícitamente con un motivo breve, que queda auditado (nunca se
+  // cambian fechas/año de la póliza; la fila queda READY de inmediato,
+  // igual que cualquier match manual — no existe en esta arquitectura
+  // una cola de "segunda revisión" separada, así que crear una sería
+  // sobre-construir; la auditoría explícita es la salvaguarda).
+  const periodMatch = computePeriodMatch(period, policy.effectiveDate, policy.terminationDate);
+  if (periodMatch !== "MATCH" && !input.outOfPeriodReason) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      periodMatch === "OUT_OF_PERIOD"
+        ? `La póliza seleccionada no cubre el periodo de comisión ${period ? formatPeriodUS(period) : "detectado"}. Escribe un motivo para continuar.`
+        : "La vigencia de esta póliza está incompleta — escribe un motivo para continuar."
+    );
+  }
+
+  // Fase 025.5.6 (UAT-22): Orange Referidas paga por MIEMBRO cubierto,
+  // nunca por póliza agregada — exige un PolicyMember válido,
+  // perteneciente a esta Policy, y bloquea si otra fila del mismo
+  // periodo ya está vinculada al mismo miembro (posible duplicado
+  // silencioso, nunca se permite sin revisión).
+  const isOrangeReferral = statement.payerAgency === "ORANGE" && statement.businessModality === "REFERRAL";
+  if (isOrangeReferral) {
+    if (!input.policyMemberId) {
+      throw new AppError("VALIDATION_ERROR", "Selecciona el miembro cubierto por esta póliza (Orange Referidas paga por miembro).");
+    }
+    const member = await prisma.policyMember.findUnique({
+      where: { id: input.policyMemberId },
+      select: { policyId: true },
+    });
+    if (!member || member.policyId !== input.policyId) {
+      throw new AppError("VALIDATION_ERROR", "El miembro seleccionado no pertenece a esta póliza.");
+    }
+    if (period) {
+      const otherLinkedRows = await prisma.commissionStatementRow.findMany({
+        where: {
+          id: { not: rowId },
+          matchedPolicyMemberId: input.policyMemberId,
+          matchStatus: { in: ["MATCHED", "APPLIED"] },
+        },
+        select: { paidAt: true, effectiveDate: true },
+      });
+      const isSamePeriod = otherLinkedRows.some((r) => {
+        const otherPeriod = inferPeriod({
+          source: "",
+          receivedAmount: "0",
+          sourceRowNumber: 0,
+          paidAt: r.paidAt,
+          effectiveDate: r.effectiveDate,
+        } as NormalizedCommissionRow);
+        return otherPeriod && otherPeriod.getTime() === period.getTime();
+      });
+      if (isSamePeriod) {
+        throw new AppError(
+          "VALIDATION_ERROR",
+          "Otra fila de este mismo periodo ya está vinculada a este miembro — posible duplicado, requiere revisión manual antes de continuar."
+        );
+      }
+    }
+  } else if (input.policyMemberId) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "Esta modalidad no vincula por miembro individual — la conciliación es a nivel póliza."
+    );
+  }
+
+  const expectationId = await findExpectationForPolicy(input.policyId, normalizedRow);
 
   await prisma.$transaction(async (tx) => {
     await tx.commissionStatementRow.update({
       where: { id: rowId },
-      data: { matchStatus: "MATCHED", matchedPolicyId: input.policyId, matchedExpectationId: expectationId },
+      data: {
+        matchStatus: "MATCHED",
+        matchedPolicyId: input.policyId,
+        matchedExpectationId: expectationId,
+        matchedPolicyMemberId: input.policyMemberId ?? null,
+      },
     });
 
     // §16: una vez confirmado un external ID, se guarda la referencia
@@ -719,7 +860,17 @@ export async function manualMatchStatementRow(actor: AuthorizedUser, rawRowId: u
       entityId: rowId,
       action: "COMMISSION_STATEMENT_MATCH",
       policyId: input.policyId,
-      summary: "Fila de reporte emparejada manualmente con una póliza",
+      summary:
+        periodMatch === "MATCH"
+          ? "Fila de reporte emparejada manualmente con una póliza"
+          : `Fila de reporte emparejada manualmente con una póliza FUERA de periodo (${periodMatch}) — motivo administrativo registrado`,
+      // Nunca PII: solo el tipo de discrepancia y el motivo administrativo
+      // que el propio ADMIN escribió (nunca datos del reporte/cliente).
+      metadata: {
+        periodMatch,
+        ...(input.outOfPeriodReason ? { outOfPeriodReason: input.outOfPeriodReason } : {}),
+        ...(input.policyMemberId ? { matchedPolicyMemberId: input.policyMemberId } : {}),
+      },
     });
   });
 
