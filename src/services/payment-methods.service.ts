@@ -9,7 +9,8 @@ import {
   updatePaymentMethodSchema,
   replacePaymentMethodSecretSchema,
   setDefaultPaymentMethodSchema,
-  revealPaymentMethodSchema,
+  revealPaymentMethodFullSchema,
+  copyPaymentMethodFieldSchema,
   revokePaymentMethodSchema,
 } from "@/schemas/payment-method.schema";
 import { encryptFinancial, decryptFinancial, last4 as computeLast4 } from "@/lib/financial-crypto";
@@ -356,34 +357,85 @@ async function verifyActorPassword(password: string, requestHeaders: Headers): P
 const REVEAL_RATE_LIMIT = 10;
 const REVEAL_RATE_WINDOW_MS = 15 * 60 * 1000;
 
-export async function revealPaymentMethodField(
+const fullRevealSelect = {
+  id: true,
+  personId: true,
+  type: true,
+  isActive: true,
+  cardholderName: true,
+  cardNumberEncrypted: true,
+  cardExpMonth: true,
+  cardExpYear: true,
+  cardBrand: true,
+  bankAccountHolderName: true,
+  bankName: true,
+  routingNumberEncrypted: true,
+  accountNumberEncrypted: true,
+  bankAccountType: true,
+  billingAddressLine1: true,
+  billingAddressLine2: true,
+  billingCity: true,
+  billingState: true,
+  billingZipCode: true,
+  commentEncrypted: true,
+} satisfies Prisma.PaymentMethodSelect;
+
+type RevealedCardPaymentMethod = {
+  type: "CREDIT_CARD" | "DEBIT_CARD";
+  cardholderName: string | null;
+  cardNumber: string;
+  cardExpMonth: number | null;
+  cardExpYear: number | null;
+  cardBrand: string | null;
+  billingAddressLine1: string | null;
+  billingAddressLine2: string | null;
+  billingCity: string | null;
+  billingState: string | null;
+  billingZipCode: string | null;
+  comment: string | null;
+};
+type RevealedBankPaymentMethod = {
+  type: "BANK_ACCOUNT";
+  bankAccountHolderName: string | null;
+  bankName: string | null;
+  routingNumber: string;
+  accountNumber: string;
+  bankAccountType: string | null;
+  billingAddressLine1: string | null;
+  billingAddressLine2: string | null;
+  billingCity: string | null;
+  billingState: string | null;
+  billingZipCode: string | null;
+  comment: string | null;
+};
+export type RevealedPaymentMethod = RevealedCardPaymentMethod | RevealedBankPaymentMethod;
+
+// CORRECCIÓN — revelado de métodos de pago: reautenticación ÚNICA que
+// revela el CONJUNTO COMPLETO de datos necesarios para completar un
+// pago en el portal de la aseguradora (antes: un campo por vez, lo que
+// obligaba a repetir la reautenticación para ver, por ejemplo, el
+// número de tarjeta Y su vencimiento por separado). Nunca se descifra
+// nada ANTES de validar rate limit + contraseña — ver el orden de las
+// operaciones abajo.
+export async function revealPaymentMethodFull(
   actor: AuthorizedUser,
   rawId: unknown,
   rawInput: unknown,
   requestHeaders: Headers
-): Promise<{ value: string }> {
+): Promise<RevealedPaymentMethod> {
   assertAdminOnly(actor);
   const id = parseOrThrow(paymentMethodIdSchema, rawId);
-  const input = parseOrThrow(revealPaymentMethodSchema, rawInput);
+  const input = parseOrThrow(revealPaymentMethodFullSchema, rawInput);
 
   if (!checkRateLimit(`reveal-payment-method:${actor.id}`, REVEAL_RATE_LIMIT, REVEAL_RATE_WINDOW_MS)) {
     throw new AppError("VALIDATION_ERROR", "Demasiados intentos de revelar — espera unos minutos.");
   }
 
+  // Reautenticación ANTES de tocar cualquier ciphertext — ningún valor
+  // cifrado se descifra hasta que esto no lance.
   await verifyActorPassword(input.password, requestHeaders);
 
-  const existing = await prisma.paymentMethod.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      personId: true,
-      type: true,
-      isActive: true,
-      cardNumberEncrypted: true,
-      routingNumberEncrypted: true,
-      accountNumberEncrypted: true,
-    },
-  });
+  const existing = await prisma.paymentMethod.findUnique({ where: { id }, select: fullRevealSelect });
   if (!existing) throw new AppError("NOT_FOUND", "Método de pago no encontrado.");
   if (!existing.isActive) throw new AppError("VALIDATION_ERROR", "Este método de pago está revocado.");
 
@@ -392,26 +444,66 @@ export async function revealPaymentMethodField(
     if (!policy) throw new AppError("NOT_FOUND", "Póliza no encontrada.");
   }
 
-  const ciphertextByField: Record<string, string | null> = {
-    cardNumber: existing.cardNumberEncrypted,
-    routingNumber: existing.routingNumberEncrypted,
-    accountNumber: existing.accountNumberEncrypted,
-  };
-  const ciphertext = ciphertextByField[input.field];
-  if (!ciphertext) {
-    throw new AppError("VALIDATION_ERROR", "Este método de pago no tiene ese campo.");
+  function decryptSecret(ciphertext: string | null, label: string): string {
+    if (!ciphertext) throw new AppError("VALIDATION_ERROR", `Este método de pago no tiene ${label}.`);
+    try {
+      return decryptFinancial(ciphertext);
+    } catch {
+      throw new AppError("VALIDATION_ERROR", "No se pudo recuperar el valor.");
+    }
   }
 
-  let plaintext: string;
-  try {
-    plaintext = decryptFinancial(ciphertext);
-  } catch {
-    throw new AppError("VALIDATION_ERROR", "No se pudo recuperar el valor.");
+  const comment = decryptCommentSafe(existing.commentEncrypted);
+  const billing = {
+    billingAddressLine1: existing.billingAddressLine1,
+    billingAddressLine2: existing.billingAddressLine2,
+    billingCity: existing.billingCity,
+    billingState: existing.billingState,
+    billingZipCode: existing.billingZipCode,
+  };
+
+  // Metadata de auditoría: SOLO nombres de campo realmente presentes en
+  // este método (nunca valores) — permite reconstruir "qué se mostró"
+  // sin exponer nada sensible.
+  const revealedFieldNames: string[] = [];
+  let revealed: RevealedPaymentMethod;
+
+  if (existing.type === "BANK_ACCOUNT") {
+    const routingNumber = decryptSecret(existing.routingNumberEncrypted, "routing number");
+    const accountNumber = decryptSecret(existing.accountNumberEncrypted, "número de cuenta");
+    revealedFieldNames.push("bankAccountHolderName", "bankName", "routingNumber", "accountNumber", "bankAccountType");
+    if (Object.values(billing).some(Boolean)) revealedFieldNames.push("billingAddress");
+    if (comment) revealedFieldNames.push("comment");
+    revealed = {
+      type: "BANK_ACCOUNT",
+      bankAccountHolderName: existing.bankAccountHolderName,
+      bankName: existing.bankName,
+      routingNumber,
+      accountNumber,
+      bankAccountType: existing.bankAccountType,
+      comment,
+      ...billing,
+    };
+  } else {
+    const cardNumber = decryptSecret(existing.cardNumberEncrypted, "número de tarjeta");
+    revealedFieldNames.push("cardholderName", "cardNumber", "cardExpiry", "cardBrand");
+    if (Object.values(billing).some(Boolean)) revealedFieldNames.push("billingAddress");
+    if (comment) revealedFieldNames.push("comment");
+    revealed = {
+      type: existing.type as "CREDIT_CARD" | "DEBIT_CARD",
+      cardholderName: existing.cardholderName,
+      cardNumber,
+      cardExpMonth: existing.cardExpMonth,
+      cardExpYear: existing.cardExpYear,
+      cardBrand: existing.cardBrand,
+      comment,
+      ...billing,
+    };
   }
 
   // Auditoría COMPLETA de la revelación — usuario (actor, implícito),
-  // fecha (createdAt del evento), método, póliza y motivo — NUNCA el
-  // valor revelado.
+  // fecha (createdAt del evento), método, póliza, motivo y QUÉ campos
+  // se revelaron — NUNCA los valores revelados.
   await recordAuditEvent(prisma, {
     actor,
     entityType: "PaymentMethod",
@@ -419,11 +511,37 @@ export async function revealPaymentMethodField(
     contactPersonId: existing.personId,
     policyId: input.policyId ?? null,
     action: "PAYMENT_METHOD_REVEALED",
-    summary: `Campo de método de pago revelado (${input.field})`,
-    metadata: { field: input.field, reason: input.reason },
+    summary: "Detalles completos de método de pago revelados",
+    metadata: { fields: revealedFieldNames, reason: input.reason },
   });
 
-  return { value: plaintext };
+  return revealed;
+}
+
+// Audita que el ADMIN copió un campo individual desde la ventana de
+// revelado — NUNCA recibe ni registra el valor copiado, solo el
+// nombre del campo (la copia real ya ocurrió del lado del cliente
+// mediante navigator.clipboard, ver payment-method-row.tsx). Mismo
+// patrón que recordClientPortalCredentialCopy (Fase 025, Parte J).
+export async function recordPaymentMethodFieldCopy(
+  actor: AuthorizedUser,
+  rawId: unknown,
+  rawField: unknown
+): Promise<void> {
+  assertAdminOnly(actor);
+  const id = parseOrThrow(paymentMethodIdSchema, rawId);
+  const field = parseOrThrow(copyPaymentMethodFieldSchema, rawField);
+  const existing = await loadForAccessCheck(id);
+
+  await recordAuditEvent(prisma, {
+    actor,
+    entityType: "PaymentMethod",
+    entityId: id,
+    contactPersonId: existing.personId,
+    action: "PAYMENT_METHOD_FIELD_COPIED",
+    summary: `Campo de método de pago copiado (${field})`,
+    metadata: { field },
+  });
 }
 
 // Reemplazo COMPLETO de un secreto (número de tarjeta/routing/cuenta) —

@@ -8,7 +8,8 @@ import {
   updatePaymentMethod,
   setDefaultPaymentMethod,
   revokePaymentMethod,
-  revealPaymentMethodField,
+  revealPaymentMethodFull,
+  recordPaymentMethodFieldCopy,
   replacePaymentMethodSecret,
 } from "@/services/payment-methods.service";
 import type { AuthorizedUser } from "@/lib/authorization";
@@ -273,12 +274,13 @@ describe("payment-methods.service", () => {
       await expect(updatePaymentMethod(actor, pm.id, { autopay: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(revokePaymentMethod(actor, pm.id, {})).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(
-        revealPaymentMethodField(actor, pm.id, { password: "irrelevante", field: "cardNumber", reason: "prueba" }, new Headers())
+        revealPaymentMethodFull(actor, pm.id, { password: "irrelevante", reason: "prueba" }, new Headers())
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(recordPaymentMethodFieldCopy(actor, pm.id, "cardNumber")).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
   });
 
-  it("K) revelar exige reautenticación con la contraseña correcta del ADMIN — contraseña incorrecta se rechaza", async () => {
+  it("K) revelar exige reautenticación con la contraseña correcta del ADMIN — contraseña incorrecta se rechaza, ningún dato se descifra", async () => {
     const person = await makePerson();
     const pm = trackPM(
       await createPaymentMethod(admin, {
@@ -288,16 +290,81 @@ describe("payment-methods.service", () => {
     );
 
     await expect(
-      revealPaymentMethodField(admin, pm.id, { password: "ContraseñaIncorrecta", field: "cardNumber", reason: "Configurar en portal" }, adminHeaders)
+      revealPaymentMethodFull(admin, pm.id, { password: "ContraseñaIncorrecta", reason: "Configurar en portal" }, adminHeaders)
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 
-    const result = await revealPaymentMethodField(
-      admin, pm.id, { password: ADMIN_PASSWORD, field: "cardNumber", reason: "Configurar en portal de la aseguradora" }, adminHeaders
+    const result = await revealPaymentMethodFull(
+      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Configurar en portal de la aseguradora" }, adminHeaders
     );
-    expect(result.value).toBe("4111111111111111");
+    if (result.type !== "BANK_ACCOUNT") expect(result.cardNumber).toBe("4111111111111111");
   });
 
-  it("L) revelar/reemplazar auditan usuario, método y motivo, pero NUNCA el valor revelado", async () => {
+  it("K2) ADMIN autorizado revela tarjeta COMPLETA en una sola reautenticación: titular, número, vencimiento, marca, dirección y comentario", async () => {
+    const person = await makePerson();
+    const pm = trackPM(
+      await createPaymentMethod(admin, {
+        personId: person.id, type: "CREDIT_CARD",
+        cardholderName: "Juan Sintetico", cardNumber: "4111111111111234", cardExpMonth: 9, cardExpYear: 2031, cardBrand: "VISA",
+        billingAddressLine1: "123 Calle Falsa", billingCity: "Miami", billingState: "FL", billingZipCode: "33101",
+        comment: "Llamar antes de cobrar",
+      })
+    );
+
+    const result = await revealPaymentMethodFull(
+      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Completar pago en el portal del carrier" }, adminHeaders
+    );
+    expect(result.type).toBe("CREDIT_CARD");
+    if (result.type === "BANK_ACCOUNT") throw new Error("tipo inesperado");
+    expect(result.cardholderName).toBe("Juan Sintetico");
+    expect(result.cardNumber).toBe("4111111111111234");
+    expect(result.cardExpMonth).toBe(9);
+    expect(result.cardExpYear).toBe(2031);
+    expect(result.cardBrand).toBe("VISA");
+    expect(result.billingAddressLine1).toBe("123 Calle Falsa");
+    expect(result.billingZipCode).toBe("33101");
+    expect(result.comment).toBe("Llamar antes de cobrar");
+  });
+
+  it("K3) ADMIN autorizado revela cuenta bancaria COMPLETA en una sola reautenticación: titular, banco, routing y número de cuenta", async () => {
+    const person = await makePerson();
+    const pm = trackPM(
+      await createPaymentMethod(admin, {
+        personId: person.id, type: "BANK_ACCOUNT",
+        bankAccountHolderName: "Maria Sintetica", bankName: "Banco de Pruebas",
+        routingNumber: "011000015", accountNumber: "000123456789", bankAccountType: "CHECKING",
+      })
+    );
+
+    const result = await revealPaymentMethodFull(
+      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Completar pago en el portal del carrier" }, adminHeaders
+    );
+    expect(result.type).toBe("BANK_ACCOUNT");
+    if (result.type !== "BANK_ACCOUNT") throw new Error("tipo inesperado");
+    expect(result.bankAccountHolderName).toBe("Maria Sintetica");
+    expect(result.bankName).toBe("Banco de Pruebas");
+    expect(result.routingNumber).toBe("011000015");
+    expect(result.accountNumber).toBe("000123456789");
+    expect(result.bankAccountType).toBe("CHECKING");
+  });
+
+  it("K4) campos opcionales ausentes: sin dirección de facturación ni comentario, el revelado los devuelve en null (nunca inventa valores)", async () => {
+    const person = await makePerson();
+    const pm = trackPM(
+      await createPaymentMethod(admin, {
+        personId: person.id, type: "BANK_ACCOUNT",
+        bankAccountHolderName: "Sin Extras", bankName: "Banco Minimo",
+        routingNumber: "011000015", accountNumber: "000123456789", bankAccountType: "SAVINGS",
+      })
+    );
+    const result = await revealPaymentMethodFull(
+      admin, pm.id, { password: ADMIN_PASSWORD, reason: "prueba de campos ausentes" }, adminHeaders
+    );
+    expect(result.billingAddressLine1).toBeNull();
+    expect(result.billingZipCode).toBeNull();
+    expect(result.comment).toBeNull();
+  });
+
+  it("L) revelar/reemplazar/copiar auditan usuario, método y motivo/campo, pero NUNCA el valor revelado o copiado", async () => {
     const person = await makePerson();
     const pm = trackPM(
       await createPaymentMethod(admin, {
@@ -305,15 +372,26 @@ describe("payment-methods.service", () => {
         cardholderName: "Auditado", cardNumber: "4111111111111111", cardExpMonth: 1, cardExpYear: 2030, cardBrand: "VISA",
       })
     );
-    await revealPaymentMethodField(
-      admin, pm.id, { password: ADMIN_PASSWORD, field: "cardNumber", reason: "Configurar autopay en el portal" }, adminHeaders
+    await revealPaymentMethodFull(
+      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Configurar autopay en el portal" }, adminHeaders
     );
-    const events = await prisma.auditEvent.findMany({ where: { entityId: pm.id, action: "PAYMENT_METHOD_REVEALED" } });
-    expect(events).toHaveLength(1);
-    const serialized = JSON.stringify(events[0]);
-    expect(serialized).not.toContain("4111111111111111");
-    expect(serialized).not.toContain(ADMIN_PASSWORD);
-    expect(events[0].actorUserId).toBe(admin.id);
+    const revealEvents = await prisma.auditEvent.findMany({ where: { entityId: pm.id, action: "PAYMENT_METHOD_REVEALED" } });
+    expect(revealEvents).toHaveLength(1);
+    const revealSerialized = JSON.stringify(revealEvents[0]);
+    expect(revealSerialized).not.toContain("4111111111111111");
+    expect(revealSerialized).not.toContain(ADMIN_PASSWORD);
+    expect(revealEvents[0].actorUserId).toBe(admin.id);
+    // La auditoría SÍ registra qué campos se revelaron (nunca su
+    // valor) — permite reconstruir el alcance de la revelación.
+    expect((revealEvents[0].metadata as { fields?: string[] })?.fields).toContain("cardNumber");
+
+    await recordPaymentMethodFieldCopy(admin, pm.id, "cardNumber");
+    const copyEvents = await prisma.auditEvent.findMany({ where: { entityId: pm.id, action: "PAYMENT_METHOD_FIELD_COPIED" } });
+    expect(copyEvents).toHaveLength(1);
+    const copySerialized = JSON.stringify(copyEvents[0]);
+    expect(copySerialized).not.toContain("4111111111111111");
+    expect(copySerialized).toContain("cardNumber");
+    expect(copyEvents[0].actorUserId).toBe(admin.id);
   });
 
   it("M) reemplazar el número completo exige reautenticación, revalida el formato, y nunca acepta un valor parcial", async () => {
@@ -333,10 +411,11 @@ describe("payment-methods.service", () => {
     );
     expect(updated.cardLast4).toBe("4444");
 
-    const revealed = await revealPaymentMethodField(
-      admin, pm.id, { password: ADMIN_PASSWORD, field: "cardNumber", reason: "Verificar reemplazo" }, adminHeaders
+    const revealed = await revealPaymentMethodFull(
+      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Verificar reemplazo" }, adminHeaders
     );
-    expect(revealed.value).toBe("5555555555554444");
+    if (revealed.type === "BANK_ACCOUNT") throw new Error("tipo inesperado");
+    expect(revealed.cardNumber).toBe("5555555555554444");
   });
 
   it("N) un ciphertext manipulado se rechaza de forma segura al revelar (nunca expone datos parciales)", async () => {
@@ -349,7 +428,7 @@ describe("payment-methods.service", () => {
     );
     await prisma.paymentMethod.update({ where: { id: pm.id }, data: { cardNumberEncrypted: "fin-v1:AAAA:BBBB:CCCC" } });
     await expect(
-      revealPaymentMethodField(admin, pm.id, { password: ADMIN_PASSWORD, field: "cardNumber", reason: "prueba" }, adminHeaders)
+      revealPaymentMethodFull(admin, pm.id, { password: ADMIN_PASSWORD, reason: "prueba" }, adminHeaders)
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
@@ -366,6 +445,28 @@ describe("payment-methods.service", () => {
     expect(serialized).not.toContain("4111111111111111");
     expect(serialized).not.toContain("cardNumberEncrypted");
     expect(serialized).toContain("Visa •••• 1111");
+  });
+
+  it("P) confirmación: CVV/PIN/track data no existen en el modelo ni en la respuesta de revelado completo", async () => {
+    const person = await makePerson();
+    const pm = trackPM(
+      await createPaymentMethod(admin, {
+        personId: person.id, type: "CREDIT_CARD",
+        cardholderName: "Confirmacion Sintetica", cardNumber: "4111111111111111", cardExpMonth: 1, cardExpYear: 2030, cardBrand: "VISA",
+      })
+    );
+    const forbidden = ["cvv", "cvc", "cid", "pin", "track", "magstripe"];
+
+    const raw = await prisma.paymentMethod.findUniqueOrThrow({ where: { id: pm.id } });
+    const rawKeys = Object.keys(raw).map((k) => k.toLowerCase());
+    for (const term of forbidden) expect(rawKeys.some((k) => k.includes(term))).toBe(false);
+
+    const revealed = await revealPaymentMethodFull(
+      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Confirmar ausencia de CVV/PIN" }, adminHeaders
+    );
+    const revealedKeys = Object.keys(revealed).map((k) => k.toLowerCase());
+    for (const term of forbidden) expect(revealedKeys.some((k) => k.includes(term))).toBe(false);
+    expect(JSON.stringify(revealed).toLowerCase()).not.toMatch(/\bcvv\b|\bcvc\b|\bpin\b/);
   });
 
   it("no quedan fixtures huérfanos (verificación de limpieza propia del archivo)", async () => {

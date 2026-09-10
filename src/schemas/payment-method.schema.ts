@@ -164,13 +164,36 @@ export const setDefaultPaymentMethodSchema = z.object({
 });
 export type SetDefaultPaymentMethodInput = z.infer<typeof setDefaultPaymentMethodSchema>;
 
-export const revealPaymentMethodSchema = z.object({
+// CORRECCIÓN — revelado de métodos de pago: UNA sola reautenticación
+// revela el CONJUNTO COMPLETO de datos del método (nunca campo por
+// campo — eso obligaba a reautenticarse varias veces para poder
+// completar un pago en el portal de la aseguradora, ej. tarjeta +
+// vencimiento, o routing + número de cuenta). Ver
+// payment-methods.service.ts::revealPaymentMethodFull.
+export const revealPaymentMethodFullSchema = z.object({
   password: z.string().min(1, "Confirma tu contraseña."),
-  field: paymentMethodFieldSchema,
   reason: z.string().trim().min(3, "Escribe un motivo breve.").max(300),
   policyId: z.uuid("Selecciona una póliza válida.").optional(),
 });
-export type RevealPaymentMethodInput = z.infer<typeof revealPaymentMethodSchema>;
+export type RevealPaymentMethodFullInput = z.infer<typeof revealPaymentMethodFullSchema>;
+
+// Campos que la UI permite copiar individualmente UNA VEZ ya revelado
+// el conjunto completo — solo se usa para auditar QUÉ se copió (nunca
+// el valor). Superconjunto de tarjeta+cuenta bancaria: cada tipo de
+// método solo ofrece los campos que le aplican, pero el enum es
+// compartido para no duplicar la validación.
+export const PAYMENT_METHOD_COPY_FIELD_VALUES = [
+  "cardholderName",
+  "cardNumber",
+  "cardExpiry",
+  "bankAccountHolderName",
+  "bankName",
+  "routingNumber",
+  "accountNumber",
+  "billingAddress",
+  "comment",
+] as const;
+export const copyPaymentMethodFieldSchema = z.enum(PAYMENT_METHOD_COPY_FIELD_VALUES);
 
 export const revokePaymentMethodSchema = z.object({
   reason: z.string().trim().max(300).optional(),

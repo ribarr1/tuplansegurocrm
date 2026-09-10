@@ -15,18 +15,18 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  revealPaymentMethodFieldAction,
+  revealPaymentMethodFullAction,
+  copyPaymentMethodFieldAction,
   replacePaymentMethodSecretAction,
   setDefaultPaymentMethodAction,
   revokePaymentMethodAction,
   updatePaymentMethodAction,
 } from "./payment-methods-actions";
+import type { RevealedPaymentMethod } from "@/services/payment-methods.service";
 
-// El valor revelado NUNCA se persiste — vive solo en estado de React y
-// se oculta automáticamente a los 20s (Sección 5, punto 4 del ticket:
-// "Ocultar automáticamente después de un tiempo corto"). Tampoco se
-// ofrece botón de copiar (punto 5: "No permitir copiar desde listados
-// generales").
+// Los datos revelados NUNCA se persisten — viven solo en estado de
+// React y se ocultan automáticamente a los 20s, y también al cerrar la
+// ventana (onOpenChange(false) → reset()).
 const AUTO_HIDE_MS = 20_000;
 
 type SecretField = "cardNumber" | "routingNumber" | "accountNumber";
@@ -102,16 +102,15 @@ export function PaymentMethodRow({
             <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={handleToggleAutopay}>
               {autopay ? "Quitar autopay" : "Activar autopay"}
             </Button>
+            <RevealFullDialog paymentMethodId={paymentMethodId} policies={policies} />
             {secretFields.map(({ field, label }) => (
-              <span key={field} className="flex gap-2">
-                <RevealDialog paymentMethodId={paymentMethodId} field={field} label={label} policies={policies} />
-                <ReplaceSecretDialog
-                  paymentMethodId={paymentMethodId}
-                  personId={personId}
-                  field={field}
-                  label={label}
-                />
-              </span>
+              <ReplaceSecretDialog
+                key={field}
+                paymentMethodId={paymentMethodId}
+                personId={personId}
+                field={field}
+                label={label}
+              />
             ))}
             <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={handleRevoke}>
               Desactivar
@@ -130,22 +129,33 @@ export function PaymentMethodRow({
   );
 }
 
-function RevealDialog({
+const CARD_BRAND_LABELS: Record<string, string> = {
+  VISA: "Visa",
+  MASTERCARD: "Mastercard",
+  AMEX: "Amex",
+  DISCOVER: "Discover",
+  OTHER: "Otra",
+};
+const BANK_ACCOUNT_TYPE_LABELS: Record<string, string> = { CHECKING: "Checking", SAVINGS: "Savings" };
+
+// Ventana ÚNICA de revelado — CORRECCIÓN: una sola reautenticación
+// muestra el conjunto COMPLETO de datos del método (antes: un campo a
+// la vez, insuficiente para completar un pago real en el portal de la
+// aseguradora, que necesita nombre + número + vencimiento juntos, o
+// routing + cuenta juntos). Cada campo tiene su propio botón de copiar
+// individual — nunca un botón de "copiar todo".
+function RevealFullDialog({
   paymentMethodId,
-  field,
-  label,
   policies,
 }: {
   paymentMethodId: string;
-  field: SecretField;
-  label: string;
   policies: { id: string; label: string }[];
 }) {
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [reason, setReason] = useState("");
   const [policyId, setPolicyId] = useState("");
-  const [revealed, setRevealed] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<RevealedPaymentMethod | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -169,9 +179,8 @@ function RevealDialog({
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const result = await revealPaymentMethodFieldAction(paymentMethodId, {
+      const result = await revealPaymentMethodFullAction(paymentMethodId, {
         password,
-        field,
         reason,
         policyId: policyId || undefined,
       });
@@ -179,7 +188,7 @@ function RevealDialog({
         setError(result.error);
         return;
       }
-      setRevealed(result.value ?? null);
+      setRevealed(result.data ?? null);
       hideTimer.current = setTimeout(() => setRevealed(null), AUTO_HIDE_MS);
     });
   }
@@ -189,22 +198,22 @@ function RevealDialog({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
+        // Ocultar automáticamente también al cerrar la ventana, no
+        // solo al expirar el temporizador.
         if (!next) reset();
       }}
     >
-      <DialogTrigger render={<Button type="button" variant="ghost" size="sm" />}>Revelar {label}</DialogTrigger>
-      <DialogContent>
+      <DialogTrigger render={<Button type="button" variant="ghost" size="sm" />}>Ver detalles completos</DialogTrigger>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Revelar {label}</DialogTitle>
+          <DialogTitle>Detalles completos del método de pago</DialogTitle>
           <DialogDescription>
-            Requiere reautenticación y un motivo. El valor se oculta automáticamente y no puede copiarse desde aquí.
+            Requiere reautenticación y un motivo. Los datos se ocultan automáticamente en unos segundos o al cerrar
+            esta ventana.
           </DialogDescription>
         </DialogHeader>
         {revealed ? (
-          <div className="flex flex-col gap-2">
-            <p className="font-mono text-base">{revealed}</p>
-            <p className="text-xs text-muted-foreground">Este valor se ocultará automáticamente en unos segundos.</p>
-          </div>
+          <RevealedDetails paymentMethodId={paymentMethodId} revealed={revealed} />
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             {error && <p className="text-sm text-destructive">{error}</p>}
@@ -247,13 +256,123 @@ function RevealDialog({
             </div>
             <DialogFooter>
               <Button type="submit" disabled={isPending}>
-                {isPending ? "Verificando…" : "Revelar"}
+                {isPending ? "Verificando…" : "Revelar todo"}
               </Button>
             </DialogFooter>
           </form>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function billingAddressLines(revealed: RevealedPaymentMethod): string | null {
+  const parts = [
+    revealed.billingAddressLine1,
+    revealed.billingAddressLine2,
+    [revealed.billingCity, revealed.billingState].filter(Boolean).join(", "),
+    revealed.billingZipCode,
+  ].filter((p) => p && p.trim() !== "");
+  return parts.length > 0 ? parts.join(" — ") : null;
+}
+
+function RevealedDetails({
+  paymentMethodId,
+  revealed,
+}: {
+  paymentMethodId: string;
+  revealed: RevealedPaymentMethod;
+}) {
+  const billing = billingAddressLines(revealed);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground">Este panel se ocultará automáticamente en unos segundos.</p>
+      {revealed.type === "BANK_ACCOUNT" ? (
+        <>
+          <CopyableField paymentMethodId={paymentMethodId} field="bankAccountHolderName" label="Titular" value={revealed.bankAccountHolderName} />
+          <CopyableField paymentMethodId={paymentMethodId} field="bankName" label="Banco" value={revealed.bankName} />
+          <CopyableField paymentMethodId={paymentMethodId} field="routingNumber" label="Routing number" value={revealed.routingNumber} mono />
+          <CopyableField paymentMethodId={paymentMethodId} field="accountNumber" label="Número de cuenta" value={revealed.accountNumber} mono />
+          <StaticField label="Tipo" value={revealed.bankAccountType ? BANK_ACCOUNT_TYPE_LABELS[revealed.bankAccountType] ?? revealed.bankAccountType : null} />
+        </>
+      ) : (
+        <>
+          <CopyableField paymentMethodId={paymentMethodId} field="cardholderName" label="Nombre impreso" value={revealed.cardholderName} />
+          <CopyableField paymentMethodId={paymentMethodId} field="cardNumber" label="Número de tarjeta" value={revealed.cardNumber} mono />
+          <CopyableField
+            paymentMethodId={paymentMethodId}
+            field="cardExpiry"
+            label="Vencimiento"
+            value={
+              revealed.cardExpMonth && revealed.cardExpYear
+                ? `${String(revealed.cardExpMonth).padStart(2, "0")}/${revealed.cardExpYear}`
+                : null
+            }
+          />
+          <StaticField
+            label="Marca / tipo"
+            value={`${revealed.cardBrand ? CARD_BRAND_LABELS[revealed.cardBrand] ?? revealed.cardBrand : "—"} · ${
+              revealed.type === "DEBIT_CARD" ? "Débito" : "Crédito"
+            }`}
+          />
+        </>
+      )}
+      {billing && <CopyableField paymentMethodId={paymentMethodId} field="billingAddress" label="Dirección de facturación" value={billing} />}
+      {revealed.comment && <CopyableField paymentMethodId={paymentMethodId} field="comment" label="Comentario" value={revealed.comment} />}
+    </div>
+  );
+}
+
+function StaticField({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-36 shrink-0 text-xs text-muted-foreground">{label}</span>
+      <span className="text-sm">{value}</span>
+    </div>
+  );
+}
+
+function CopyableField({
+  paymentMethodId,
+  field,
+  label,
+  value,
+  mono = false,
+}: {
+  paymentMethodId: string;
+  field: string;
+  label: string;
+  value: string | null;
+  mono?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return null;
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(value as string);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Si el portapapeles falla, el usuario todavía puede seleccionar
+      // el texto manualmente — no hay nada más que hacer aquí.
+    }
+    // Fire-and-forget: la copia real ya ocurrió del lado del cliente —
+    // el audit nunca debe bloquear ni poder "fallar" la copia, y nunca
+    // recibe el valor copiado.
+    void copyPaymentMethodFieldAction(paymentMethodId, field);
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-36 shrink-0 text-xs text-muted-foreground">{label}</span>
+      <span className={mono ? "font-mono text-sm" : "text-sm"}>{value}</span>
+      <Button type="button" variant="ghost" size="sm" onClick={handleCopy}>
+        {copied ? "Copiado" : "Copiar"}
+      </Button>
+    </div>
   );
 }
 

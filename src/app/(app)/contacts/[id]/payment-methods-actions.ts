@@ -8,8 +8,10 @@ import {
   updatePaymentMethod,
   setDefaultPaymentMethod,
   revokePaymentMethod,
-  revealPaymentMethodField,
+  revealPaymentMethodFull,
+  recordPaymentMethodFieldCopy,
   replacePaymentMethodSecret,
+  type RevealedPaymentMethod,
 } from "@/services/payment-methods.service";
 import { AppError } from "@/services/errors";
 
@@ -136,17 +138,34 @@ export async function revokePaymentMethodAction(
 // La reautenticación necesita los headers de la petición ACTUAL
 // (cookie de sesión) — se obtienen aquí con next/headers() y se pasan
 // explícitamente al servicio, nunca al revés.
-export async function revealPaymentMethodFieldAction(
+//
+// Revela el CONJUNTO COMPLETO de datos del método con UNA sola
+// reautenticación — nunca campo por campo (ver
+// payment-methods.service.ts::revealPaymentMethodFull).
+export async function revealPaymentMethodFullAction(
   id: string,
-  input: { password: string; field: string; reason: string; policyId?: string }
-): Promise<{ value?: string; error?: string }> {
+  input: { password: string; reason: string; policyId?: string }
+): Promise<{ data?: RevealedPaymentMethod; error?: string }> {
   const actor = await requireSessionUser();
   try {
-    const result = await revealPaymentMethodField(actor, id, input, await headers());
-    return { value: result.value };
+    const data = await revealPaymentMethodFull(actor, id, input, await headers());
+    return { data };
   } catch (error) {
     if (error instanceof AppError) return { error: error.message };
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+}
+
+// Fire-and-forget: la copia real ya ocurrió del lado del cliente
+// (navigator.clipboard) — este audit nunca debe bloquear ni poder
+// "fallar" la experiencia de copiar, y nunca recibe el valor copiado,
+// solo el nombre del campo.
+export async function copyPaymentMethodFieldAction(id: string, field: string): Promise<void> {
+  const actor = await requireSessionUser();
+  try {
+    await recordPaymentMethodFieldCopy(actor, id, field);
+  } catch {
+    // Ver comentario arriba — nunca se propaga al cliente.
   }
 }
 
