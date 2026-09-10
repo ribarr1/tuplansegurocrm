@@ -186,7 +186,7 @@ export default async function CommissionAnalyticsPage({ searchParams }: { search
             { key: "expected", label: "Esperado" },
             { key: "received", label: "Recibido" },
           ]}
-          valueFormatter={(v) => `$${v.toFixed(2)}`}
+          valueFormat="currency"
         />
       </ChartCard>
 
@@ -197,7 +197,7 @@ export default async function CommissionAnalyticsPage({ searchParams }: { search
             { key: "assistance", label: "Asistencia" },
             { key: "net", label: "Neto recibido" },
           ]}
-          valueFormatter={(v) => `$${v.toFixed(2)}`}
+          valueFormat="currency"
         />
       </ChartCard>
 
@@ -209,7 +209,7 @@ export default async function CommissionAnalyticsPage({ searchParams }: { search
               { key: "pending", label: "Pendiente" },
               { key: "received", label: "Recibido" },
             ]}
-            valueFormatter={(v) => `$${v.toFixed(2)}`}
+            valueFormat="currency"
             emptyMessage={sp.carrierId ? "Ya filtraste por una compañía específica." : "No hay comisiones registradas todavía."}
           />
         </ChartCard>
@@ -218,7 +218,7 @@ export default async function CommissionAnalyticsPage({ searchParams }: { search
           <BarChart
             data={charts.byAgent.map((a) => ({ category: a.agentName, values: { received: Number(a.received) } }))}
             series={[{ key: "received", label: "Recibido" }]}
-            valueFormatter={(v) => `$${v.toFixed(2)}`}
+            valueFormat="currency"
             emptyMessage={sp.agentId ? "Ya filtraste por un agente específico." : "No hay comisiones registradas todavía."}
           />
         </ChartCard>
@@ -230,7 +230,7 @@ export default async function CommissionAnalyticsPage({ searchParams }: { search
               { key: "expected", label: "Esperado" },
               { key: "received", label: "Recibido" },
             ]}
-            valueFormatter={(v) => `$${v.toFixed(2)}`}
+            valueFormat="currency"
           />
         </ChartCard>
 

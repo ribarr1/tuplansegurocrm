@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { EmptyState } from "@/components/charts/bar-chart";
+import { EmptyState, formatChartValue, type ChartValueFormat } from "@/components/charts/bar-chart";
 
 // Gráfica de líneas SVG hecha a mano (mismo criterio que bar-chart.tsx
 // — sin dependencia nueva). Series múltiples se dibujan como
@@ -16,15 +16,16 @@ export function LineChart({
   data,
   series,
   height = 240,
-  valueFormatter = (v: number) => v.toLocaleString("en-US"),
+  valueFormat = "number",
   emptyMessage = "No hay datos para mostrar con los filtros actuales.",
 }: {
   data: LineChartDatum[];
   series: LineChartSeries[];
   height?: number;
-  valueFormatter?: (value: number) => string;
+  valueFormat?: ChartValueFormat;
   emptyMessage?: string;
 }) {
+  const valueFormatter = (v: number) => formatChartValue(v, valueFormat);
   const [hovered, setHovered] = useState<number | null>(null);
 
   if (data.length === 0) {

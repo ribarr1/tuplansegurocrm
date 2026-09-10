@@ -9,22 +9,36 @@ import { useId, useState } from "react";
 // Usa los tokens --chart-1..5 ya definidos en globals.css (claro/oscuro).
 export type BarChartSeries = { key: string; label: string; color?: string };
 export type BarChartDatum = { category: string; values: Record<string, number> };
+// Formato serializable — NUNCA una función como prop: este componente
+// es "use client" y las páginas que lo usan (Server Components) no
+// pueden pasarle un valueFormatter de tipo función a través de la
+// frontera servidor/cliente (React la rechaza en runtime con "Functions
+// cannot be passed directly to Client Components"). El formateo real
+// ocurre aquí adentro, del lado del cliente, a partir de esta etiqueta.
+export type ChartValueFormat = "currency" | "number" | "percent";
 
 const DEFAULT_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
+
+export function formatChartValue(value: number, format: ChartValueFormat): string {
+  if (format === "currency") return `$${value.toFixed(2)}`;
+  if (format === "percent") return `${value.toFixed(1)}%`;
+  return value.toLocaleString("en-US");
+}
 
 export function BarChart({
   data,
   series,
   height = 240,
-  valueFormatter = (v: number) => v.toLocaleString("en-US"),
+  valueFormat = "number",
   emptyMessage = "No hay datos para mostrar con los filtros actuales.",
 }: {
   data: BarChartDatum[];
   series: BarChartSeries[];
   height?: number;
-  valueFormatter?: (value: number) => string;
+  valueFormat?: ChartValueFormat;
   emptyMessage?: string;
 }) {
+  const valueFormatter = (v: number) => formatChartValue(v, valueFormat);
   const gradientId = useId();
   const [hovered, setHovered] = useState<{ category: string; seriesKey: string } | null>(null);
 
