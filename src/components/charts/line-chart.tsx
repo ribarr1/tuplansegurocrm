@@ -71,9 +71,15 @@ export function LineChart({
                     onMouseEnter={() => setHovered(i)}
                     onMouseLeave={() => setHovered(null)}
                   >
-                    <title>
-                      {d.label} — {s.label}: {valueFormatter(d.values[s.key] ?? 0)}
-                    </title>
+                    {/* CORRECCIÓN — hydration mismatch real: <title> exige un
+                        ÚNICO string como children (warning de desarrollo de
+                        React) — con varios hijos interpolados el SSR renderiza
+                        un <title></title> VACÍO mientras la hidratación en el
+                        navegador sí lo puebla, produciendo exactamente el
+                        mismatch reportado. Se precomputa el texto completo
+                        como UN solo string determinista (nunca
+                        suppressHydrationWarning). */}
+                    <title>{`${d.label} — ${s.label}: ${valueFormatter(d.values[s.key] ?? 0)}`}</title>
                   </circle>
                 ))}
               </g>

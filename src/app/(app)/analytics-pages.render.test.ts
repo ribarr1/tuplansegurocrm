@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { isValidElement, type ReactNode } from "react";
+import { renderToString } from "react-dom/server";
 import { hashPassword } from "better-auth/crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
@@ -116,6 +117,24 @@ function collectFunctionPropsPassedTo(root: ReactNode, targetTypes: unknown[]): 
   return offenders;
 }
 
+// CORRECCIÓN — hydration mismatch real en el <title> de cada punto/barra
+// (BarChart/LineChart): renderiza el árbol COMPLETO de cada página real
+// (con datos reales de la base) a HTML vía renderToString, exactamente
+// el mismo paso que ejecuta el servidor de Next para estas rutas — si
+// algún <title> volviera a recibir varios children interpolados en vez
+// de un único string precomputado, React emite un warning de desarrollo
+// ("the children prop of <title> tags...") capturado aquí por
+// console.error. renderToString no necesita jsdom: es SSR puro, corre
+// igual en Node — no hace falta el pragma @vitest-environment jsdom
+// para esta verificación específica.
+function assertNoTitleChildrenWarning(errorSpy: ReturnType<typeof vi.spyOn>) {
+  const calls = errorSpy.mock.calls as unknown[][];
+  const offending = calls
+    .map((args) => args.map(String).join(" "))
+    .filter((msg) => /<title>/i.test(msg) && /children/i.test(msg));
+  expect(offending).toEqual([]);
+}
+
 describe("páginas de analítica — nunca pasan funciones a los componentes de gráfica (regresión real de serialización RSC)", () => {
   it("/commissions/analytics no pasa ninguna función como prop a BarChart/LineChart", async () => {
     const { default: CommissionAnalyticsPage } = await import("@/app/(app)/commissions/analytics/page");
@@ -129,5 +148,29 @@ describe("páginas de analítica — nunca pasan funciones a los componentes de 
     const tree = await PolicyAnalyticsPage({ searchParams: Promise.resolve({}) });
     const offenders = collectFunctionPropsPassedTo(tree, [BarChart, LineChart]);
     expect(offenders).toEqual([]);
+  });
+
+  it("/commissions/analytics: el árbol completo (datos reales) se sirve sin la advertencia de children de <title>", async () => {
+    const { default: CommissionAnalyticsPage } = await import("@/app/(app)/commissions/analytics/page");
+    const tree = await CommissionAnalyticsPage({ searchParams: Promise.resolve({}) });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() => renderToString(tree)).not.toThrow();
+    } finally {
+      assertNoTitleChildrenWarning(errorSpy);
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("/policies/analytics: el árbol completo (datos reales) se sirve sin la advertencia de children de <title>", async () => {
+    const { default: PolicyAnalyticsPage } = await import("@/app/(app)/policies/analytics/page");
+    const tree = await PolicyAnalyticsPage({ searchParams: Promise.resolve({}) });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() => renderToString(tree)).not.toThrow();
+    } finally {
+      assertNoTitleChildrenWarning(errorSpy);
+      errorSpy.mockRestore();
+    }
   });
 });

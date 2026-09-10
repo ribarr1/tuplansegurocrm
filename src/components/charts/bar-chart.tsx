@@ -19,10 +19,38 @@ export type ChartValueFormat = "currency" | "number" | "percent";
 
 const DEFAULT_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 
+// CORRECCIÓN — hydration mismatch en el <title> de cada punto/barra:
+// formatChartValue corre tanto en el servidor (SSR del árbol de este
+// Client Component, ya que se renderiza dentro de un Server Component)
+// como en el navegador durante la hidratación. Cualquier formato que
+// dependa del locale/ICU del entorno en tiempo de ejecución (el locale
+// "default" del navegador del usuario vs. el locale/build de ICU de
+// Node en el servidor) puede producir un texto distinto entre ambos
+// renders — React detecta la diferencia de texto dentro de <title> y
+// lanza un hydration mismatch. Los tres formatos usan SIEMPRE locale
+// "en-US" explícito vía instancias de Intl.NumberFormat cacheadas a
+// nivel de módulo (nunca Number.prototype.toLocaleString sin locale,
+// nunca el locale del navegador, nunca Date.now()/Math.random()/window
+// durante el render) — el mismo Intl.NumberFormat("en-US", ...)
+// produce el mismo string en Node y en cualquier navegador, siempre.
+const currencyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const percentFormatter = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+const numberFormatter = new Intl.NumberFormat("en-US");
+
 export function formatChartValue(value: number, format: ChartValueFormat): string {
-  if (format === "currency") return `$${value.toFixed(2)}`;
-  if (format === "percent") return `${value.toFixed(1)}%`;
-  return value.toLocaleString("en-US");
+  if (format === "currency") return currencyFormatter.format(value);
+  // Intl.NumberFormat({style:"percent"}) espera una fracción (0.42 ->
+  // "42.0%"), pero los valores de este proyecto ya vienen expresados
+  // como porcentaje entero/decimal (ej. 42.0 -> "42.0%") — se divide
+  // entre 100 antes de formatear para conservar exactamente el mismo
+  // significado que tenía `${value.toFixed(1)}%`, solo que ahora con
+  // locale explícito y determinista.
+  if (format === "percent") return percentFormatter.format(value / 100);
+  return numberFormatter.format(value);
 }
 
 export function BarChart({
@@ -98,9 +126,15 @@ export function BarChart({
                         onMouseEnter={() => setHovered({ category: d.category, seriesKey: s.key })}
                         onMouseLeave={() => setHovered(null)}
                       >
-                        <title>
-                          {d.category} — {s.label}: {valueFormatter(value)}
-                        </title>
+                        {/* CORRECCIÓN — hydration mismatch real: React exige que
+                            <title> reciba un ÚNICO string como children (documentado
+                            en su propio warning de desarrollo) — con varios hijos
+                            interpolados (ej. {a} — {b}: {c}) el SSR renderiza un
+                            <title></title> VACÍO mientras la hidratación en el
+                            navegador sí lo puebla, produciendo exactamente el
+                            mismatch reportado. Se precomputa el texto completo como
+                            UN solo string determinista (nunca suppressHydrationWarning). */}
+                        <title>{`${d.category} — ${s.label}: ${valueFormatter(value)}`}</title>
                       </rect>
                     </g>
                   );
