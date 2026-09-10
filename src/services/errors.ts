@@ -14,7 +14,11 @@ export type AppErrorCode =
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "VALIDATION_ERROR"
-  | "CONFLICT";
+  | "CONFLICT"
+  // CORRECCIÓN (activación/recuperación): proveedor de correo no
+  // configurado o falla externa al enviar — nunca se afirma que un
+  // correo se envió cuando en realidad no se pudo.
+  | "SERVICE_UNAVAILABLE";
 
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -22,6 +26,7 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   NOT_FOUND: 404,
   VALIDATION_ERROR: 400,
   CONFLICT: 409,
+  SERVICE_UNAVAILABLE: 503,
 };
 
 export class AppError extends Error {

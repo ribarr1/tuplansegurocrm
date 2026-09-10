@@ -1,5 +1,4 @@
 import "server-only";
-import { randomBytes } from "node:crypto";
 import { hashPassword } from "better-auth/crypto";
 import { prisma } from "@/lib/prisma";
 import type { AuthorizedUser } from "@/lib/authorization";
@@ -12,6 +11,7 @@ import {
   resetUserPasswordSchema,
 } from "@/schemas/user.schema";
 import { recordAuditEvent } from "@/services/audit.service";
+import { issueInvitationToken, sendInvitationEmail } from "@/services/user-invitations.service";
 
 // Solo para uso administrativo (ej. selector de "agente asignado" al
 // crear/editar un contacto, o "responsable" al crear/editar una tarea
@@ -41,6 +41,7 @@ const userSelect = {
   role: true,
   isActive: true,
   isAgent: true,
+  activatedAt: true,
   createdAt: true,
 } as const;
 
@@ -58,27 +59,17 @@ export async function listAllUsers(actor: AuthorizedUser) {
   return prisma.user.findMany({ select: userSelect, orderBy: { name: "asc" } });
 }
 
-function generateTemporaryPassword(): string {
-  // 18 bytes -> 24 caracteres base64url, muy por encima del
-  // minPasswordLength=10 configurado en auth.ts.
-  return randomBytes(18).toString("base64url");
-}
-
-// El signup público de Better Auth está deshabilitado
-// (emailAndPassword.disableSignUp en auth.ts) para que nadie pueda
-// autorregistrarse con acceso real a datos de clientes. Por eso la
-// creación de usuarios NO pasa por auth.api.signUpEmail (esa ruta
-// también quedaría bloqueada) — en su lugar se crean directamente el
-// User y el Account (con la MISMA convención que usa Better Auth:
-// issuer/providerId "credential", contraseña hasheada con su propio
-// hashPassword) dentro de una transacción.
-//
-// La contraseña temporal se genera aquí, se hashea antes de guardarse
-// (nunca se persiste en texto plano) y se retorna UNA sola vez para
-// que el administrador la comparta por un canal seguro fuera de banda.
-// Envío de esa contraseña por email queda pendiente (requiere
-// infraestructura adicional, ver docs/DECISIONS.md) — el administrador
-// la copia y se la entrega manualmente.
+// CORRECCIÓN (activación de usuarios): el ADMIN NUNCA define ni conoce
+// la contraseña de un usuario nuevo — el signup público de Better Auth
+// está deshabilitado (emailAndPassword.disableSignUp en auth.ts), así
+// que la creación de usuarios sigue sin pasar por auth.api.signUpEmail
+// (esa ruta también quedaría bloqueada); en su lugar se crean
+// directamente el User y el Account (misma convención que usa Better
+// Auth: issuer/providerId "credential") dentro de una transacción,
+// pero el Account se crea SIN contraseña (`password: null`) — no hay
+// ninguna credencial válida hasta que el propio usuario complete la
+// invitación (ver user-invitations.service.ts). La cuenta queda
+// `activatedAt: null` ("pendiente de activación") hasta ese momento.
 export async function createUser(actor: AuthorizedUser, rawInput: unknown) {
   assertAdminOnly(actor);
   const input = parseOrThrow(createUserSchema, rawInput);
@@ -86,16 +77,14 @@ export async function createUser(actor: AuthorizedUser, rawInput: unknown) {
   const existing = await prisma.user.findUnique({ where: { email: input.email }, select: { id: true } });
   if (existing) throw new AppError("VALIDATION_ERROR", "email: Ya existe un usuario con este correo.");
 
-  const temporaryPassword = generateTemporaryPassword();
-  const hashedPassword = await hashPassword(temporaryPassword);
-
-  const user = await prisma.$transaction(async (tx) => {
-    const created = await tx.user.create({
+  const { created, rawToken } = await prisma.$transaction(async (tx) => {
+    const createdUser = await tx.user.create({
       data: {
         name: input.name,
         email: input.email,
         role: input.role,
         isActive: true,
+        activatedAt: null,
         // Fase 025.4: AGENT siempre implica isAgent=true (mismo
         // criterio del backfill de la migración 017); para ADMIN/
         // ASSISTANT se respeta el checkbox explícito del formulario,
@@ -108,24 +97,40 @@ export async function createUser(actor: AuthorizedUser, rawInput: unknown) {
       data: {
         issuer: "local:credential",
         providerId: "credential",
-        accountId: created.id,
-        userId: created.id,
-        password: hashedPassword,
+        accountId: createdUser.id,
+        userId: createdUser.id,
+        password: null,
       },
     });
-    // Nunca la contraseña (ni el hash) en el audit log — ver
-    // docs/SECURITY.md.
+    const token = await issueInvitationToken(tx, createdUser.id);
+    // Nunca la contraseña, el token ni el enlace de invitación en el
+    // audit log — ver docs/SECURITY.md.
     await recordAuditEvent(tx, {
       actor,
       entityType: "User",
-      entityId: created.id,
+      entityId: createdUser.id,
       action: "USER_CREATE",
-      summary: `Usuario creado: ${created.name} (${created.role})`,
+      summary: `Usuario creado: ${createdUser.name} (${createdUser.role}) — invitación generada`,
     });
-    return created;
+    return { created: createdUser, rawToken: token };
   });
 
-  return { user, temporaryPassword };
+  // El envío del correo ocurre DESPUÉS de confirmar la transacción —
+  // nunca una llamada de red dentro de una transacción de DB. Si falla
+  // (proveedor no configurado, error externo), el usuario y el token
+  // YA quedaron creados: el ADMIN puede usar "Reenviar invitación" en
+  // cuanto el correo esté configurado, sin volver a crear el usuario.
+  try {
+    await sendInvitationEmail({ userId: created.id, name: created.name, email: created.email, rawToken });
+  } catch (error) {
+    const reason = error instanceof AppError ? error.message : "Error desconocido al enviar el correo.";
+    throw new AppError(
+      "SERVICE_UNAVAILABLE",
+      `El usuario ${created.name} se creó, pero no se pudo enviar la invitación por correo: ${reason} Usa "Reenviar invitación" una vez resuelto.`
+    );
+  }
+
+  return { user: created };
 }
 
 // Salvaguarda: nunca permitir que el ADMIN activo restante quede

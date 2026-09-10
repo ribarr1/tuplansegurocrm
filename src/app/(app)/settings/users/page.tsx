@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/authorization";
 import { listAllUsers } from "@/services/users.service";
+import { getInvitationStatuses, type InvitationStatus } from "@/services/user-invitations.service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -9,9 +10,24 @@ import { CreateUserForm } from "./create-user-form";
 import { ToggleUserActiveButton } from "./toggle-active-button";
 import { ToggleUserIsAgentButton } from "./toggle-is-agent-button";
 import { ResetPasswordDialog } from "./reset-password-dialog";
+import { ResendInvitationButton } from "./resend-invitation-button";
 import { formatDateUS } from "@/lib/business-time";
 
 const formatDate = formatDateUS;
+
+// CORRECCIÓN (activación de usuarios) — concepto DISTINTO de
+// isActive/Inactivo (ver comentario en el modelo User): si esta cuenta
+// ya estableció su propia contraseña por invitación.
+const ACTIVATION_LABEL: Record<InvitationStatus, string> = {
+  PENDING: "Pendiente de activación",
+  EXPIRED: "Invitación vencida",
+  ACTIVATED: "Activo",
+};
+const ACTIVATION_VARIANT: Record<InvitationStatus, "default" | "outline" | "destructive"> = {
+  PENDING: "outline",
+  EXPIRED: "destructive",
+  ACTIVATED: "default",
+};
 
 export default async function UsersPage() {
   const actor = await requireUser();
@@ -28,6 +44,7 @@ export default async function UsersPage() {
   }
 
   const users = await listAllUsers(actor);
+  const invitationStatuses = await getInvitationStatuses(users);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -43,7 +60,8 @@ export default async function UsersPage() {
               <TableHead>Correo</TableHead>
               <TableHead>Rol</TableHead>
               <TableHead>Agente</TableHead>
-              <TableHead>Estado</TableHead>
+              <TableHead>Habilitado</TableHead>
+              <TableHead>Activación</TableHead>
               <TableHead>Creado</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
@@ -63,8 +81,16 @@ export default async function UsersPage() {
                 </TableCell>
                 <TableCell>
                   <Badge variant={user.isActive ? "default" : "outline"}>
-                    {user.isActive ? "Activo" : "Inactivo"}
+                    {user.isActive ? "Habilitado" : "Deshabilitado"}
                   </Badge>
+                </TableCell>
+                <TableCell>
+                  {(() => {
+                    const activation = invitationStatuses.get(user.id) ?? "ACTIVATED";
+                    return (
+                      <Badge variant={ACTIVATION_VARIANT[activation]}>{ACTIVATION_LABEL[activation]}</Badge>
+                    );
+                  })()}
                 </TableCell>
                 <TableCell>{formatDate(user.createdAt)}</TableCell>
                 <TableCell className="flex flex-wrap justify-end gap-2 text-right">
@@ -83,6 +109,9 @@ export default async function UsersPage() {
                         Accesos
                       </Link>
                     </>
+                  )}
+                  {(invitationStatuses.get(user.id) ?? "ACTIVATED") !== "ACTIVATED" && (
+                    <ResendInvitationButton userId={user.id} />
                   )}
                   <ResetPasswordDialog userId={user.id} userName={user.name} />
                   <ToggleUserIsAgentButton userId={user.id} role={user.role} isAgent={user.isAgent} />

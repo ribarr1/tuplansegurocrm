@@ -3,11 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
 import { createUser, setUserActive, setUserIsAgent, resetUserPassword } from "@/services/users.service";
+import { resendInvitation } from "@/services/user-invitations.service";
 import { AppError } from "@/services/errors";
 
+// CORRECCIÓN (activación de usuarios): ya no existe "temporaryPassword"
+// — el ADMIN nunca ve ni define una contraseña, se envía una
+// invitación de un solo uso por correo.
 export type CreateUserFormState =
   | { error: string }
-  | { success: true; email: string; temporaryPassword: string }
+  | { success: true; email: string }
   | undefined;
 
 export async function createUserAction(
@@ -21,13 +25,27 @@ export async function createUserAction(
   const isAgent = formData.get("isAgent") === "on";
 
   try {
-    const { user, temporaryPassword } = await createUser(actor, { name, email, role, isAgent });
+    const { user } = await createUser(actor, { name, email, role, isAgent });
     revalidatePath("/settings/users");
-    return { success: true, email: user.email, temporaryPassword };
+    return { success: true, email: user.email };
   } catch (error) {
     if (error instanceof AppError) return { error: error.message };
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
   }
+}
+
+// CORRECCIÓN (activación de usuarios) — ADMIN-only (reforzado también
+// server-side dentro de resendInvitation, nunca solo aquí).
+export async function resendInvitationAction(userId: string): Promise<{ error?: string }> {
+  const actor = await requireSessionUser();
+  try {
+    await resendInvitation(actor, { userId });
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  revalidatePath("/settings/users");
+  return {};
 }
 
 // Retorna el mensaje de error en vez de lanzar: un Server Action

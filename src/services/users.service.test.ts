@@ -43,21 +43,33 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.account.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
+  // CORRECCIÓN (activación de usuarios): createUser ahora también deja
+  // una fila de invitación (Verification) por cada usuario creado.
+  await prisma.verification.deleteMany({
+    where: { identifier: { in: createdUserIds.map((id) => `invite:${id}`) } },
+  });
+  await prisma.auditEvent.deleteMany({ where: { entityId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
 });
 
 describe("users.service", () => {
   it("AH) ADMIN puede crear un usuario ADMIN", async () => {
     const email = `newadmin.${Date.now()}@test.local`;
-    const { user, temporaryPassword } = await createUser(admin, { name: "Nuevo Admin", email, role: "ADMIN" });
+    const { user } = await createUser(admin, { name: "Nuevo Admin", email, role: "ADMIN" });
     createdUserIds.push(user.id);
     expect(user.role).toBe("ADMIN");
     expect(user.isActive).toBe(true);
-    expect(temporaryPassword.length).toBeGreaterThanOrEqual(10);
+    // CORRECCIÓN (activación de usuarios): el ADMIN nunca define ni
+    // conoce una contraseña — la cuenta queda sin credencial hasta que
+    // el propio usuario complete la invitación.
+    expect(user.activatedAt).toBeNull();
 
     const account = await prisma.account.findFirst({ where: { userId: user.id } });
-    expect(account?.password).toBeTruthy();
-    expect(account?.password).not.toBe(temporaryPassword);
+    expect(account?.password).toBeNull();
+
+    const invitation = await prisma.verification.findFirst({ where: { identifier: `invite:${user.id}` } });
+    expect(invitation).toBeTruthy();
+    expect(invitation?.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   it("AI) ADMIN puede crear un usuario AGENT", async () => {
@@ -144,11 +156,19 @@ describe("users.service", () => {
   describe("resetUserPassword", () => {
     it("ADMIN cambia la contraseña de otro usuario, la nueva funciona y la anterior deja de funcionar", async () => {
       const email = `resetpw.${Date.now()}@test.local`;
-      const { user, temporaryPassword } = await createUser(admin, { name: "Reset PW", email, role: "AGENT" });
+      const { user } = await createUser(admin, { name: "Reset PW", email, role: "AGENT" });
       createdUserIds.push(user.id);
 
+      // CORRECCIÓN (activación de usuarios): createUser ya no entrega
+      // ninguna contraseña — se establece una primera contraseña real
+      // vía el mismo mecanismo de restablecimiento administrativo que
+      // se está probando (nunca vía la invitación por correo, fuera de
+      // alcance de esta prueba).
+      const firstPassword = "PrimeraContraseñaSegura2026";
+      await resetUserPassword(admin, { id: user.id, newPassword: firstPassword, confirmPassword: firstPassword });
+
       const oldSignIn = await auth.api.signInEmail({
-        body: { email, password: temporaryPassword },
+        body: { email, password: firstPassword },
         asResponse: true,
       });
       expect(oldSignIn.status).toBe(200);
@@ -157,7 +177,7 @@ describe("users.service", () => {
       await resetUserPassword(admin, { id: user.id, newPassword, confirmPassword: newPassword });
 
       const oldSignInAfter = await auth.api.signInEmail({
-        body: { email, password: temporaryPassword },
+        body: { email, password: firstPassword },
         asResponse: true,
       });
       expect(oldSignInAfter.status).not.toBe(200);
@@ -171,9 +191,11 @@ describe("users.service", () => {
 
     it("restablecer la contraseña invalida las sesiones existentes del usuario", async () => {
       const email = `resetpw-session.${Date.now()}@test.local`;
-      const { user, temporaryPassword } = await createUser(admin, { name: "Reset Session", email, role: "AGENT" });
+      const { user } = await createUser(admin, { name: "Reset Session", email, role: "AGENT" });
       createdUserIds.push(user.id);
-      await auth.api.signInEmail({ body: { email, password: temporaryPassword }, asResponse: true });
+      const firstPassword = "PrimeraContraseñaSegura2026";
+      await resetUserPassword(admin, { id: user.id, newPassword: firstPassword, confirmPassword: firstPassword });
+      await auth.api.signInEmail({ body: { email, password: firstPassword }, asResponse: true });
       const sessionsBefore = await prisma.session.count({ where: { userId: user.id } });
       expect(sessionsBefore).toBeGreaterThan(0);
 

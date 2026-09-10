@@ -1,75 +1,92 @@
 import "dotenv/config";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { hashPassword } from "better-auth/crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { prisma } from "../src/lib/prisma";
 
-// Bootstrap seguro del primer usuario ADMIN. Sin signup público, sin
-// usuario/password hardcodeado. El signup público de Better Auth está
-// deshabilitado (disableSignUp en auth.ts), así que este script crea
-// el User + Account directamente, con la MISMA convención de hash
-// (better-auth/crypto::hashPassword) que usa el resto de la
-// aplicación — igual que users.service.ts::createUser.
-// name/email/password nunca quedan escritos en ningún archivo: se
-// reciben por variables de entorno de proceso (no persistidas) o por
-// prompt interactivo con la contraseña oculta en terminal.
+// CORRECCIÓN (activación de usuarios) — bootstrap seguro del PRIMER
+// ADMIN. Reescrito: ya NUNCA recibe/define una contraseña (ni por
+// prompt ni por env) — igual que un usuario creado desde Configuración
+// → Usuarios, el primer ADMIN activa su propia cuenta mediante una
+// invitación de un solo uso (misma tabla `Verification`, mismo
+// mecanismo que user-invitations.service.ts — reutilizado aquí en
+// lugar de importarlo, porque ese módulo es "server-only" y este
+// script corre fuera del árbol de Next vía tsx, ver el mismo motivo
+// documentado en apply-plan.ts/seed-ruben-compliance.ts).
+//
+// Bloquea nuevas ejecuciones en cuanto YA EXISTE un ADMIN — este
+// comando es exclusivamente para el arranque inicial del sistema,
+// nunca para crear administradores adicionales (eso se hace desde
+// Configuración → Usuarios, con auditoría de qué ADMIN lo creó).
+//
+// Nunca escribe el token/enlace de invitación en un archivo ni lo deja
+// en git — si el correo no está configurado (RESEND_API_KEY/
+// EMAIL_FROM), se imprime UNA vez en la terminal como último recurso
+// (con advertencia explícita) para que el operador que ejecuta este
+// comando interactivamente pueda completar el arranque sin depender
+// de otro canal — nunca se persiste en un log de archivo.
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-const CTRL_C_CODE = 3;
-const BACKSPACE_CODE = 8;
-const DEL_CODE = 127;
+function parseCliArgs(): Record<string, string> {
+  const args: Record<string, string> = {};
+  for (const arg of process.argv.slice(2)) {
+    const match = /^--([^=]+)=(.*)$/.exec(arg);
+    if (match) args[match[1]] = match[2];
+    else if (arg.startsWith("--")) args[arg.slice(2)] = "true";
+  }
+  return args;
+}
 
-function promptHidden(question: string): Promise<string> {
-  return new Promise((resolve) => {
-    stdout.write(question);
-    let input = "";
-    const wasRaw = stdin.isTTY ? stdin.isRaw : false;
-    if (stdin.isTTY) stdin.setRawMode(true);
-    stdin.resume();
-    stdin.setEncoding("utf8");
+function generateRawToken(): string {
+  return randomBytes(32).toString("base64url");
+}
 
-    const onData = (chunk: string) => {
-      const char = chunk.toString();
-      const code = char.charCodeAt(0);
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
 
-      if (char === "\r" || char === "\n") {
-        cleanup();
-        stdout.write("\n");
-        resolve(input);
-        return;
-      }
-      if (code === CTRL_C_CODE) {
-        cleanup();
-        stdout.write("\n");
-        process.exit(1);
-      }
-      if (code === BACKSPACE_CODE || code === DEL_CODE) {
-        input = input.slice(0, -1);
-        return;
-      }
-      input += char;
-    };
+async function sendInviteEmailOrPrint(params: { name: string; email: string; url: string }): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+  const subject = "Activa tu cuenta de administrador — Tu Plan Seguro USA";
+  const text = `Hola ${params.name},\n\nUsa este enlace para crear tu contraseña de administrador (válido 24 horas, un solo uso):\n\n${params.url}`;
+  const html = `<p>Hola ${params.name},</p><p>Usa este enlace para crear tu contraseña de administrador (válido 24 horas, un solo uso):</p><p><a href="${params.url}">${params.url}</a></p>`;
 
-    function cleanup() {
-      if (stdin.isTTY) stdin.setRawMode(wasRaw);
-      stdin.pause();
-      stdin.removeListener("data", onData);
+  if (apiKey && from) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to: params.email, subject, html, text }),
+    });
+    if (response.ok) {
+      console.log(`Invitación enviada por correo a ${params.email}.`);
+      return;
     }
+    console.warn("No se pudo enviar el correo de invitación (proveedor respondió con error).");
+  } else {
+    console.warn(
+      "Correo no configurado (falta RESEND_API_KEY/EMAIL_FROM) — no se pudo enviar automáticamente."
+    );
+  }
 
-    stdin.on("data", onData);
-  });
+  // Único caso en que el enlace se imprime: bootstrap interactivo sin
+  // proveedor de correo configurado y sin otro ADMIN a quien
+  // reenviársela. Nunca se escribe en un archivo ni se registra en un
+  // log persistente — solo en esta terminal, una vez.
+  console.log("\nComparte este enlace de activación de forma segura (válido 24 horas, un solo uso):");
+  console.log(params.url);
 }
 
 async function main() {
+  const cliArgs = parseCliArgs();
   const rl = createInterface({ input: stdin, output: stdout });
 
-  const name = process.env.ADMIN_NAME ?? (await rl.question("Nombre completo: "));
-  const email = process.env.ADMIN_EMAIL ?? (await rl.question("Correo electrónico: "));
-  const password =
-    process.env.ADMIN_PASSWORD ?? (await promptHidden("Contraseña (mínimo 10 caracteres): "));
+  const email = cliArgs.email ?? process.env.ADMIN_EMAIL ?? (await rl.question("Correo electrónico: "));
+  const name = cliArgs.name ?? process.env.ADMIN_NAME ?? (await rl.question("Nombre completo: "));
+  const isAgent = cliArgs.isAgent === "true" || process.env.ADMIN_IS_AGENT === "true";
 
   rl.close();
 
@@ -83,36 +100,57 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  if (password.length < 10) {
-    console.error("La contraseña debe tener al menos 10 caracteres.");
+
+  // Bloqueo real: nunca solo "¿ya existe este email?" — el comando es
+  // de arranque inicial, se rechaza en cuanto EXISTE cualquier ADMIN,
+  // sin importar su correo.
+  const existingAdmin = await prisma.user.findFirst({ where: { role: "ADMIN" }, select: { id: true } });
+  if (existingAdmin) {
+    console.error(
+      "Ya existe al menos un administrador — este comando es solo para el arranque inicial. Crea administradores adicionales desde Configuración → Usuarios."
+    );
     process.exitCode = 1;
     return;
   }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+  if (existingUser) {
     console.error(`Ya existe un usuario con el correo ${email}.`);
     process.exitCode = 1;
     return;
   }
 
-  const hashedPassword = await hashPassword(password);
-  await prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: { name, email, role: "ADMIN", isActive: true },
+  const rawToken = generateRawToken();
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: { name, email, role: "ADMIN", isActive: true, isAgent, activatedAt: null },
     });
     await tx.account.create({
       data: {
         issuer: "local:credential",
         providerId: "credential",
-        accountId: user.id,
-        userId: user.id,
-        password: hashedPassword,
+        accountId: created.id,
+        userId: created.id,
+        password: null,
       },
     });
+    await tx.verification.create({
+      data: {
+        identifier: `invite:${created.id}`,
+        value: hashToken(rawToken),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+    return created;
   });
 
+  const base = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
+  const url = new URL("/activate", base);
+  url.searchParams.set("uid", user.id);
+  url.searchParams.set("token", rawToken);
+
   console.log(`Usuario ADMIN creado correctamente: ${email}`);
+  await sendInviteEmailOrPrint({ name, email, url: url.toString() });
 }
 
 main()

@@ -90,6 +90,15 @@ model User {
   // rol siempre implicó ser agente); ADMIN/ASSISTANT existentes NUNCA
   // se tocan automáticamente. Ver docs/DECISIONS.md.
   isAgent       Boolean  @default(false)
+  // CORRECCIÓN (activación de usuarios): null = todavía no estableció
+  // su propia contraseña por invitación (cuenta "pendiente de
+  // activación"); se fija UNA sola vez, al activar. Concepto DISTINTO
+  // de `isActive` (que un ADMIN puede alternar libremente para
+  // habilitar/deshabilitar el acceso) — una cuenta puede estar
+  // isActive=true y sin embargo pendiente de activación (nunca ha
+  // iniciado sesión todavía). Nunca se usa isActive para representar
+  // este estado.
+  activatedAt   DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

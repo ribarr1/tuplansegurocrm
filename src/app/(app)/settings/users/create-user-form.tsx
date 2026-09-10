@@ -27,17 +27,11 @@ export function CreateUserForm() {
   return (
     <div className="flex flex-col gap-3">
       {state && "success" in state && (
-        <div className="flex flex-col gap-1 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+        <div className="flex flex-col gap-1 rounded-md border border-emerald-500/50 bg-emerald-500/10 p-3 text-sm">
           <p className="font-medium">Usuario creado: {state.email}</p>
-          <p>
-            Contraseña temporal (cópiala ahora — no se mostrará de nuevo):{" "}
-            <code className="rounded bg-background px-1.5 py-0.5 font-mono">
-              {state.temporaryPassword}
-            </code>
-          </p>
           <p className="text-xs text-muted-foreground">
-            Compártela con el usuario por un canal seguro (no queda registrada en ningún lugar del
-            sistema). El envío automático por correo aún no está implementado.
+            Se envió un correo de invitación para que cree su propia contraseña (enlace de un solo
+            uso, válido 24 horas). Si no le llega, puedes reenviarlo desde la tabla de abajo.
           </p>
         </div>
       )}

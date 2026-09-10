@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -80,6 +81,12 @@ export default function LoginPage() {
               {isSubmitting ? "Ingresando…" : "Iniciar sesión"}
             </Button>
           </form>
+
+          <p className="mt-4 text-center text-sm">
+            <Link href="/forgot-password" className="text-muted-foreground underline">
+              ¿Olvidaste tu contraseña?
+            </Link>
+          </p>
         </CardContent>
       </Card>
 

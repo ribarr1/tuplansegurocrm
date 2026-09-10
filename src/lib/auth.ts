@@ -2,6 +2,8 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { prisma } from "@/lib/prisma";
+import { sendEmail } from "@/lib/email";
+import { recordAuditEvent } from "@/services/audit.service";
 
 // Autenticación: email + password con sesiones respaldadas por base de
 // datos (no JWT-only), para poder revocar acceso en tiempo real cuando
@@ -19,6 +21,44 @@ export const auth = betterAuth({
     // contraseña que usa Better Auth) sin pasar por esta ruta pública,
     // que queda bloqueada incluso para llamadas internas.
     disableSignUp: true,
+    // CORRECCIÓN (recuperación de contraseña) — "Olvidé mi contraseña"
+    // para cuentas YA activas usa el flujo NATIVO de Better Auth
+    // (nunca un sistema paralelo): un solo POST a /request-password-reset
+    // ya responde con el mismo mensaje genérico exista o no la cuenta
+    // (con generación de token simulada para mitigar timing attacks —
+    // ver node_modules/better-auth/dist/api/routes/password.mjs), y
+    // /reset-password consume el token UNA sola vez
+    // (consumeVerificationValue) antes de aceptar la nueva contraseña.
+    // Expiración corta (1 hora, mucho menor que las 24h del enlace de
+    // invitación inicial — ver user-invitations.service.ts, que sí
+    // necesita esa ventana más larga y un ciclo de vida administrable
+    // por el ADMIN que este endpoint nativo no expone).
+    resetPasswordTokenExpiresIn: 60 * 60,
+    // Cerrar las demás sesiones tras cambiar la contraseña — ítem
+    // explícito de la corrección ("permitir cerrar las demás sesiones
+    // después del cambio").
+    revokeSessionsOnPasswordReset: true,
+    sendResetPassword: async ({ user, url }) => {
+      await sendEmail({
+        to: user.email,
+        subject: "Restablece tu contraseña — Tu Plan Seguro USA",
+        text: `Hola,\n\nRecibimos una solicitud para restablecer tu contraseña. Si fuiste tú, usa este enlace (válido por 1 hora, un solo uso):\n\n${url}\n\nSi no lo solicitaste, ignora este correo — tu contraseña actual sigue funcionando.`,
+        html: `<p>Recibimos una solicitud para restablecer tu contraseña. Si fuiste tú, usa este enlace (válido por 1 hora, un solo uso):</p><p><a href="${url}">${url}</a></p><p>Si no lo solicitaste, ignora este correo — tu contraseña actual sigue funcionando.</p>`,
+      });
+    },
+    // Auditoría del cambio — nunca el token ni la contraseña, solo el
+    // hecho de que el propio usuario restableció su contraseña
+    // (distinto de USER_PASSWORD_RESET, que es un ADMIN forzando la de
+    // otro usuario, ver users.service.ts::resetUserPassword).
+    onPasswordReset: async ({ user }) => {
+      await recordAuditEvent(prisma, {
+        actor: null,
+        entityType: "User",
+        entityId: user.id,
+        action: "USER_PASSWORD_SELF_RESET",
+        summary: `El usuario restableció su propia contraseña (${user.email})`,
+      });
+    },
   },
   // role/isActive son campos de negocio ya existentes en User; se
   // declaran aquí solo para que Better Auth los conozca al leer la
