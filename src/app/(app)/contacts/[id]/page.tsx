@@ -25,6 +25,7 @@ import { CommissionsTab } from "./commissions-tab";
 import { NotesTab } from "./notes-tab";
 import { HistoryTab } from "./history-tab";
 import { CredentialsTab } from "./credentials-tab";
+import { PaymentMethodsTab } from "./payment-methods-tab";
 import { GoogleReviewCard } from "./google-review-card";
 import { formatDateTimeUS } from "@/lib/business-time";
 import { MarkSentDialog } from "../../birthdays/mark-sent-dialog";
@@ -40,6 +41,7 @@ const PROFILE_TABS = [
   { key: "accesos", label: "Accesos", enabled: true },
   { key: "tareas", label: "Tareas", enabled: true },
   { key: "comisiones", label: "Comisiones", enabled: true },
+  { key: "pagos", label: "Pagos", enabled: true },
   { key: "notas", label: "Notas", enabled: true },
   { key: "historial", label: "Historial", enabled: true },
 ] as const;
@@ -69,8 +71,17 @@ export default async function ContactDetailPage({
   // completo para ASSISTANT, no solo se deshabilita, para evitar
   // confusión y para no dejar una pestaña "viva" apuntando a datos que
   // de todas formas el servicio rechazaría.
-  const visibleTabs =
-    actor.role === "ASSISTANT" ? PROFILE_TABS.filter((t) => t.key !== "comisiones") : PROFILE_TABS;
+  //
+  // Pagos (AMPLIACIÓN PREPRODUCCIÓN — métodos de pago cifrados) es AÚN
+  // más estricto: exclusivamente role=ADMIN, sin excepción por
+  // asignación ni por ser además agente — se oculta para AGENT Y
+  // ASSISTANT (nunca solo deshabilitada), el servicio rechaza cualquier
+  // intento server-side de todas formas (assertAdminOnly).
+  const visibleTabs = PROFILE_TABS.filter((t) => {
+    if (t.key === "comisiones") return actor.role !== "ASSISTANT";
+    if (t.key === "pagos") return actor.role === "ADMIN";
+    return true;
+  });
   const activeTab = visibleTabs.some((t) => t.key === rawTab && t.enabled) ? rawTab! : "resumen";
 
   let person;
@@ -154,6 +165,8 @@ export default async function ContactDetailPage({
         <CredentialsTab actor={actor} personId={person.id} />
       ) : activeTab === "comisiones" ? (
         actor.role === "ASSISTANT" ? null : <CommissionsTab actor={actor} personId={person.id} />
+      ) : activeTab === "pagos" ? (
+        actor.role !== "ADMIN" ? null : <PaymentMethodsTab actor={actor} personId={person.id} />
       ) : activeTab === "notas" ? (
         <NotesTab actor={actor} personId={person.id} />
       ) : activeTab === "historial" ? (

@@ -33,7 +33,7 @@ import { linkPendingPaymentsToExpectation } from "@/services/commission-payment-
 // ASSISTANT: FORBIDDEN en toda función de este servicio.
 // ---------------------------------------------------------------------------
 
-function assertModuleAccess(actor: AuthorizedUser): void {
+export function assertModuleAccess(actor: AuthorizedUser): void {
   if (actor.role === "ASSISTANT") {
     throw new AppError("FORBIDDEN", "No tienes acceso al módulo de comisiones.");
   }

@@ -36,6 +36,17 @@ export default async function ReportsPage() {
             </CardContent>
           </Card>
         </Link>
+        <Link href="/policies/analytics">
+          <Card className="h-full transition-colors hover:bg-muted/40">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Analítica de pólizas</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              Dashboard gráfico: totales, tendencias mensuales, por carrier/tipo/agente/estado geográfico y
+              renovaciones próximas.
+            </CardContent>
+          </Card>
+        </Link>
         {showCommissions && (
           <Link href="/commissions">
             <Card className="h-full transition-colors hover:bg-muted/40">
@@ -44,6 +55,19 @@ export default async function ReportsPage() {
               </CardHeader>
               <CardContent className="text-sm text-muted-foreground">
                 Esperado vs. recibido, diferencia y estado por período, agente y póliza.
+              </CardContent>
+            </Card>
+          </Link>
+        )}
+        {showCommissions && (
+          <Link href="/commissions/analytics">
+            <Card className="h-full transition-colors hover:bg-muted/40">
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Analítica de comisiones</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                Dashboard gráfico: esperado vs. recibido, asistencia, neto, por carrier/agente y estados de
+                conciliación.
               </CardContent>
             </Card>
           </Link>

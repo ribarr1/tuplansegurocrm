@@ -27,6 +27,10 @@ import type {
   PolicyBusinessSource,
   ClientPortalType,
   GoogleReviewStatus,
+  PaymentMethodType,
+  CardBrand,
+  BankAccountType,
+  PaymentConsentUse,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -217,6 +221,31 @@ export const CLIENT_PORTAL_TYPE_LABELS: Record<ClientPortalType, string> = {
   MARKETPLACE: "Marketplace",
   STATE_EXCHANGE: "Exchange estatal",
   OTHER: "Otro",
+};
+
+export const PAYMENT_METHOD_TYPE_LABELS: Record<PaymentMethodType, string> = {
+  CREDIT_CARD: "Tarjeta de crédito",
+  DEBIT_CARD: "Tarjeta de débito",
+  BANK_ACCOUNT: "Cuenta bancaria",
+};
+
+export const CARD_BRAND_LABELS: Record<CardBrand, string> = {
+  VISA: "Visa",
+  MASTERCARD: "Mastercard",
+  AMEX: "American Express",
+  DISCOVER: "Discover",
+  OTHER: "Otra",
+};
+
+export const BANK_ACCOUNT_TYPE_LABELS: Record<BankAccountType, string> = {
+  CHECKING: "Checking",
+  SAVINGS: "Savings",
+};
+
+export const PAYMENT_CONSENT_USE_LABELS: Record<PaymentConsentUse, string> = {
+  AUTOPAY: "Autopay",
+  PAYMENT_ASSISTANCE: "Asistencia de pago",
+  BOTH: "Autopay y asistencia de pago",
 };
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {

@@ -113,6 +113,7 @@ model User {
   uploadedDocuments                PolicyDocument[]
   uploadedCommissionStatements     CommissionStatement[]
   commissionStatementApplyBatches  CommissionStatementApplyBatch[]
+  paymentMethodConsents            PaymentMethod[]
   sessions                         Session[]
   accounts                         Account[]
   auditEvents                      AuditEvent[]
@@ -249,6 +250,116 @@ model ClientPortalCredential {
   @@map("client_portal_credentials")
 }
 
+// ---------------------------------------------------------------------------
+// AMPLIACIÓN PREPRODUCCIÓN — Métodos de pago cifrados por cliente.
+//
+// El CRM NUNCA ejecuta cobros — estos datos existen únicamente para que
+// un ADMIN pueda ayudar a configurar el pago en el portal de la
+// aseguradora (ver docs/SECURITY.md, sección "Métodos de pago"). Solo
+// role=ADMIN puede crear/editar/ver/revelar/desactivar (nunca AGENT ni
+// ASSISTANT, ni siquiera un ADMIN-que-también-es-agente pierde esta
+// restricción — no hay excepción por asignación, a diferencia de
+// ClientPortalCredential).
+//
+// cardNumberEncrypted/routingNumberEncrypted/accountNumberEncrypted usan
+// encryptFinancial/decryptFinancial (src/lib/financial-crypto.ts) —
+// NUNCA encryptPii/decryptPii (src/lib/pii-crypto.ts): esa clave/función
+// es compartida con SSN/USCIS/credenciales de portal sin ninguna
+// separación criptográfica de contexto, y datos de pago necesitan una
+// subclave derivada distinta (ver financial-crypto.ts para el porqué).
+// Nunca se guarda CVV/CVC/CID, PIN, ni track data — no existen columnas
+// para ellos y el schema de validación los rechaza explícitamente.
+// last4 se guarda SIEMPRE por separado en texto plano, exclusivamente
+// para poder mostrar "Visa •••• 1234" sin descifrar nada.
+model PaymentMethod {
+  id       String            @id @default(uuid()) @db.Uuid
+  personId String            @db.Uuid
+  // Relación OPCIONAL a una póliza específica — un método de pago puede
+  // aplicar a una póliza en particular o quedar general para la
+  // persona (nunca obliga a elegir una).
+  policyId String?           @db.Uuid
+
+  type      PaymentMethodType
+  isDefault Boolean           @default(false)
+  autopay   Boolean           @default(false)
+  // Revocar = isActive:false (ver revokedAt abajo) — un método
+  // revocado nunca puede usarse de nuevo, pero su historial/auditoría
+  // se conserva siempre (nunca se borra la fila).
+  isActive  Boolean           @default(true)
+
+  // --- Tarjeta (CREDIT_CARD / DEBIT_CARD) ---
+  cardholderName      String?
+  cardNumberEncrypted String?
+  cardLast4           String?    @db.VarChar(4)
+  cardExpMonth        Int?
+  cardExpYear         Int?
+  cardBrand           CardBrand?
+
+  // --- Cuenta bancaria (BANK_ACCOUNT) ---
+  bankAccountHolderName  String?
+  bankName               String?
+  routingNumberEncrypted String?
+  accountNumberEncrypted String?
+  accountLast4           String?          @db.VarChar(4)
+  bankAccountType        BankAccountType?
+
+  // --- Dirección de facturación (texto plano — no es PII financiera
+  // sensible por sí sola, mismo criterio que Household.address*) ---
+  billingAddressLine1 String?
+  billingAddressLine2 String?
+  billingCity         String?
+  billingState        String? @db.VarChar(2)
+  billingZipCode      String?
+
+  // --- Comentario administrativo — SOLO ADMIN, cifrado por la misma
+  // razón que AgentPortalCredential.notesEncrypted: puede terminar
+  // conteniendo algo sensible a pesar de la advertencia explícita en
+  // el formulario. Nunca aparece en exportaciones. ---
+  commentEncrypted String?
+
+  // --- Consentimiento (nunca inferido — siempre un hecho explícito) ---
+  consentGiven    Boolean            @default(false)
+  consentAt       DateTime?
+  consentUse      PaymentConsentUse?
+  consentByUserId String?            @db.Uuid
+  revokedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  person        Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  policy        Policy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  consentByUser User?  @relation(fields: [consentByUserId], references: [id], onDelete: SetNull)
+
+  @@index([personId])
+  @@map("payment_methods")
+}
+
+enum PaymentMethodType {
+  CREDIT_CARD
+  DEBIT_CARD
+  BANK_ACCOUNT
+}
+
+enum CardBrand {
+  VISA
+  MASTERCARD
+  AMEX
+  DISCOVER
+  OTHER
+}
+
+enum BankAccountType {
+  CHECKING
+  SAVINGS
+}
+
+enum PaymentConsentUse {
+  AUTOPAY
+  PAYMENT_ASSISTANCE
+  BOTH
+}
+
 // Identidad central. Nunca se duplica al pasar de prospecto a cliente:
 // el cambio se refleja en contactStatus.
 model Person {
@@ -298,6 +409,7 @@ model Person {
   sensitiveIdentity    PersonSensitiveIdentity?
   immigrationDocuments PersonImmigrationDocument[]
   portalCredentials    ClientPortalCredential[]
+  paymentMethods       PaymentMethod[]
 
   @@index([lastName])
   @@index([phone])
@@ -554,6 +666,7 @@ model Policy {
   externalReferences     PolicyExternalReference[]
   statementRows          CommissionStatementRow[]
   clientPortalCredentials ClientPortalCredential[]
+  paymentMethods         PaymentMethod[]
 
   @@index([holderId])
   @@index([productId])
