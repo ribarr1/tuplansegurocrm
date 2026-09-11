@@ -7,6 +7,8 @@ import { AppError, parseOrThrow } from "@/services/errors";
 import { activateAccountSchema, resendInvitationSchema } from "@/schemas/user-invitation.schema";
 import { recordAuditEvent } from "@/services/audit.service";
 import { sendEmail } from "@/lib/email";
+import { renderTransactionalEmail, escapeHtml } from "@/lib/email-templates";
+import { buildAppUrl } from "@/lib/env";
 import { checkRateLimit } from "@/lib/rate-limit";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -41,10 +43,16 @@ import type { Prisma } from "@/generated/prisma/client";
 // ---------------------------------------------------------------------------
 
 const INVITATION_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
-const RESEND_RATE_LIMIT = 5; // reenvíos por ADMIN cada 15 minutos
-const RESEND_RATE_WINDOW_MS = 15 * 60 * 1000;
+const RESEND_RATE_LIMIT = 5; // reenvíos por ADMIN cada hora — ver ficha "Protección contra abuso"
+const RESEND_RATE_WINDOW_MS = 60 * 60 * 1000;
 const ACTIVATE_RATE_LIMIT = 10; // intentos por invitación cada 15 minutos
 const ACTIVATE_RATE_WINDOW_MS = 15 * 60 * 1000;
+// Límite adicional por IP — independiente del límite por invitación de
+// arriba: sin esto, alguien podría probar tokens contra MUCHAS
+// invitaciones distintas desde la misma IP sin que ningún límite
+// individual se activara nunca.
+const ACTIVATE_IP_RATE_LIMIT = 30;
+const ACTIVATE_IP_RATE_WINDOW_MS = 15 * 60 * 1000;
 
 function assertAdminOnly(actor: AuthorizedUser): void {
   if (actor.role !== "ADMIN") {
@@ -65,18 +73,29 @@ function generateRawToken(): string {
 }
 
 function buildActivationUrl(userId: string, rawToken: string): string {
-  const base = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
-  const url = new URL("/activate", base);
-  url.searchParams.set("uid", userId);
-  url.searchParams.set("token", rawToken);
-  return url.toString();
+  return buildAppUrl("/activate", { uid: userId, token: rawToken });
 }
 
-function invitationEmailContent(name: string, url: string): { subject: string; html: string; text: string } {
-  const subject = "Activa tu cuenta — Tu Plan Seguro USA";
-  const text = `Hola ${name},\n\nSe creó una cuenta para ti en el CRM de Tu Plan Seguro USA. Usa el siguiente enlace para crear tu contraseña (válido por 24 horas, un solo uso):\n\n${url}\n\nSi no esperabas este correo, ignóralo.`;
-  const html = `<p>Hola ${name},</p><p>Se creó una cuenta para ti en el CRM de Tu Plan Seguro USA. Usa el siguiente enlace para crear tu contraseña (válido por 24 horas, un solo uso):</p><p><a href="${url}">${url}</a></p><p>Si no esperabas este correo, ignóralo.</p>`;
-  return { subject, html, text };
+function invitationEmailContent(name: string, url: string) {
+  const safeName = escapeHtml(name);
+  return renderTransactionalEmail({
+    subject: "Activa tu cuenta — Tu Plan Seguro USA",
+    bodyHtml: `<p>Hola ${safeName},</p><p>Se creó una cuenta para ti en el CRM de Tu Plan Seguro USA. Usa el siguiente botón para crear tu contraseña (válido por 24 horas, un solo uso):</p>`,
+    bodyText: `Hola ${name},\n\nSe creó una cuenta para ti en el CRM de Tu Plan Seguro USA. Usa el siguiente enlace para crear tu contraseña (válido por 24 horas, un solo uso):`,
+    ctaLabel: "Activar mi cuenta",
+    ctaUrl: url,
+    ignoreNotice: "Si no esperabas este correo, ignóralo — nadie podrá activar la cuenta sin este enlace.",
+  });
+}
+
+function activationNoticeEmailContent(name: string) {
+  const safeName = escapeHtml(name);
+  return renderTransactionalEmail({
+    subject: "Tu cuenta ya está activa — Tu Plan Seguro USA",
+    bodyHtml: `<p>Hola ${safeName},</p><p>Tu cuenta en el CRM de Tu Plan Seguro USA ya está activa. Ya puedes iniciar sesión con tu correo y la contraseña que acabas de crear.</p>`,
+    bodyText: `Hola ${name},\n\nTu cuenta en el CRM de Tu Plan Seguro USA ya está activa. Ya puedes iniciar sesión con tu correo y la contraseña que acabas de crear.`,
+    ignoreNotice: "Si no reconoces esta actividad, contacta a un administrador de inmediato.",
+  });
 }
 
 // Escribe/reemplaza el token de invitación — SOLO base de datos, nunca
@@ -156,6 +175,40 @@ export async function resendInvitation(actor: AuthorizedUser, rawInput: unknown)
   return { success: true };
 }
 
+// PREPRODUCCIÓN — revocar una invitación pendiente. Borra la fila de
+// Verification (el enlace ya emitido deja de ser válido de inmediato,
+// mismo mecanismo que ya usa un reenvío para invalidar el anterior) sin
+// emitir ningún token nuevo. Idempotente: revocar una invitación que ya
+// no existe (o que nunca existió) no es un error — el resultado neto
+// deseado ("esta persona no puede activarse con un enlace viejo") ya es
+// cierto.
+export async function revokeInvitation(actor: AuthorizedUser, rawInput: unknown): Promise<{ success: true }> {
+  assertAdminOnly(actor);
+  const input = parseOrThrow(resendInvitationSchema, rawInput);
+
+  const user = await prisma.user.findUnique({
+    where: { id: input.userId },
+    select: { id: true, name: true, activatedAt: true },
+  });
+  if (!user) throw new AppError("NOT_FOUND", "Usuario no encontrado.");
+  if (user.activatedAt) {
+    throw new AppError("VALIDATION_ERROR", "Esta cuenta ya fue activada — no tiene una invitación pendiente.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.verification.deleteMany({ where: { identifier: invitationIdentifier(user.id) } });
+    await recordAuditEvent(tx, {
+      actor,
+      entityType: "User",
+      entityId: user.id,
+      action: "USER_INVITATION_REVOKED",
+      summary: `Invitación revocada para ${user.name}`,
+    });
+  });
+
+  return { success: true };
+}
+
 export type InvitationStatus = "PENDING" | "EXPIRED" | "ACTIVATED";
 
 // Usado por la lista de Usuarios (ADMIN) para mostrar el badge
@@ -185,14 +238,36 @@ export async function getInvitationStatuses(
   return result;
 }
 
+// Extrae la IP del cliente de los headers del proxy — nunca confía en
+// un único header sin respaldo (algunos proxies solo fijan uno u otro);
+// "unknown" agrupa el tráfico sin ningún header reconocible bajo una
+// sola clave, en vez de omitir el límite por IP por completo para ese
+// caso.
+function clientIpFrom(requestHeaders?: Headers): string {
+  const forwardedFor = requestHeaders?.get("x-forwarded-for");
+  if (forwardedFor) return forwardedFor.split(",")[0]!.trim();
+  return requestHeaders?.get("x-real-ip")?.trim() || "unknown";
+}
+
 // Pública (sin sesión) — la persona todavía no puede autenticarse.
 // Nunca confía en nada del cliente más allá del token/userId: siempre
-// vuelve a validar contra lo guardado en DB.
-export async function activateAccount(rawInput: unknown) {
+// vuelve a validar contra lo guardado en DB. `requestHeaders` es
+// opcional (compatibilidad con callers existentes/pruebas) — cuando se
+// pasa, se usa además del límite por invitación un límite por IP, para
+// que alguien no pueda probar tokens contra MUCHAS invitaciones
+// distintas desde la misma IP sin que ningún límite individual se
+// active nunca (ver ACTIVATE_IP_RATE_LIMIT arriba).
+export async function activateAccount(rawInput: unknown, requestHeaders?: Headers) {
   const input = parseOrThrow(activateAccountSchema, rawInput);
 
   if (!checkRateLimit(`activate:${input.userId}`, ACTIVATE_RATE_LIMIT, ACTIVATE_RATE_WINDOW_MS)) {
     throw new AppError("VALIDATION_ERROR", "Demasiados intentos — espera unos minutos antes de intentar de nuevo.");
+  }
+  if (requestHeaders) {
+    const ip = clientIpFrom(requestHeaders);
+    if (!checkRateLimit(`activate-ip:${ip}`, ACTIVATE_IP_RATE_LIMIT, ACTIVATE_IP_RATE_WINDOW_MS)) {
+      throw new AppError("VALIDATION_ERROR", "Demasiados intentos — espera unos minutos antes de intentar de nuevo.");
+    }
   }
 
   const record = await prisma.verification.findFirst({
@@ -208,7 +283,7 @@ export async function activateAccount(rawInput: unknown) {
     throw new AppError("VALIDATION_ERROR", "Este enlace de activación no es válido o ya fue utilizado.");
   }
 
-  const user = await prisma.user.findUnique({ where: { id: input.userId }, select: { id: true, name: true } });
+  const user = await prisma.user.findUnique({ where: { id: input.userId }, select: { id: true, name: true, email: true } });
   if (!user) throw new AppError("NOT_FOUND", "Usuario no encontrado.");
 
   const hashedPassword = await hashPassword(input.newPassword);
@@ -229,6 +304,17 @@ export async function activateAccount(rawInput: unknown) {
       summary: `Cuenta activada: ${user.name}`,
     });
   });
+
+  // Aviso de activación — mejor esfuerzo, NUNCA revierte la activación
+  // ya confirmada si el correo falla (la cuenta ya está activa y
+  // utilizable; el aviso es una cortesía, no parte del contrato de
+  // seguridad de esta operación).
+  try {
+    const { subject, html, text } = activationNoticeEmailContent(user.name);
+    await sendEmail({ to: user.email, subject, html, text });
+  } catch {
+    // Silenciosamente ignorado — ver comentario arriba.
+  }
 
   return { success: true as const };
 }

@@ -3,6 +3,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
+import { renderTransactionalEmail, escapeHtml } from "@/lib/email-templates";
 import { recordAuditEvent } from "@/services/audit.service";
 
 // Autenticación: email + password con sesiones respaldadas por base de
@@ -39,12 +40,15 @@ export const auth = betterAuth({
     // después del cambio").
     revokeSessionsOnPasswordReset: true,
     sendResetPassword: async ({ user, url }) => {
-      await sendEmail({
-        to: user.email,
+      const { subject, html, text } = renderTransactionalEmail({
         subject: "Restablece tu contraseña — Tu Plan Seguro USA",
-        text: `Hola,\n\nRecibimos una solicitud para restablecer tu contraseña. Si fuiste tú, usa este enlace (válido por 1 hora, un solo uso):\n\n${url}\n\nSi no lo solicitaste, ignora este correo — tu contraseña actual sigue funcionando.`,
-        html: `<p>Recibimos una solicitud para restablecer tu contraseña. Si fuiste tú, usa este enlace (válido por 1 hora, un solo uso):</p><p><a href="${url}">${url}</a></p><p>Si no lo solicitaste, ignora este correo — tu contraseña actual sigue funcionando.</p>`,
+        bodyHtml: "<p>Recibimos una solicitud para restablecer tu contraseña. Usa el siguiente botón (válido por 1 hora, un solo uso):</p>",
+        bodyText: "Recibimos una solicitud para restablecer tu contraseña. Usa el siguiente enlace (válido por 1 hora, un solo uso):",
+        ctaLabel: "Restablecer mi contraseña",
+        ctaUrl: url,
+        ignoreNotice: "Si no lo solicitaste, ignora este correo — tu contraseña actual sigue funcionando.",
       });
+      await sendEmail({ to: user.email, subject, html, text });
     },
     // Auditoría del cambio — nunca el token ni la contraseña, solo el
     // hecho de que el propio usuario restableció su contraseña
@@ -74,6 +78,69 @@ export const auth = betterAuth({
         type: "boolean",
         input: false,
       },
+    },
+    // PREPRODUCCIÓN — cambio de correo AUTOSERVICIO para un usuario ya
+    // autenticado (Sección 6 de la ficha). Usa el endpoint NATIVO
+    // /change-email (ya protegido por sensitiveSessionMiddleware —
+    // Better Auth exige una sesión "fresca" antes de aceptar esta
+    // llamada, que es exactamente la reautenticación que pide la
+    // ficha). `updateEmailWithoutVerification` se deja SIN configurar
+    // (false) a propósito: como `emailVerified` en este proyecto nunca
+    // se marca true (no hay verificación de correo al crear/invitar),
+    // dejarlo así fuerza SIEMPRE el camino de "enviar verificación al
+    // correo NUEVO antes de aplicar el cambio" (ver emailVerification
+    // más abajo) — nunca un cambio inmediato sin confirmación.
+    changeEmail: {
+      enabled: true,
+    },
+  },
+  // PREPRODUCCIÓN — el correo NUEVO debe confirmarse antes de que el
+  // cambio de correo se aplique de verdad (Sección 6: "Enviar
+  // confirmación al correo nuevo antes de completar el cambio"). Este
+  // callback es el único disponible en la versión instalada para ese
+  // propósito (ver node_modules/better-auth/dist/api/routes/
+  // update-user.mjs::changeEmail) — Better Auth arma la URL de
+  // verificación (JWT firmado con BETTER_AUTH_SECRET, de un solo uso,
+  // con expiración) y solo delega el ENVÍO del correo aquí.
+  emailVerification: {
+    sendVerificationEmail: async ({ user, url }) => {
+      const { subject, html, text } = renderTransactionalEmail({
+        subject: "Confirma tu nuevo correo — Tu Plan Seguro USA",
+        bodyHtml: `<p>Recibimos una solicitud para cambiar el correo de tu cuenta en el CRM de Tu Plan Seguro USA a esta dirección. Confirma con el siguiente botón (un solo uso):</p>`,
+        bodyText: "Recibimos una solicitud para cambiar el correo de tu cuenta en el CRM de Tu Plan Seguro USA a esta dirección. Confirma con el siguiente enlace (un solo uso):",
+        ctaLabel: "Confirmar este correo",
+        ctaUrl: url,
+        ignoreNotice: "Si no solicitaste este cambio, ignora este correo — tu dirección actual sigue siendo la misma.",
+      });
+      await sendEmail({ to: user.email, subject, html, text });
+    },
+    // Se dispara justo DESPUÉS de que el correo nuevo ya quedó
+    // aplicado en User.email — audita el hecho consumado (nunca antes,
+    // cuando todavía podría no completarse) y avisa a la dirección
+    // NUEVA que el cambio ya es efectivo. El aviso al correo ANTERIOR
+    // se envía en el momento de la SOLICITUD, no aquí — ver
+    // account-security.service.ts::requestEmailChange (ya se conoce en
+    // ese momento sin depender de este callback).
+    afterEmailVerification: async (updatedUser) => {
+      await recordAuditEvent(prisma, {
+        actor: null,
+        entityType: "User",
+        entityId: updatedUser.id,
+        action: "USER_EMAIL_CHANGED",
+        summary: `El usuario confirmó su cambio de correo (${updatedUser.email})`,
+      });
+      const { subject, html, text } = renderTransactionalEmail({
+        subject: "Tu correo fue actualizado — Tu Plan Seguro USA",
+        bodyHtml: `<p>El correo de tu cuenta en el CRM de Tu Plan Seguro USA se actualizó a <strong>${escapeHtml(updatedUser.email)}</strong>.</p>`,
+        bodyText: `El correo de tu cuenta en el CRM de Tu Plan Seguro USA se actualizó a ${updatedUser.email}.`,
+        ignoreNotice: "Si no reconoces este cambio, contacta a un administrador de inmediato.",
+      });
+      try {
+        await sendEmail({ to: updatedUser.email, subject, html, text });
+      } catch {
+        // Mejor esfuerzo — el cambio de correo ya es un hecho consumado
+        // y válido aunque este aviso de cortesía falle.
+      }
     },
   },
   // Genera UUID (no el id aleatorio propio de Better Auth), consistente

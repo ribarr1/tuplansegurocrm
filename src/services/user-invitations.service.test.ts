@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createUser } from "@/services/users.service";
 import {
   resendInvitation,
+  revokeInvitation,
   activateAccount,
   getInvitationStatuses,
 } from "@/services/user-invitations.service";
@@ -50,7 +51,11 @@ function extractToken(url: string): string {
 function extractUrlFromMessage(message: EmailMessage): string {
   const match = /https?:\/\/[^\s"<]+/.exec(message.html);
   if (!match) throw new Error("no URL found in test email");
-  return match[0];
+  // El href está HTML-escapado (correcto: es un atributo HTML) — un
+  // navegador/cliente de correo real decodifica "&amp;" a "&" al leer
+  // el href antes de navegar; se replica eso aquí antes de parsear la
+  // URL, igual que haría cualquier lector real del enlace.
+  return match[0].replace(/&amp;/g, "&");
 }
 
 let admin: AuthorizedUser;
@@ -244,6 +249,122 @@ describe("user-invitations.service — activación de usuarios nuevos", () => {
     const serialized = JSON.stringify(events);
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain(password);
+  });
+
+  it("K) revocar invalida el enlace pendiente de inmediato, sin emitir uno nuevo", async () => {
+    setEmailTransportForTests(recordingTransport());
+    const { user } = await createUser(admin, { name: "Invitado Revocado", email: `inv13.${Date.now()}@test.local`, role: "AGENT" });
+    createdUserIds.push(user.id);
+    const token = extractToken(extractUrlFromMessage(sentEmails[0]));
+
+    await revokeInvitation(admin, { userId: user.id });
+
+    const password = "ContraseñaValida2026";
+    await expect(
+      activateAccount({ userId: user.id, token, newPassword: password, confirmPassword: password })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    const statuses = await getInvitationStatuses([{ id: user.id, activatedAt: null }]);
+    expect(statuses.get(user.id)).toBe("EXPIRED");
+  });
+
+  it("L) revocar es idempotente — revocar de nuevo (o una invitación inexistente) no lanza", async () => {
+    setEmailTransportForTests(recordingTransport());
+    const { user } = await createUser(admin, { name: "Invitado Doble Revocado", email: `inv14.${Date.now()}@test.local`, role: "AGENT" });
+    createdUserIds.push(user.id);
+
+    await revokeInvitation(admin, { userId: user.id });
+    await expect(revokeInvitation(admin, { userId: user.id })).resolves.toEqual({ success: true });
+  });
+
+  it("M) revocar una cuenta ya activada se rechaza", async () => {
+    setEmailTransportForTests(recordingTransport());
+    const { user } = await createUser(admin, { name: "Invitado Activo Revocar", email: `inv15.${Date.now()}@test.local`, role: "AGENT" });
+    createdUserIds.push(user.id);
+    const token = extractToken(extractUrlFromMessage(sentEmails[0]));
+    const password = "ContraseñaValida2026";
+    await activateAccount({ userId: user.id, token, newPassword: password, confirmPassword: password });
+
+    await expect(revokeInvitation(admin, { userId: user.id })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("N) solo ADMIN puede revocar", async () => {
+    setEmailTransportForTests(recordingTransport());
+    const { user } = await createUser(admin, { name: "Invitado Revocar Seguridad", email: `inv16.${Date.now()}@test.local`, role: "AGENT" });
+    createdUserIds.push(user.id);
+    const agentActor = await makeActor("AGENT", "agent-invitations-revoke-noadmin");
+
+    await expect(revokeInvitation(agentActor, { userId: user.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("O) revocación se audita sin exponer el token", async () => {
+    setEmailTransportForTests(recordingTransport());
+    const { user } = await createUser(admin, { name: "Invitado Auditar Revocar", email: `inv17.${Date.now()}@test.local`, role: "AGENT" });
+    createdUserIds.push(user.id);
+    const token = extractToken(extractUrlFromMessage(sentEmails[0]));
+
+    await revokeInvitation(admin, { userId: user.id });
+
+    const events = await prisma.auditEvent.findMany({ where: { entityId: user.id, action: "USER_INVITATION_REVOKED" } });
+    expect(events).toHaveLength(1);
+    expect(JSON.stringify(events)).not.toContain(token);
+  });
+
+  it("P) activar una cuenta pendiente envía un correo de aviso de activación", async () => {
+    setEmailTransportForTests(recordingTransport());
+    const { user } = await createUser(admin, { name: "Invitado Aviso", email: `inv18.${Date.now()}@test.local`, role: "AGENT" });
+    createdUserIds.push(user.id);
+    const token = extractToken(extractUrlFromMessage(sentEmails[0]));
+    const password = "ContraseñaValida2026";
+
+    await activateAccount({ userId: user.id, token, newPassword: password, confirmPassword: password });
+
+    expect(sentEmails).toHaveLength(2); // invitación + aviso de activación
+    expect(sentEmails[1].to).toBe(user.email);
+    expect(sentEmails[1].subject).toContain("activa");
+  });
+
+  it("Q) límite de tasa por IP en activación — muchos intentos desde la misma IP contra distintas invitaciones se rechazan", async () => {
+    setEmailTransportForTests(recordingTransport());
+    const fakeHeaders = new Headers({ "x-forwarded-for": "203.0.113.77" });
+    const users: { id: string }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const { user } = await createUser(admin, { name: `IP Limit ${i}`, email: `ip-limit-${i}.${Date.now()}@test.local`, role: "AGENT" });
+      createdUserIds.push(user.id);
+      users.push(user);
+    }
+
+    let rejected = false;
+    for (let i = 0; i < 35; i++) {
+      const target = users[i % users.length];
+      try {
+        await activateAccount(
+          { userId: target.id, token: "wrong-token-on-purpose", newPassword: "ContraseñaValida2026", confirmPassword: "ContraseñaValida2026" },
+          fakeHeaders
+        );
+      } catch (error) {
+        if ((error as { code?: string }).code === "VALIDATION_ERROR") {
+          // Puede ser "token inválido" (esperado, siempre) o el propio
+          // límite de tasa — solo nos interesa detectar que EN ALGÚN
+          // punto el límite por IP se activa (mensaje distinto).
+          if ((error as Error).message.includes("Demasiados intentos")) {
+            rejected = true;
+            break;
+          }
+        }
+      }
+    }
+    expect(rejected).toBe(true);
+  });
+});
+
+describe("sin registro público — signUpEmail sigue bloqueado incondicionalmente", () => {
+  it("R) auth.api.signUpEmail se rechaza sin importar los datos enviados", async () => {
+    const response = await auth.api.signUpEmail({
+      body: { name: "Intento De Registro", email: `signup-attempt.${Date.now()}@test.local`, password: "ContraseñaValida2026" },
+      asResponse: true,
+    });
+    expect(response.status).not.toBe(200);
   });
 });
 

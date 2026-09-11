@@ -7,18 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { requestPasswordResetAction } from "./actions";
 
-// CORRECCIÓN (recuperación de contraseña) — usa el endpoint NATIVO de
-// Better Auth (/api/auth/request-password-reset, ver auth.ts) vía
-// fetch directo en vez del cliente generado, para no depender de
-// adivinar el nombre exacto del método (forgetPassword/
-// requestPasswordReset) — el endpoint mismo es la fuente de verdad.
-//
-// `redirectTo` es SIEMPRE esta misma ruta interna fija, nunca un valor
-// que venga del usuario/URL — así se evita cualquier redirección
-// externa (ver "Validar URLs de retorno" en la corrección).
-const REDIRECT_TO = "/reset-password";
-
+// PREPRODUCCIÓN — pasa por requestPasswordResetAction (Server Action
+// que envuelve el endpoint NATIVO de Better Auth vía
+// password-recovery.service.ts) en vez de golpear
+// /api/auth/request-password-reset directamente — la envoltura agrega
+// la elegibilidad (cuenta activa/ya activada) y el límite de tasa
+// propio que la ficha exige, ninguno de los dos cubierto por el
+// endpoint nativo por sí solo.
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
@@ -27,15 +24,11 @@ export default function ForgotPasswordPage() {
     event.preventDefault();
     setStatus("submitting");
     try {
-      const response = await fetch("/api/auth/request-password-reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, redirectTo: REDIRECT_TO }),
-      });
-      // Respuesta SIEMPRE genérica — nunca revela si el correo existe o
-      // no (mismo comportamiento nativo de Better Auth, ver
-      // node_modules/better-auth/dist/api/routes/password.mjs).
-      if (response.status === 429) {
+      const result = await requestPasswordResetAction(email);
+      // Respuesta SIEMPRE genérica — nunca revela si el correo existe,
+      // está pendiente de activación o inactivo. "rate_limited" es la
+      // ÚNICA señal distinta permitida (throttling, no existencia).
+      if (result.status === "rate_limited") {
         setStatus("error");
         return;
       }
@@ -59,7 +52,8 @@ export default function ForgotPasswordPage() {
         <CardContent>
           {status === "done" ? (
             <p className="rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
-              Si existe una cuenta con ese correo, recibirás instrucciones.
+              Si existe una cuenta activa asociada a ese correo, recibirás instrucciones para restablecer tu
+              contraseña.
             </p>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">

@@ -6,7 +6,11 @@ export const userIdSchema = z.uuid("Identificador de usuario inválido.");
 
 export const createUserSchema = z.object({
   name: z.string().trim().min(1, "El nombre es requerido.").max(200),
-  email: z.email("Correo electrónico inválido.").trim().toLowerCase(),
+  // Normaliza (trim/minúsculas) ANTES de validar el formato — ver
+  // nota en password-recovery.service.ts sobre por qué el orden
+  // z.email().trim() no normaliza de verdad (valida antes de recortar
+  // espacios, y los rechazaría).
+  email: z.string().trim().toLowerCase().pipe(z.email("Correo electrónico inválido.")),
   role: z.enum(USER_ROLE_VALUES, "Selecciona un rol válido."),
   // Fase 025.4 (UAT-03/07): "¿Este usuario también es agente?" —
   // irrelevante cuando role=AGENT (siempre true, ver

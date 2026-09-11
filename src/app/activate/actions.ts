@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { activateAccount } from "@/services/user-invitations.service";
 import { AppError } from "@/services/errors";
 
@@ -14,12 +15,15 @@ export async function activateAccountAction(
   formData: FormData
 ): Promise<ActivateAccountFormState> {
   try {
-    await activateAccount({
-      userId,
-      token,
-      newPassword: String(formData.get("newPassword") ?? ""),
-      confirmPassword: String(formData.get("confirmPassword") ?? ""),
-    });
+    await activateAccount(
+      {
+        userId,
+        token,
+        newPassword: String(formData.get("newPassword") ?? ""),
+        confirmPassword: String(formData.get("confirmPassword") ?? ""),
+      },
+      await headers()
+    );
   } catch (error) {
     if (error instanceof AppError) {
       if (error.code === "VALIDATION_ERROR") {

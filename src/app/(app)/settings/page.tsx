@@ -10,6 +10,17 @@ export default async function SettingsPage() {
       <h2 className="font-heading text-lg font-semibold">Configuración</h2>
 
       <div className="grid gap-4 sm:grid-cols-2">
+        <Link href="/settings/account">
+          <Card className="transition-colors hover:bg-muted/40">
+            <CardHeader>
+              <CardTitle>Mi cuenta</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              Cambia tu contraseña o tu correo electrónico.
+            </CardContent>
+          </Card>
+        </Link>
+
         {actor.role === "ADMIN" && (
           <Link href="/settings/users">
             <Card className="transition-colors hover:bg-muted/40">

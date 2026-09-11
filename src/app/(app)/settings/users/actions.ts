@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireSessionUser } from "@/lib/authorization";
 import { createUser, setUserActive, setUserIsAgent, resetUserPassword } from "@/services/users.service";
-import { resendInvitation } from "@/services/user-invitations.service";
+import { resendInvitation, revokeInvitation } from "@/services/user-invitations.service";
 import { AppError } from "@/services/errors";
 
 // CORRECCIÓN (activación de usuarios): ya no existe "temporaryPassword"
@@ -40,6 +40,20 @@ export async function resendInvitationAction(userId: string): Promise<{ error?: 
   const actor = await requireSessionUser();
   try {
     await resendInvitation(actor, { userId });
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Ocurrió un error inesperado. Intenta de nuevo." };
+  }
+  revalidatePath("/settings/users");
+  return {};
+}
+
+// PREPRODUCCIÓN — ADMIN-only (reforzado también server-side dentro de
+// revokeInvitation, nunca solo aquí).
+export async function revokeInvitationAction(userId: string): Promise<{ error?: string }> {
+  const actor = await requireSessionUser();
+  try {
+    await revokeInvitation(actor, { userId });
   } catch (error) {
     if (error instanceof AppError) return { error: error.message };
     return { error: "Ocurrió un error inesperado. Intenta de nuevo." };

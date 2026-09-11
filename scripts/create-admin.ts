@@ -141,6 +141,21 @@ async function main() {
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
+    // Auditoría del bootstrap — nunca el token, nunca ningún secreto.
+    // `prisma.auditEvent.create` directo (no recordAuditEvent de
+    // audit.service.ts): ese módulo es "server-only" y este script
+    // corre fuera del árbol de Next vía tsx, mismo motivo ya documentado
+    // arriba para no reutilizar user-invitations.service.ts.
+    await tx.auditEvent.create({
+      data: {
+        actorUserId: null,
+        actorType: "SYSTEM",
+        entityType: "User",
+        entityId: created.id,
+        action: "ADMIN_BOOTSTRAP_CREATED",
+        summary: `Primer administrador creado por bootstrap: ${created.name} (${created.email})`,
+      },
+    });
     return created;
   });
 

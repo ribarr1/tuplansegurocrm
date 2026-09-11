@@ -11,6 +11,7 @@ import { ToggleUserActiveButton } from "./toggle-active-button";
 import { ToggleUserIsAgentButton } from "./toggle-is-agent-button";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { ResendInvitationButton } from "./resend-invitation-button";
+import { RevokeInvitationButton } from "./revoke-invitation-button";
 import { formatDateUS } from "@/lib/business-time";
 
 const formatDate = formatDateUS;
@@ -111,7 +112,10 @@ export default async function UsersPage() {
                     </>
                   )}
                   {(invitationStatuses.get(user.id) ?? "ACTIVATED") !== "ACTIVATED" && (
-                    <ResendInvitationButton userId={user.id} />
+                    <>
+                      <ResendInvitationButton userId={user.id} />
+                      <RevokeInvitationButton userId={user.id} />
+                    </>
                   )}
                   <ResetPasswordDialog userId={user.id} userName={user.name} />
                   <ToggleUserIsAgentButton userId={user.id} role={user.role} isAgent={user.isAgent} />

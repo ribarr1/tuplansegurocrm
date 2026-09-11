@@ -42,6 +42,7 @@ class ResendTransport implements EmailTransport {
       );
     }
 
+    const replyTo = process.env.EMAIL_REPLY_TO?.trim() || undefined;
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -51,6 +52,7 @@ class ResendTransport implements EmailTransport {
         subject: message.subject,
         html: message.html,
         text: message.text,
+        ...(replyTo ? { reply_to: replyTo } : {}),
       }),
     });
 

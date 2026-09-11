@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "create-admin": "tsx scripts/create-admin.ts",
+    "dev:issue-local-link": "tsx scripts/dev-issue-local-link.ts",
     "seed:dev": "tsx scripts/seed-dev.ts",
     "import:legacy": "tsx scripts/import-legacy.ts",
     "import:book": "tsx scripts/import-book-of-business.ts",
