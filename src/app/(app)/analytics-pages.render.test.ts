@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { isValidElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { hashPassword } from "better-auth/crypto";
+import { createOTP } from "@better-auth/utils/otp";
+import { base32 } from "@better-auth/utils/base32";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { BarChart } from "@/components/charts/bar-chart";
@@ -54,9 +56,30 @@ async function getSessionHeadersFor(email: string, password: string): Promise<He
   return new Headers({ cookie: cookiePair });
 }
 
+// El header Set-Cookie combinado trae varias cookies separadas por
+// ", " — hay que localizar la cookie por NOMBRE, nunca asumir que es
+// la primera del header combinado (ver mfa.service.test.ts).
+function extractCookiePair(setCookieHeader: string | null, cookieName: string): string {
+  const pair = setCookieHeader
+    ?.split(", ")
+    .map((part) => part.split(";")[0].trim())
+    .find((part) => part.startsWith(`${cookieName}=`) && part !== `${cookieName}=`);
+  if (!pair) throw new Error(`no se encontró la cookie ${cookieName} en Set-Cookie`);
+  return pair;
+}
+
 beforeAll(async () => {
+  // PREPRODUCCIÓN (MFA): un ADMIN sin MFA queda bloqueado fuera del
+  // CRM (requireUser() redirige a /mfa/setup) — esta prueba no
+  // ejercita MFA, pero SÍ necesita un ADMIN que pueda pasar esa
+  // puerta, así que completa un enrollment y login REALES (nunca fija
+  // twoFactorEnabled=true a mano: eso deja al usuario en un estado que
+  // Better Auth trata como "tiene 2FA" sin secreto real, y el propio
+  // signInEmail exige entonces un segundo factor que nunca podría
+  // completarse).
+  const email = `admin-analytics-render.${uniqueName("")}@test.local`;
   const admin = await prisma.user.create({
-    data: { name: "Admin Analytics Render Test", email: `admin-analytics-render.${uniqueName("")}@test.local`, role: "ADMIN", isActive: true },
+    data: { name: "Admin Analytics Render Test", email, role: "ADMIN", isActive: true },
   });
   createdUserIds.push(admin.id);
   await prisma.account.create({
@@ -68,7 +91,27 @@ beforeAll(async () => {
       password: await hashPassword(ADMIN_PASSWORD),
     },
   });
-  headersHolder.current = await getSessionHeadersFor(admin.email, ADMIN_PASSWORD);
+
+  const initialHeaders = await getSessionHeadersFor(email, ADMIN_PASSWORD);
+  const enabled = await auth.api.enableTwoFactor({
+    body: { password: ADMIN_PASSWORD, method: "totp" },
+    headers: initialHeaders,
+  });
+  if (enabled.method !== "totp") throw new Error("enableTwoFactor no devolvió method totp");
+  const secretParam = new URL(enabled.totpURI).searchParams.get("secret");
+  if (!secretParam) throw new Error("totpURI sin secret");
+  const secret = Buffer.from(base32.decode(secretParam)).toString();
+  await auth.api.verifyTOTP({ body: { code: await createOTP(secret).totp() }, headers: initialHeaders });
+
+  const secondSignIn = await auth.api.signInEmail({ body: { email, password: ADMIN_PASSWORD }, asResponse: true });
+  const twoFactorCookie = extractCookiePair(secondSignIn.headers.get("set-cookie"), "better-auth.two_factor");
+  const verify = await auth.api.verifyTOTP({
+    body: { code: await createOTP(secret).totp() },
+    headers: new Headers({ cookie: twoFactorCookie }),
+    asResponse: true,
+  });
+  const sessionCookie = extractCookiePair(verify.headers.get("set-cookie"), "better-auth.session_token");
+  headersHolder.current = new Headers({ cookie: sessionCookie });
 });
 
 afterAll(async () => {

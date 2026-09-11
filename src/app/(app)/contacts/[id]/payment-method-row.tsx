@@ -153,6 +153,7 @@ function RevealFullDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [reason, setReason] = useState("");
   const [policyId, setPolicyId] = useState("");
   const [revealed, setRevealed] = useState<RevealedPaymentMethod | null>(null);
@@ -168,6 +169,7 @@ function RevealFullDialog({
 
   function reset() {
     setPassword("");
+    setTotpCode("");
     setReason("");
     setPolicyId("");
     setRevealed(null);
@@ -181,6 +183,7 @@ function RevealFullDialog({
     startTransition(async () => {
       const result = await revealPaymentMethodFullAction(paymentMethodId, {
         password,
+        totpCode,
         reason,
         policyId: policyId || undefined,
       });
@@ -225,6 +228,19 @@ function RevealFullDialog({
                 autoComplete="off"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="reveal-totp">Código de tu app de autenticación</Label>
+              <Input
+                id="reveal-totp"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                placeholder="123456"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
                 required
               />
             </div>

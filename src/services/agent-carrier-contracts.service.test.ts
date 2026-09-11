@@ -25,7 +25,7 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT"): Promise<Authori
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 async function makeCarrier() {

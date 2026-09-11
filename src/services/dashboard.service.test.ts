@@ -53,7 +53,7 @@ async function makeActor(
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 async function makePerson(overrides: Record<string, unknown> = {}) {

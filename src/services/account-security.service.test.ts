@@ -41,7 +41,7 @@ async function makeActiveUser(password: string): Promise<AuthorizedUser> {
       password: await hashPassword(password),
     },
   });
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 async function getSessionHeadersFor(email: string, password: string): Promise<Headers> {

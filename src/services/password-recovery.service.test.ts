@@ -40,7 +40,7 @@ async function makeActor(role: "ADMIN", label: string): Promise<AuthorizedUser> 
     data: { name: `${label} Test`, email: `${label.toLowerCase()}.${Date.now()}@test.local`, role, isActive: true, activatedAt: new Date() },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 let admin: AuthorizedUser;

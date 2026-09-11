@@ -16,6 +16,7 @@ import {
 import { encryptFinancial, decryptFinancial, last4 as computeLast4 } from "@/lib/financial-crypto";
 import { recordAuditEvent } from "@/services/audit.service";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { consumeTotpCodeOnce } from "@/lib/totp-replay-guard";
 import { auth } from "@/lib/auth";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -332,25 +333,50 @@ export async function revokePaymentMethod(actor: AuthorizedUser, rawId: unknown,
 }
 
 // ---------------------------------------------------------------------------
-// Reautenticación + revelado — CORRECCIÓN §5.
+// Reautenticación + revelado — CORRECCIÓN §5, reforzada por
+// PREPRODUCCIÓN — MFA §6 (step-up financiero).
 //
-// La reautenticación usa el endpoint REAL de Better Auth
-// (auth.api.verifyPassword, con sensitiveSessionMiddleware) — nunca una
-// comparación de contraseña propia. Requiere los headers de la sesión
-// actual (cookie), que el Server Action obtiene con next/headers() y
-// pasa explícitamente — un servicio nunca debe leer headers por su
-// cuenta (mismo criterio que getSessionUser).
+// La reautenticación usa los endpoints REALES de Better Auth
+// (auth.api.verifyPassword con sensitiveSessionMiddleware, y
+// auth.api.verifyTOTP ya con sesión activa — la misma rama de
+// verify-totp que usa el propio plugin para "confirmar código sin
+// iniciar nada nuevo", ver node_modules/better-auth/dist/plugins/
+// two-factor/totp/index.mjs) — nunca una comparación propia. Requiere
+// los headers de la sesión actual (cookie), que el Server Action
+// obtiene con next/headers() y pasa explícitamente — un servicio nunca
+// debe leer headers por su cuenta (mismo criterio que getSessionUser).
 //
-// MFA: NO implementado todavía en este proyecto (ver docs/SECURITY.md)
-// — este es el ÚNICO factor de reautenticación disponible hoy.
-// Documentado explícitamente como bloqueo obligatorio antes de
-// producción en el reporte final de esta fase.
+// Por qué no se acepta un booleano del cliente como prueba de MFA: el
+// código TOTP se reverifica en ESTA misma llamada, contra el secreto
+// real del actor — nunca se confía en que el cliente ya "pasó" un
+// desafío anterior. Como todo ADMIN tiene MFA obligatorio para poder
+// usar el CRM (requireSessionUser ya lo garantiza antes de llegar
+// aquí), este código siempre se exige, sin rama alternativa.
 // ---------------------------------------------------------------------------
 async function verifyActorPassword(password: string, requestHeaders: Headers): Promise<void> {
   try {
     await auth.api.verifyPassword({ body: { password }, headers: requestHeaders });
   } catch {
     throw new AppError("VALIDATION_ERROR", "password: Contraseña incorrecta.");
+  }
+}
+
+// PREPRODUCCIÓN — MFA §6. `auth.api.verifyTOTP` con una sesión YA
+// activa no crea nada ni cierra sesiones (isSignIn=false en el propio
+// endpoint) — solo confirma que el código es válido en este instante.
+// `consumeTotpCodeOnce` cierra el hueco de reuso dentro de la misma
+// ventana de 30s (ver src/lib/totp-replay-guard.ts): un código que ya
+// reveló UN método de pago no puede reutilizarse para revelar otro
+// dentro de esa ventana — hay que esperar al siguiente código real de
+// la app autenticadora.
+async function verifyActorTotp(actor: AuthorizedUser, code: string, requestHeaders: Headers): Promise<void> {
+  try {
+    await auth.api.verifyTOTP({ body: { code }, headers: requestHeaders });
+  } catch {
+    throw new AppError("VALIDATION_ERROR", "totpCode: Código incorrecto.");
+  }
+  if (!consumeTotpCodeOnce(actor.id, code)) {
+    throw new AppError("VALIDATION_ERROR", "totpCode: Este código ya se usó — espera el siguiente de tu app de autenticación.");
   }
 }
 
@@ -432,8 +458,11 @@ export async function revealPaymentMethodFull(
   }
 
   // Reautenticación ANTES de tocar cualquier ciphertext — ningún valor
-  // cifrado se descifra hasta que esto no lance.
+  // cifrado se descifra hasta que esto no lance. Contraseña Y TOTP,
+  // ambas frescas, ambas verificadas por Better Auth en esta misma
+  // llamada (PREPRODUCCIÓN — MFA §6).
   await verifyActorPassword(input.password, requestHeaders);
+  await verifyActorTotp(actor, input.totpCode, requestHeaders);
 
   const existing = await prisma.paymentMethod.findUnique({ where: { id }, select: fullRevealSelect });
   if (!existing) throw new AppError("NOT_FOUND", "Método de pago no encontrado.");

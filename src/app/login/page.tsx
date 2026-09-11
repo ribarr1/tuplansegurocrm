@@ -22,13 +22,22 @@ export default function LoginPage() {
     setError(null);
     setIsSubmitting(true);
 
-    const { error: signInError } = await authClient.signIn.email({ email, password });
+    const { data, error: signInError } = await authClient.signIn.email({ email, password });
 
     setIsSubmitting(false);
 
     if (signInError) {
       // Mensaje genérico deliberado: no revela si el email existe o no.
       setError("Correo o contraseña incorrectos.");
+      return;
+    }
+
+    // PREPRODUCCIÓN — MFA. Contraseña correcta, pero falta el segundo
+    // factor (ver src/lib/auth.ts: el hook nativo de two-factor borra
+    // la sesión recién creada y responde twoFactorRedirect:true en su
+    // lugar). Nunca continúa hacia /dashboard en ese caso.
+    if ((data as { twoFactorRedirect?: boolean } | null)?.twoFactorRedirect) {
+      router.push("/login/verify");
       return;
     }
 

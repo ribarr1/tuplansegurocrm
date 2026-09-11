@@ -18,7 +18,13 @@ export type AppErrorCode =
   // CORRECCIÓN (activación/recuperación): proveedor de correo no
   // configurado o falla externa al enviar — nunca se afirma que un
   // correo se envió cuando en realidad no se pudo.
-  | "SERVICE_UNAVAILABLE";
+  | "SERVICE_UNAVAILABLE"
+  // PREPRODUCCIÓN (MFA) — distinto de FORBIDDEN: el actor SÍ está
+  // autenticado y SÍ tendría permiso, pero es un ADMIN que todavía no
+  // completó su configuración obligatoria de MFA. La capa que llama al
+  // servicio usa este código específico para redirigir a /mfa/setup en
+  // vez de mostrar un error genérico de "no autorizado".
+  | "MFA_REQUIRED";
 
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -27,6 +33,7 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   VALIDATION_ERROR: 400,
   CONFLICT: 409,
   SERVICE_UNAVAILABLE: 503,
+  MFA_REQUIRED: 403,
 };
 
 export class AppError extends Error {

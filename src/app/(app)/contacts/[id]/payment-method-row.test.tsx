@@ -93,6 +93,7 @@ async function openAndReveal(revealed: RevealedPaymentMethod) {
   vi.mocked(revealPaymentMethodFullAction).mockResolvedValue({ data: revealed });
   fireEvent.click(screen.getByText("Ver detalles completos"));
   fireEvent.change(screen.getByLabelText("Tu contraseña"), { target: { value: "AdminPasswordSintetica2026" } });
+  fireEvent.change(screen.getByLabelText("Código de tu app de autenticación"), { target: { value: "123456" } });
   fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Configurar pago en el portal del carrier" } });
   fireEvent.click(screen.getByRole("button", { name: "Revelar todo" }));
   const secretValue = revealed.type === "BANK_ACCOUNT" ? revealed.accountNumber : revealed.cardNumber;
@@ -151,6 +152,7 @@ describe("PaymentMethodRow — revelado completo en una sola ventana (CORRECCIÓ
     renderRow();
     fireEvent.click(screen.getByText("Ver detalles completos"));
     fireEvent.change(screen.getByLabelText("Tu contraseña"), { target: { value: "incorrecta" } });
+    fireEvent.change(screen.getByLabelText("Código de tu app de autenticación"), { target: { value: "123456" } });
     fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "prueba" } });
     fireEvent.click(screen.getByRole("button", { name: "Revelar todo" }));
 

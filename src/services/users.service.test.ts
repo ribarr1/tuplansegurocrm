@@ -29,7 +29,7 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 let admin: AuthorizedUser;
@@ -273,7 +273,7 @@ describe("users.service", () => {
         role: "ADMIN",
       });
       createdUserIds.push(user.id);
-      const selfActor: AuthorizedUser = { ...user };
+      const selfActor: AuthorizedUser = { ...user, twoFactorEnabled: true };
       await expect(setUserActive(selfActor, { id: selfActor.id, isActive: false })).rejects.toMatchObject({
         code: "VALIDATION_ERROR",
       });
@@ -338,6 +338,7 @@ describe("users.service", () => {
         email: assistantUser.email,
         role: "ASSISTANT",
         isActive: true,
+        twoFactorEnabled: true,
       };
       // ASSISTANT SÍ puede invocar listActiveAgents (lo necesita para
       // asignar tareas a agentes, Fase 014) — esto no cambia.

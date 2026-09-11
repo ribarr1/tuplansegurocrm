@@ -40,7 +40,7 @@ async function makeActor(role: "ADMIN" | "AGENT", label: string): Promise<Author
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 // Extrae el token crudo del enlace de invitación enviado por correo —

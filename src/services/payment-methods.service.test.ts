@@ -1,7 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { hashPassword } from "better-auth/crypto";
+import { createOTP } from "@better-auth/utils/otp";
+import { base32 } from "@better-auth/utils/base32";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { resetTotpReplayGuardForTests } from "@/lib/totp-replay-guard";
+import { resetRateLimitForTests } from "@/lib/rate-limit";
 import {
   listPaymentMethods,
   createPaymentMethod,
@@ -13,6 +17,21 @@ import {
   replacePaymentMethodSecret,
 } from "@/services/payment-methods.service";
 import type { AuthorizedUser } from "@/lib/authorization";
+
+// PREPRODUCCIÓN — MFA (step-up financiero). Extrae el secreto TOTP del
+// `totpURI` que devuelve auth.api.enableTwoFactor (el mismo dato que un
+// usuario real ingresaría manualmente en su app autenticadora en vez
+// de escanear el QR) y genera el código de 6 dígitos vigente en este
+// instante — exactamente lo que Google/Microsoft Authenticator
+// mostrarían. Nunca se toca el secreto cifrado en la base de datos.
+function decodeSecretFromTotpUri(totpURI: string): string {
+  const secretParam = new URL(totpURI).searchParams.get("secret");
+  if (!secretParam) throw new Error("totpURI sin parámetro secret");
+  return Buffer.from(base32.decode(secretParam)).toString();
+}
+async function currentTotpCode(secret: string): Promise<string> {
+  return createOTP(secret).totp();
+}
 
 // ---------------------------------------------------------------------------
 // AMPLIACIÓN PREPRODUCCIÓN — Métodos de pago cifrados. Todos los datos
@@ -48,7 +67,7 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string, p
       },
     });
   }
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 async function makePerson() {
@@ -69,14 +88,66 @@ async function getSessionHeadersFor(email: string, password: string): Promise<He
 
 let admin: AuthorizedUser;
 let adminHeaders: Headers;
+let adminTotpSecret: string;
 let agent: AuthorizedUser;
 let assistant: AuthorizedUser;
+
+function adminTotpCode(): Promise<string> {
+  return currentTotpCode(adminTotpSecret);
+}
 
 beforeAll(async () => {
   admin = await makeActor("ADMIN", "admin-pm", ADMIN_PASSWORD);
   adminHeaders = await getSessionHeadersFor(admin.email, ADMIN_PASSWORD);
   agent = await makeActor("AGENT", "agent-pm");
   assistant = await makeActor("ASSISTANT", "assistant-pm");
+
+  // PREPRODUCCIÓN — MFA: revelar exige TOTP además de contraseña (ver
+  // payment-methods.service.ts::verifyActorTotp). Se habilita Y
+  // CONFIRMA TOTP real para el admin sintético, exactamente como lo
+  // haría un ADMIN real en /mfa/setup — nunca se salta ese paso: la
+  // PRIMERA verificación exitosa de un TwoFactor sin confirmar
+  // (`verified: false`) hace dos cosas a la vez del lado de Better
+  // Auth (ver node_modules/better-auth/dist/plugins/two-factor/totp/
+  // index.mjs): marca twoFactorEnabled=true Y rota la sesión (borra la
+  // anterior, crea una nueva) — si esa primera confirmación ocurriera
+  // "por accidente" dentro de una prueba de revelado en vez de aquí,
+  // `adminHeaders` quedaría con una cookie de sesión ya inexistente
+  // para todas las pruebas siguientes.
+  const enabled = await auth.api.enableTwoFactor({
+    body: { password: ADMIN_PASSWORD, method: "totp" },
+    headers: adminHeaders,
+  });
+  if (enabled.method !== "totp") throw new Error("enableTwoFactor no devolvió method totp");
+  adminTotpSecret = decodeSecretFromTotpUri(enabled.totpURI);
+
+  const confirmResponse = await auth.api.verifyTOTP({
+    body: { code: await currentTotpCode(adminTotpSecret) },
+    headers: adminHeaders,
+    asResponse: true,
+  });
+  const newSetCookie = confirmResponse.headers.get("set-cookie");
+  const newCookiePair = newSetCookie?.split(";")[0];
+  if (!newCookiePair) throw new Error("La confirmación de TOTP no devolvió una cookie de sesión nueva");
+  adminHeaders = new Headers({ cookie: newCookiePair });
+});
+
+// Cada `it()` empieza con la guarda anti-replay limpia: dos pruebas
+// distintas que corren dentro de la misma ventana TOTP de 30s
+// obtendrían el MISMO código de `adminTotpCode()` (es determinístico
+// por tiempo, no por llamada) — sin este reset, la segunda prueba
+// fallaría por "código ya usado" simplemente por la velocidad de
+// Vitest, no por ningún comportamiento real que se esté probando.
+beforeEach(() => {
+  resetTotpReplayGuardForTests();
+  // El nuevo caso K1b (código TOTP incorrecto/reciclado) suma llamadas
+  // a revealPaymentMethodFull que antes no existían — sin este reset,
+  // el resto de las pruebas de este archivo chocaría con
+  // REVEAL_RATE_LIMIT (10/15min) solo por el volumen de PRUEBAS, no
+  // por ningún comportamiento real de abuso que se esté verificando
+  // aquí (ese límite específico no tiene una prueba dedicada en este
+  // archivo).
+  resetRateLimitForTests();
 });
 
 afterAll(async () => {
@@ -274,7 +345,7 @@ describe("payment-methods.service", () => {
       await expect(updatePaymentMethod(actor, pm.id, { autopay: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(revokePaymentMethod(actor, pm.id, {})).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(
-        revealPaymentMethodFull(actor, pm.id, { password: "irrelevante", reason: "prueba" }, new Headers())
+        revealPaymentMethodFull(actor, pm.id, { password: "irrelevante", totpCode: "000000", reason: "prueba" }, new Headers())
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(recordPaymentMethodFieldCopy(actor, pm.id, "cardNumber")).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
@@ -290,13 +361,42 @@ describe("payment-methods.service", () => {
     );
 
     await expect(
-      revealPaymentMethodFull(admin, pm.id, { password: "ContraseñaIncorrecta", reason: "Configurar en portal" }, adminHeaders)
+      revealPaymentMethodFull(
+        admin, pm.id, { password: "ContraseñaIncorrecta", totpCode: await adminTotpCode(), reason: "Configurar en portal" }, adminHeaders
+      )
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 
     const result = await revealPaymentMethodFull(
-      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Configurar en portal de la aseguradora" }, adminHeaders
+      admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "Configurar en portal de la aseguradora" }, adminHeaders
     );
     if (result.type !== "BANK_ACCOUNT") expect(result.cardNumber).toBe("4111111111111111");
+  });
+
+  it("K1b) revelar exige un código TOTP válido — código incorrecto se rechaza, y un código YA usado no revela un segundo método", async () => {
+    const person = await makePerson();
+    const pm = trackPM(
+      await createPaymentMethod(admin, {
+        personId: person.id, type: "CREDIT_CARD",
+        cardholderName: "Totp", cardNumber: "4111111111111111", cardExpMonth: 1, cardExpYear: 2030, cardBrand: "VISA",
+      })
+    );
+    await expect(
+      revealPaymentMethodFull(admin, pm.id, { password: ADMIN_PASSWORD, totpCode: "000000", reason: "prueba" }, adminHeaders)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    const code = await adminTotpCode();
+    await revealPaymentMethodFull(admin, pm.id, { password: ADMIN_PASSWORD, totpCode: code, reason: "primer revelado" }, adminHeaders);
+
+    const pm2 = trackPM(
+      await createPaymentMethod(admin, {
+        personId: person.id, type: "CREDIT_CARD",
+        cardholderName: "Totp2", cardNumber: "5500000000000004", cardExpMonth: 2, cardExpYear: 2031, cardBrand: "MASTERCARD",
+      })
+    );
+    // El MISMO código, reutilizado, no puede revelar un método distinto.
+    await expect(
+      revealPaymentMethodFull(admin, pm2.id, { password: ADMIN_PASSWORD, totpCode: code, reason: "reintento con código reciclado" }, adminHeaders)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("K2) ADMIN autorizado revela tarjeta COMPLETA en una sola reautenticación: titular, número, vencimiento, marca, dirección y comentario", async () => {
@@ -311,7 +411,7 @@ describe("payment-methods.service", () => {
     );
 
     const result = await revealPaymentMethodFull(
-      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Completar pago en el portal del carrier" }, adminHeaders
+      admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "Completar pago en el portal del carrier" }, adminHeaders
     );
     expect(result.type).toBe("CREDIT_CARD");
     if (result.type === "BANK_ACCOUNT") throw new Error("tipo inesperado");
@@ -336,7 +436,7 @@ describe("payment-methods.service", () => {
     );
 
     const result = await revealPaymentMethodFull(
-      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Completar pago en el portal del carrier" }, adminHeaders
+      admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "Completar pago en el portal del carrier" }, adminHeaders
     );
     expect(result.type).toBe("BANK_ACCOUNT");
     if (result.type !== "BANK_ACCOUNT") throw new Error("tipo inesperado");
@@ -357,7 +457,7 @@ describe("payment-methods.service", () => {
       })
     );
     const result = await revealPaymentMethodFull(
-      admin, pm.id, { password: ADMIN_PASSWORD, reason: "prueba de campos ausentes" }, adminHeaders
+      admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "prueba de campos ausentes" }, adminHeaders
     );
     expect(result.billingAddressLine1).toBeNull();
     expect(result.billingZipCode).toBeNull();
@@ -373,7 +473,7 @@ describe("payment-methods.service", () => {
       })
     );
     await revealPaymentMethodFull(
-      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Configurar autopay en el portal" }, adminHeaders
+      admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "Configurar autopay en el portal" }, adminHeaders
     );
     const revealEvents = await prisma.auditEvent.findMany({ where: { entityId: pm.id, action: "PAYMENT_METHOD_REVEALED" } });
     expect(revealEvents).toHaveLength(1);
@@ -412,7 +512,7 @@ describe("payment-methods.service", () => {
     expect(updated.cardLast4).toBe("4444");
 
     const revealed = await revealPaymentMethodFull(
-      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Verificar reemplazo" }, adminHeaders
+      admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "Verificar reemplazo" }, adminHeaders
     );
     if (revealed.type === "BANK_ACCOUNT") throw new Error("tipo inesperado");
     expect(revealed.cardNumber).toBe("5555555555554444");
@@ -428,7 +528,9 @@ describe("payment-methods.service", () => {
     );
     await prisma.paymentMethod.update({ where: { id: pm.id }, data: { cardNumberEncrypted: "fin-v1:AAAA:BBBB:CCCC" } });
     await expect(
-      revealPaymentMethodFull(admin, pm.id, { password: ADMIN_PASSWORD, reason: "prueba" }, adminHeaders)
+      revealPaymentMethodFull(
+        admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "prueba" }, adminHeaders
+      )
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
@@ -462,7 +564,7 @@ describe("payment-methods.service", () => {
     for (const term of forbidden) expect(rawKeys.some((k) => k.includes(term))).toBe(false);
 
     const revealed = await revealPaymentMethodFull(
-      admin, pm.id, { password: ADMIN_PASSWORD, reason: "Confirmar ausencia de CVV/PIN" }, adminHeaders
+      admin, pm.id, { password: ADMIN_PASSWORD, totpCode: await adminTotpCode(), reason: "Confirmar ausencia de CVV/PIN" }, adminHeaders
     );
     const revealedKeys = Object.keys(revealed).map((k) => k.toLowerCase());
     for (const term of forbidden) expect(revealedKeys.some((k) => k.includes(term))).toBe(false);

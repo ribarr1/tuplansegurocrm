@@ -29,7 +29,7 @@ async function makeActor(role: "ADMIN" = "ADMIN"): Promise<AuthorizedUser> {
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 async function makeAgentUser(): Promise<{ id: string }> {
@@ -369,6 +369,7 @@ describe("policy-business-source — elegibilidad de agente para OWN (Fase 025.3
       id: ineligibleAgentUser.id,
       name: "Agent BusinessSource",
       email: `agent.actor.${Date.now()}@test.local`,
+      twoFactorEnabled: true,
       role: "AGENT",
       isActive: true,
     };

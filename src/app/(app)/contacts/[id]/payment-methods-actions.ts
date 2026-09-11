@@ -144,7 +144,7 @@ export async function revokePaymentMethodAction(
 // payment-methods.service.ts::revealPaymentMethodFull).
 export async function revealPaymentMethodFullAction(
   id: string,
-  input: { password: string; reason: string; policyId?: string }
+  input: { password: string; totpCode: string; reason: string; policyId?: string }
 ): Promise<{ data?: RevealedPaymentMethod; error?: string }> {
   const actor = await requireSessionUser();
   try {

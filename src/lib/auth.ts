@@ -1,6 +1,8 @@
 import { betterAuth } from "better-auth";
+import { twoFactor } from "better-auth/plugins";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
+import { createAuthMiddleware } from "@better-auth/core/api";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 import { renderTransactionalEmail, escapeHtml } from "@/lib/email-templates";
@@ -162,7 +164,63 @@ export const auth = betterAuth({
   },
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
+  // PREPRODUCCIÓN — MFA. Auditoría de un desafío de 2FA que completa un
+  // LOGIN (código o recovery code correctos tras contraseña correcta).
+  // Mismo mecanismo NATIVO que usa el propio plugin two-factor para
+  // detectar "sign-in recién completado" — `ctx.context.newSession`
+  // solo se establece cuando `setSessionCookie` corre de verdad (ver
+  // node_modules/better-auth/dist/cookies/index.mjs), nunca en la rama
+  // de "código inválido" ni en la de "ya autenticado, solo confirmando
+  // el código" (step-up financiero — ver payment-methods.service.ts,
+  // que audita esa operación por separado con su propio motivo).
+  //
+  // Los desafíos FALLIDOS no se duplican aquí: Better Auth ya persiste
+  // `TwoFactor.failedVerificationCount`/`lockedUntil` de forma nativa
+  // por cuenta (ver node_modules/better-auth/dist/plugins/two-factor/
+  // verify-two-factor.mjs) sin nunca guardar el código enviado — ese
+  // es el registro operativo de fallos. Intentar además interceptar el
+  // error en un hook global (`onAPIError`) no es viable aquí: ese gancho
+  // recibe el `AuthContext` general, no el contexto del endpoint (sin
+  // `.path` ni `.session` fiables) — ver docs/DECISIONS.md.
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/two-factor/verify-totp" && ctx.path !== "/two-factor/verify-backup-code") return;
+      const newSession = ctx.context.newSession;
+      if (!newSession) return;
+      await recordAuditEvent(prisma, {
+        actor: null,
+        entityType: "User",
+        entityId: newSession.user.id,
+        action: "MFA_LOGIN_CHALLENGE_SUCCEEDED",
+        summary: `Segundo factor verificado al iniciar sesión (${newSession.user.email})`,
+      });
+    }),
+  },
   // nextCookies debe ser el último plugin: gestiona automáticamente las
   // cookies de sesión al invocar auth.api.* desde Server Actions.
-  plugins: [nextCookies()],
+  plugins: [
+    // PREPRODUCCIÓN — MFA. Plugin OFICIAL de Better Auth (Sección 1-3
+    // de la ficha): TOTP compatible con cualquier app autenticadora
+    // estándar (Google/Microsoft Authenticator, Authy, 1Password —
+    // todas implementan RFC 6238, no hay nada específico de un
+    // proveedor). `otpOptions` se deja SIN CONFIGURAR a propósito: sin
+    // `sendOTP`, el propio endpoint `/two-factor/enable` rechaza
+    // method:"otp" con OTP_NOT_CONFIGURED (ver totp/index.mjs) — esto
+    // excluye SMS/email OTP sin necesitar una bandera "disable" que
+    // esta versión del plugin no expone. El secreto TOTP y los códigos
+    // de recuperación se cifran con BETTER_AUTH_SECRET (ya configurado
+    // arriba) — no se introduce ninguna clave nueva.
+    twoFactor({
+      issuer: "Tu Plan Seguro USA",
+      // Nunca activar sin validar un código real primero (ficha,
+      // Sección 2, paso 6) — false es además el valor por defecto del
+      // plugin, se deja explícito para que la intención quede clara.
+      skipVerificationOnEnable: false,
+      backupCodeOptions: {
+        amount: 10,
+        storeBackupCodes: "encrypted",
+      },
+    }),
+    nextCookies(),
+  ],
 });

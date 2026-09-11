@@ -63,7 +63,7 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 // Fase 022 (Hallazgo #2 de UAT): createPerson ahora SIEMPRE fuerza

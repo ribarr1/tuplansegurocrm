@@ -172,6 +172,15 @@ export type SetDefaultPaymentMethodInput = z.infer<typeof setDefaultPaymentMetho
 // payment-methods.service.ts::revealPaymentMethodFull.
 export const revealPaymentMethodFullSchema = z.object({
   password: z.string().min(1, "Confirma tu contraseña."),
+  // PREPRODUCCIÓN — MFA (Sección 6, step-up financiero). Todo ADMIN ya
+  // tiene MFA obligatorio para poder usar el CRM (ver
+  // src/lib/authorization.ts), así que este campo siempre aplica —
+  // nunca es opcional ni condicional a que el actor "tenga MFA
+  // configurado".
+  totpCode: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Ingresa el código de 6 dígitos de tu app de autenticación."),
   reason: z.string().trim().min(3, "Escribe un motivo breve.").max(300),
   policyId: z.uuid("Selecciona una póliza válida.").optional(),
 });

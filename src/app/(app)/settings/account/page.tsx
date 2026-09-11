@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/authorization";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChangePasswordForm } from "./change-password-form";
 import { ChangeEmailForm } from "./change-email-form";
+import { TwoFactorSection } from "@/app/mfa/two-factor-section";
 
 // PREPRODUCCIÓN — "Mi cuenta": autoservicio de seguridad para CUALQUIER
 // usuario autenticado (ADMIN/AGENT/ASSISTANT), a diferencia del resto de
@@ -33,6 +34,8 @@ export default async function AccountSecurityPage() {
           <ChangeEmailForm currentEmail={actor.email} />
         </CardContent>
       </Card>
+
+      <TwoFactorSection twoFactorEnabled={actor.twoFactorEnabled} forced={false} />
     </div>
   );
 }

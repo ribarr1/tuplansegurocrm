@@ -68,3 +68,10 @@ coverage/
 # nunca servido desde /public ni versionado. Ver src/lib/storage.ts.
 /private-storage/
 import-report*.json
+
+# PREPRODUCCIÓN — MFA (paso 0): volcados de base de datos NUNCA deben
+# entrar al repositorio (ver docs/DECISIONS.md). Se encontró
+# tuplanseguro_prod.dump sin rastrear en la raíz y se movió fuera del
+# repo a una carpeta local con permisos restringidos; esta regla evita
+# que un .dump futuro (de cualquier nombre) se stagee por accidente.
+*.dump

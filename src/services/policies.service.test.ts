@@ -47,7 +47,7 @@ async function makeActor(role: "ADMIN" | "AGENT" | "ASSISTANT", label: string): 
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
 }
 
 async function makePerson(assignedAgentId: string | null = null, contactStatus: "CLIENT" | "PROSPECT" = "CLIENT") {
@@ -1926,7 +1926,7 @@ describe("policies.service — Hallazgo #2 de UAT (Fase 025.1): terminationDate 
     const user = await prisma.user.create({
       data: { name: "Admin HealthTerm", email: `admin.healthterm.${Date.now()}@test.local`, role: "ADMIN", isActive: true },
     });
-    admin = { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive };
+    admin = { id: user.id, name: user.name, email: user.email, role: user.role, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled };
     const carrier = await prisma.carrier.create({ data: { name: `HealthTerm Carrier ${Date.now()}` } });
     carrierId = carrier.id;
   });

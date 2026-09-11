@@ -99,9 +99,18 @@ model User {
   // iniciado sesión todavía). Nunca se usa isActive para representar
   // este estado.
   activatedAt   DateTime?
+  // PREPRODUCCIÓN — MFA (Sección 1-3). Campo NATIVO del plugin
+  // `twoFactor` de Better Auth (ver node_modules/better-auth/dist/
+  // plugins/two-factor/schema.mjs) — no inventado aquí. true solo
+  // tras confirmar un código TOTP válido durante el enrollment (nunca
+  // antes). La obligatoriedad para ADMIN se aplica en la capa de
+  // autorización (src/lib/authorization.ts), NUNCA leyendo este campo
+  // como única fuente de verdad de sesión — ver getSessionUser.
+  twoFactorEnabled Boolean @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  twoFactor                         TwoFactor?
   assignedPeople                   Person[]                @relation("PersonAssignedAgent")
   reviewStatusUpdates               Person[]                @relation("PersonReviewStatusUpdatedBy")
   processedPolicies                Policy[]                @relation("PolicyProcessedBy")
@@ -1266,6 +1275,30 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// PREPRODUCCIÓN — MFA. Modelo NATIVO del plugin `twoFactor` de Better
+// Auth (misma forma exacta que node_modules/better-auth/dist/plugins/
+// two-factor/schema.mjs — nunca modificado a mano, para que el
+// adaptador de Prisma siga reconociendo los campos). `secret` y
+// `backupCodes` viajan cifrados con BETTER_AUTH_SECRET
+// (symmetricEncrypt, AES-GCM interno de Better Auth) — nunca en texto
+// plano, nunca expuestos (`returned: false` en el plugin). Un solo
+// registro por usuario (relación 1:1 — Better Auth nunca crea más de
+// una fila por userId en este proyecto, que solo usa TOTP).
+model TwoFactor {
+  id                     String    @id @default(uuid()) @db.Uuid
+  secret                 String
+  backupCodes            String
+  userId                 String    @unique @db.Uuid
+  verified               Boolean   @default(true)
+  failedVerificationCount Int      @default(0)
+  lockedUntil            DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("twoFactor")
 }
 
 // ---------------------------------------------------------------------------
