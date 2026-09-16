@@ -75,3 +75,13 @@ import-report*.json
 # repo a una carpeta local con permisos restringidos; esta regla evita
 # que un .dump futuro (de cualquier nombre) se stagee por accidente.
 *.dump
+*.backup
+
+# LIMPIEZA CONTROLADA DE BASE DEV — otro volcado/exportación (.sql)
+# fuera de las migraciones NUNCA debe versionarse (ej. un respaldo
+# manual con `pg_dump -F p`, un export ad hoc). Excepción explícita
+# para las migraciones de Prisma (prisma/migrations/**/*.sql), que SÍ
+# se versionan siempre — sin esa excepción, esta regla ignoraría por
+# accidente cada migración nueva.
+*.sql
+!prisma/migrations/**/*.sql
