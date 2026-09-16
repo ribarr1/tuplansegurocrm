@@ -56,6 +56,15 @@ coverage/
 *.xls
 /private-imports/
 
+# IMPORTACIÓN LIMPIA DEL CSV DE EASY — el CSV real del libro de negocio
+# (book-of-business) contiene SSN/USCIS/datos bancarios/de tarjeta de
+# clientes reales. Mismo criterio que *.xlsx/*.pdf arriba: ignorado por
+# EXTENSIÓN, no solo por carpeta, para que un CSV real copiado por
+# error a cualquier ubicación del proyecto nunca se stagee. Los
+# fixtures de test del importador (src/import/book-of-business/__tests__)
+# NO se versionan como .csv — se construyen como strings en memoria.
+*.csv
+
 # Fase 025.5 — reportes de comisiones PDF reales (agencias Orange/
 # Elite) aportados fuera de Git para programar/verificar los
 # adaptadores de importación: nunca deben versionarse (contienen
