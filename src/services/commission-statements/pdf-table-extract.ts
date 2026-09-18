@@ -201,36 +201,86 @@ export function tableFromRows(
   return { headerRowIndex, headers, dataRows, headerRepeatCount };
 }
 
-// Fase 025.5.2/025.5.5 — un reporte de varias páginas puede repetir una
-// fila "Total" al final de CADA página (subtotal de página), nunca solo
-// al final del archivo. En los reportes reales confirmados, el ÚLTIMO
-// "Total" encontrado en el archivo es siempre el total GENERAL (una
-// página intermedia reporta su propio subtotal, la última reporta el
-// acumulado completo) — este es el comportamiento confirmado contra
-// evidencia real (ver test "3 páginas" en pdf-table-extract.test.ts),
-// nunca se cambia aquí. La verificación real de que ese valor sea
-// correcto ocurre DESPUÉS, comparándolo contra la suma de netAmount de
-// las filas efectivamente mostradas en el preview (ver
-// reconciliation.service.ts) — nunca se declara "coincide" sin esa
-// comparación explícita, y un total declarado que NO reconcilia con las
-// filas mostradas bloquea el apply como "no verificable" (Fase 025.5.5).
+// Un bloque = un tramo de filas de datos seguido de su propia fila
+// "Total". `netAmount` se calcula y valida contra `declaredTotal` en el
+// caller (orange-pdf-shared.ts/elite-referral-pdf-adapter.ts), que sí
+// conoce el NormalizedCommissionRow de cada fila — este módulo solo
+// conoce índices posicionales.
+export interface FooterBlock {
+  totalRowIndex: number;
+  declaredTotal: string;
+  dataRowIndices: number[];
+}
+
+// Fase 025.5.2/025.5.5 (corregido en Fase 1.1 tras UAT real de "OSCAR
+// MARZO (1)"): un archivo puede repetir "Total" por DOS motivos
+// distintos, que nunca deben tratarse igual:
+//
+//   (a) Subtotal de PÁGINA en un reporte de varias páginas — cada
+//       página trae su propio total ACUMULADO hasta esa página, y el
+//       de la ÚLTIMA página ya es el general (confirmado con evidencia
+//       real, ver test "3 páginas"). Sumar estos footers sería
+//       duplicar montos.
+//   (b) Bloques/tablas INDEPENDIENTES dentro de LA MISMA página (un
+//       reporte real de Oscar puede traer 2 tablas separadas, cada una
+//       con su propio encabezado y su propio "Total" que NO incluye al
+//       otro bloque) — aquí el total real del archivo es la SUMA de
+//       todos los bloques, nunca "el último" ni "el primero".
+//
+// La señal para distinguir (a) de (b) es la PÁGINA: si todas las filas
+// "Total" del archivo están en la MISMA página, son bloques
+// independientes (b) y se suman. Si aparecen en páginas DISTINTAS, son
+// subtotales acumulados (a) y gana el último — nunca se cambia ese
+// comportamiento ya confirmado contra evidencia real.
 export function detectFooterTotal(
   rows: PdfTextRow[],
   isTotalCell: (cellText: string) => boolean,
   parseAmount: (raw: string) => string | null
-): { declaredTotal: string | null; totalRowIndices: Set<number> } {
-  let declaredTotal: string | null = null;
+): { declaredTotal: string | null; totalRowIndices: Set<number>; blocks: FooterBlock[] } {
   const totalRowIndices = new Set<number>();
+  const blocks: FooterBlock[] = [];
+  let currentBlockRows: number[] = [];
 
   rows.forEach((row, index) => {
-    if (!row.cells.some((c) => isTotalCell(c.text))) return;
+    if (!row.cells.some((c) => isTotalCell(c.text))) {
+      currentBlockRows.push(index);
+      return;
+    }
     totalRowIndices.add(index);
     const amountCell = [...row.cells].reverse().find((c) => parseAmount(c.text) !== null);
     const parsed = amountCell ? parseAmount(amountCell.text) : null;
-    if (parsed !== null) declaredTotal = parsed;
+    if (parsed !== null) {
+      blocks.push({ totalRowIndex: index, declaredTotal: parsed, dataRowIndices: currentBlockRows });
+    }
+    currentBlockRows = [];
   });
 
-  return { declaredTotal, totalRowIndices };
+  if (blocks.length === 0) return { declaredTotal: null, totalRowIndices, blocks };
+
+  const footerPages = new Set(blocks.map((b) => rows[b.totalRowIndex].page));
+  const declaredTotal =
+    footerPages.size > 1
+      ? blocks[blocks.length - 1].declaredTotal // (a) subtotales acumulados en páginas distintas — gana el último
+      : sumDecimalStrings(blocks.map((b) => b.declaredTotal)); // (b) bloques independientes en la misma página — se suman
+
+  return { declaredTotal, totalRowIndices, blocks };
+}
+
+// Suma de montos decimales SIN floating point (nunca number para
+// dinero, ver docs/DECISIONS.md) — cada string ya viene validado por
+// `parseAmount` como `-?\d+(\.\d{1,2})?`, así que basta escalar a
+// centavos como entero, sumar, y volver a formatear.
+function sumDecimalStrings(amounts: string[]): string {
+  const cents = amounts.reduce((sum, a) => {
+    const [whole, frac = ""] = a.split(".");
+    const sign = whole.startsWith("-") ? -1 : 1;
+    const wholeCents = Math.abs(Number(whole)) * 100;
+    const fracCents = Number((frac + "00").slice(0, 2));
+    return sum + sign * (wholeCents + fracCents);
+  }, 0);
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
 }
 
 // Fila -> Record<header, valor>. Si el conteo de celdas coincide con el

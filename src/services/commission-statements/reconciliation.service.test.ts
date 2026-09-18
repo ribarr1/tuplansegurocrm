@@ -66,7 +66,19 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.commissionPayment.deleteMany({ where: { statementRowId: { not: null } } });
+  // Fase 1.1 — CORRECCIÓN DE INCIDENTE: esta línea antes decía
+  // `deleteMany({ where: { statementRowId: { not: null } } })`, SIN
+  // acotar a los statements creados por esta prueba — borraba
+  // CUALQUIER CommissionPayment real de la base de datos (de cualquier
+  // origen), no solo los de este archivo de test. Permaneció dormido
+  // porque nunca antes había CommissionPayment reales con
+  // statementRowId en esta base de datos; al aplicarse comisiones
+  // reales por primera vez (Fase 1.1), correr este test las borró
+  // todas. SIEMPRE acotar la limpieza a los IDs que la propia prueba
+  // creó, igual que el resto de este afterAll — nunca un deleteMany
+  // sin filtro de pertenencia sobre una tabla que puede tener datos
+  // reales.
+  await prisma.commissionPayment.deleteMany({ where: { statementRow: { statementId: { in: createdStatementIds } } } });
   await prisma.commissionStatementRow.deleteMany({ where: { statementId: { in: createdStatementIds } } });
   await prisma.commissionStatement.deleteMany({ where: { id: { in: createdStatementIds } } });
   await prisma.policyExternalReference.deleteMany({ where: { policyId: { in: createdPolicyIds } } });

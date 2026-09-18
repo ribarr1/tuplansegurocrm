@@ -74,17 +74,38 @@ async function makePerson(firstName: string, lastName: string, state: string) {
 // porque el estado del hogar sí es conocido).
 async function makeHealthPolicy(
   admin: AuthorizedUser,
-  opts: { firstName: string; lastName: string; carrierName: string; state: string; own: boolean; expectedAmount: string; period: Date }
+  opts: {
+    firstName: string;
+    lastName: string;
+    carrierName: string;
+    state: string;
+    own: boolean;
+    expectedAmount: string;
+    period: Date;
+    // Fase 1.1 — reutiliza un Carrier ya creado (un statement real solo
+    // trae UN carrier por archivo, ver carrier-detection.ts; 2 pólizas
+    // del mismo archivo sintético de prueba deben compartir el mismo
+    // Carrier, nunca intentar crear uno duplicado con el mismo nombre).
+    existingCarrier?: { id: string; name: string };
+    // Cuando 2 pólizas OWN comparten el mismo carrier+estado, ya existe
+    // UN agente elegible (el de la primera) — crear un SEGUNDO agente
+    // licenciado/con contrato para el mismo carrier+estado produciría 2
+    // elegibles y resolveOwnPolicyProcessedById rechaza la ambigüedad
+    // (nunca adivina cuál). `skipOwnAgentSetup` reutiliza la elegibilidad
+    // ya existente en vez de crear un agente redundante.
+    skipOwnAgentSetup?: boolean;
+  }
 ) {
   const { person, household } = await makePerson(opts.firstName, opts.lastName, opts.state);
-  const carrier = await prisma.carrier.create({ data: { name: opts.carrierName } });
-  createdCarrierIds.push(carrier.id);
+  const carrier =
+    opts.existingCarrier ?? (await prisma.carrier.create({ data: { name: opts.carrierName } }));
+  if (!opts.existingCarrier) createdCarrierIds.push(carrier.id);
   const product = await prisma.product.create({
     data: { carrierId: carrier.id, name: uniqueName("Plan PDF"), policyType: "HEALTH" },
   });
   createdProductIds.push(product.id);
 
-  if (opts.own) {
+  if (opts.own && !opts.skipOwnAgentSetup) {
     const agentForOwn = await makeActor("AGENT", "agent-pdf-own");
     const license = await prisma.agentLicense.create({
       data: { userId: agentForOwn.id, state: opts.state, status: "ACTIVE" },
@@ -1080,6 +1101,74 @@ describe("Fase 025.5.5 — TOTAL GENERAL EN REPORTES MULTIPÁGINA: nunca se apli
     await applyCommissionStatement(admin, upload.statementId);
     const paymentCount = await prisma.commissionPayment.count({ where: { policyId: policy.id } });
     expect(paymentCount).toBe(1);
+  });
+
+  // Fase 1.1 — UAT real "OSCAR MARZO (1)": un archivo con 2 tablas
+  // independientes en la MISMA página, cada una con su propio footer,
+  // reconcilia perfectamente cuando se valida por bloque — nunca debe
+  // bloquearse solo porque el ÚLTIMO footer del archivo no coincide
+  // con la suma de TODAS las filas (ese era el bug real).
+  it("FF) 2 bloques independientes en la misma página, cada uno reconciliando con su propio footer: nunca se marca ambiguo, el apply crea un pago por cada fila", async () => {
+    const { person: p1, carrier, policy: policy1 } = await makeHealthPolicy(admin, {
+      firstName: "Bloque1", lastName: uniqueName("Uno"), carrierName: uniqueName("OscarBloques"),
+      state: "TX", own: true, expectedAmount: "17.00", period: PAID_PERIOD,
+    });
+    const { person: p2, policy: policy2 } = await makeHealthPolicy(admin, {
+      firstName: "Bloque2", lastName: uniqueName("Dos"), carrierName: carrier.name, existingCarrier: carrier, skipOwnAgentSetup: true,
+      state: "TX", own: true, expectedAmount: "17.00", period: PAID_PERIOD,
+    });
+    const row1 = [uniqueName("OSC"), `${p1.firstName} ${p1.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "20.00", "1", "20.00", "3.00", "17.00", "2026-08-01", PAID_AT];
+    const row2 = [uniqueName("OSC"), `${p2.firstName} ${p2.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "20.00", "1", "20.00", "3.00", "17.00", "2026-08-01", PAID_AT];
+    const footer1 = ["Total", "", "", "", "", "", "", "", "", "", "17.00", "", ""];
+    const footer2 = ["Total", "", "", "", "", "", "", "", "", "", "17.00", "", ""];
+    const pdf = buildTestTablePdf([headers, row1, footer1, headers, row2, footer2]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("dosbloques") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview.statement.declaredFooterTotal?.toFixed(2)).toBe("34.00"); // suma de ambos bloques, nunca solo uno
+    expect(preview.statement.footerMatchesNet).toBe(true);
+    expect(preview.statement.footerAmbiguous).toBe(false);
+
+    await applyCommissionStatement(admin, upload.statementId);
+    expect(await prisma.commissionPayment.count({ where: { policyId: policy1.id } })).toBe(1);
+    expect(await prisma.commissionPayment.count({ where: { policyId: policy2.id } })).toBe(1);
+  });
+
+  // El combinado ($34.00 declarado vs $34.00 real) "cuadra", pero cada
+  // bloque individual está mal en direcciones opuestas ($20 vs $17
+  // real, y $14 vs $17 real) — nunca debe pasar como válido solo
+  // porque el agregado coincide por coincidencia.
+  it("GG) el combinado cuadra pero un bloque individual NO reconcilia: sigue bloqueado como no verificable", async () => {
+    const { person: p1, carrier, policy: policy1 } = await makeHealthPolicy(admin, {
+      firstName: "BloqueRoto1", lastName: uniqueName("Uno"), carrierName: uniqueName("OscarBloquesRotos"),
+      state: "TX", own: true, expectedAmount: "17.00", period: PAID_PERIOD,
+    });
+    const { person: p2 } = await makeHealthPolicy(admin, {
+      firstName: "BloqueRoto2", lastName: uniqueName("Dos"), carrierName: carrier.name, existingCarrier: carrier, skipOwnAgentSetup: true,
+      state: "TX", own: true, expectedAmount: "17.00", period: PAID_PERIOD,
+    });
+    const row1 = [uniqueName("OSC"), `${p1.firstName} ${p1.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "20.00", "1", "20.00", "3.00", "17.00", "2026-08-01", PAID_AT];
+    const row2 = [uniqueName("OSC"), `${p2.firstName} ${p2.lastName}`, "Agent A", "TX", carrier.name, "ACTIVE", "20.00", "1", "20.00", "3.00", "17.00", "2026-08-01", PAID_AT];
+    const footer1 = ["Total", "", "", "", "", "", "", "", "", "", "20.00", "", ""]; // declara 20, real 17
+    const footer2 = ["Total", "", "", "", "", "", "", "", "", "", "14.00", "", ""]; // declara 14, real 17
+    const pdf = buildTestTablePdf([headers, row1, footer1, headers, row2, footer2]);
+    const upload = await uploadCommissionStatement(admin, "ORANGE_OWN", makePdfFile(pdf, uniqueName("bloquesroto") + ".pdf"));
+    if (upload.duplicate) throw new Error("unexpected duplicate");
+    createdStatementIds.push(upload.statementId);
+
+    const preview = await getCommissionStatementPreview(admin, upload.statementId);
+    expect(preview.statement.declaredFooterTotal?.toFixed(2)).toBe("34.00");
+    expect(preview.statement.footerMatchesNet).toBe(true); // el combinado sí coincide (34 vs 34)...
+    expect(preview.statement.footerAmbiguous).toBe(true); // ...pero un bloque individual no, nunca se confía solo en el agregado
+
+    await expect(applyCommissionStatement(admin, upload.statementId)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("no verificable"),
+    });
+    const paymentCount = await prisma.commissionPayment.count({ where: { policyId: policy1.id } });
+    expect(paymentCount).toBe(0);
   });
 });
 

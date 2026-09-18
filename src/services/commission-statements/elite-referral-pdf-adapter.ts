@@ -93,16 +93,20 @@ export const EliteReferralPdfAdapter: CommissionStatementAdapter = {
       return real ? record[real] : undefined;
     }
 
-    const { declaredTotal: declaredFooterTotal, totalRowIndices } = detectFooterTotal(
+    const { declaredTotal: declaredFooterTotal, totalRowIndices, blocks } = detectFooterTotal(
       table.dataRows,
       (text) => normalizeHeader(text) === "total",
       parseMoney
     );
 
     const rows: NormalizedCommissionRow[] = [];
+    const rowByDataRowIndex: (NormalizedCommissionRow | null)[] = [];
 
     table.dataRows.forEach((row, index) => {
-      if (totalRowIndices.has(index)) return;
+      if (totalRowIndices.has(index)) {
+        rowByDataRowIndex.push(null);
+        return;
+      }
 
       const { record, mismatched } = rowToRecord(row, headerCells);
       const warnings: string[] = [];
@@ -120,7 +124,7 @@ export const EliteReferralPdfAdapter: CommissionStatementAdapter = {
         }
       }
 
-      rows.push({
+      const normalizedRow: NormalizedCommissionRow = {
         source: "ELITE_REFERRAL",
         externalMemberId: col(record, "MEMBER ID") || null,
         memberName: col(record, "CLIENT/TITLE") || null,
@@ -138,10 +142,21 @@ export const EliteReferralPdfAdapter: CommissionStatementAdapter = {
         dateOfBirth: parseIsoDate(col(record, "CLIENT DOB")),
         sourceRowNumber: index + 1,
         warnings,
-      });
+      };
+      rows.push(normalizedRow);
+      rowByDataRowIndex.push(normalizedRow);
     });
 
     const detectedCarrierRaw = detectSingleCarrier(rows);
+
+    const footerBlocks = blocks.map((b) => {
+      const actualNetSum = b.dataRowIndices
+        .map((i) => rowByDataRowIndex[i])
+        .filter((r): r is NormalizedCommissionRow => r !== null)
+        .reduce((sum, r) => sum.plus(new Prisma.Decimal(r.netAmount ?? r.receivedAmount)), new Prisma.Decimal(0))
+        .toFixed(2);
+      return { declaredTotal: b.declaredTotal, actualNetSum };
+    });
 
     return {
       rows,
@@ -151,6 +166,7 @@ export const EliteReferralPdfAdapter: CommissionStatementAdapter = {
       adapterVersion: "2",
       policyType: "HEALTH",
       detectedCarrierRaw,
+      footerBlocks,
     };
   },
 };

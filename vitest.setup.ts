@@ -1,5 +1,14 @@
 import "dotenv/config";
+import { assertTestDatabase } from "@/lib/test-db-guard";
 import { setEmailTransportForTests, createNoopEmailTransportForTests } from "@/lib/email";
+
+// Fase 1.1 — BLOQUEANTE DE SEGURIDAD (ver src/lib/test-db-guard.ts):
+// se ejecuta ANTES que cualquier test corra un solo deleteMany.
+// vitest.config.mts ya carga .env.test con override:true, así que en
+// una ejecución normal esto siempre pasa — este assert es la red de
+// seguridad para cuando algo (config editada a mano, variables de
+// entorno heredadas del shell, etc.) intente saltárselo.
+assertTestDatabase();
 
 // CORRECCIÓN (activación de usuarios / recuperación de contraseña) —
 // ningún test debe intentar una llamada de red real a un proveedor de

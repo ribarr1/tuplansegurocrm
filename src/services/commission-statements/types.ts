@@ -73,6 +73,18 @@ export interface ParsedStatement {
   // distinto hace que el adapter rechace el archivo por completo (ver
   // carrier-detection.ts) — nunca llega aquí con ambigüedad.
   detectedCarrierRaw?: string | null;
+  // Fase 1.1 (UAT real "OSCAR MARZO (1)"): cuando el archivo trae más
+  // de un bloque/tabla independiente en la misma página (cada uno con
+  // su propio footer "Total"), `declaredTotal` ya es la SUMA de todos
+  // los bloques (ver detectFooterTotal) — pero eso no basta: un error
+  // que se cancele entre dos bloques (uno de más, otro de menos)
+  // pasaría inadvertido si solo se valida el combinado. `footerBlocks`
+  // trae el detalle de CADA bloque (su total declarado y la suma real
+  // de netAmount de sus filas) para que reconciliation.service.ts
+  // valide AMBOS niveles — nunca solo el combinado. Undefined/vacío
+  // para reportes de un solo bloque (comportamiento previo, sin
+  // cambios) o adapters que no traen bloques (CSV/XLSX de Fase 020).
+  footerBlocks?: { declaredTotal: string; actualNetSum: string }[];
 }
 
 export interface CommissionStatementAdapter {

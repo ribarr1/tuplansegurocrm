@@ -364,14 +364,23 @@ export async function uploadCommissionStatement(
   const footerMatchesNet = declaredFooterTotal
     ? declaredFooterTotal.minus(netTotalSum).abs().lessThanOrEqualTo("0.01")
     : null;
+  // Fase 1.1 (UAT real "OSCAR MARZO (1)"): además del combinado, se
+  // valida CADA bloque/tabla independiente contra su propio footer —
+  // un archivo con 2 bloques donde uno está de más y el otro de menos
+  // podría "cuadrar" en el combinado y ocultar un error real. Nunca se
+  // confía solo en el total general cuando el archivo trae bloques.
+  const blocksMismatch = (parsed.footerBlocks ?? []).some(
+    (b) => new Prisma.Decimal(b.declaredTotal).minus(b.actualNetSum).abs().greaterThan("0.01")
+  );
   // Fase 025.5.5 (TOTAL GENERAL EN REPORTES MULTIPÁGINA): un total
   // declarado que NO reconcilia con la suma de netAmount de las filas
   // EFECTIVAMENTE mostradas en el preview no puede confiarse como total
   // general (típico de un reporte multipágina donde el footer detectado
   // resultó ser un subtotal de página, no el acumulado completo) —
   // nunca se aplica un reporte en ese estado, aunque el preview siga
-  // disponible para revisión manual.
-  const footerAmbiguous = footerMatchesNet === false;
+  // disponible para revisión manual. Lo mismo aplica si algún bloque
+  // individual no reconcilia, aunque el combinado sí lo haga.
+  const footerAmbiguous = footerMatchesNet === false || blocksMismatch;
 
   const statementId = randomUUID();
   await prisma.$transaction(async (tx) => {

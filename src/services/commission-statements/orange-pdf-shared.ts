@@ -21,12 +21,11 @@ import type { NormalizedCommissionRow, ParsedStatement } from "./types";
 // (ninguna de las dos modalidades la exige). Nunca forma parte de los
 // headers requeridos: su presencia se detecta leyendo el header real,
 // no negociando qué columnas "debería" tener según la fuente elegida.
-const REQUIRED_HEADERS = [
+const REQUIRED_HEADERS_BASE = [
   "Name",
   "Agent",
   "State",
   "Carrier",
-  "Status",
   "Rate",
   "Members",
   "Subtotal",
@@ -35,6 +34,13 @@ const REQUIRED_HEADERS = [
   "Effective Date",
   "Paid At",
 ] as const;
+// "Status" también es OPCIONAL — confirmado contra archivos reales de
+// Fase 1 (varios reportes de Oscar/Ambetter reales simplemente no
+// traen esa columna). Se intenta PRIMERO exigiéndola (layout más
+// completo, preferido cuando está presente) y solo si esa fila de
+// encabezado no aparece se intenta sin ella — nunca al revés, para no
+// perder la columna cuando sí existe.
+const REQUIRED_HEADERS_WITH_STATUS = [...REQUIRED_HEADERS_BASE, "Status"] as const;
 
 function normalizeHeader(h: string): string {
   return h.trim().toLowerCase().replace(/\s+/g, " ");
@@ -80,9 +86,12 @@ export interface OrangeStylePdfConfig {
 
 export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdfConfig): Promise<ParsedStatement> {
   const extracted = await extractPdfRows(buffer);
-  const table = tableFromRows(extracted.rows, REQUIRED_HEADERS);
+  const table =
+    tableFromRows(extracted.rows, REQUIRED_HEADERS_WITH_STATUS) ?? tableFromRows(extracted.rows, REQUIRED_HEADERS_BASE);
   if (!table) {
-    throw new PdfFormatMismatchError(`El PDF no tiene el formato esperado — faltan columnas requeridas (${REQUIRED_HEADERS.join(", ")}).`);
+    throw new PdfFormatMismatchError(
+      `El PDF no tiene el formato esperado — faltan columnas requeridas (${REQUIRED_HEADERS_BASE.join(", ")}).`
+    );
   }
   const headerCells = extracted.rows[table.headerRowIndex].cells;
   const headerByNormalized = new Map(headerCells.map((h) => [normalizeHeader(h.text), h.text]));
@@ -91,16 +100,23 @@ export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdf
     return real ? record[real] : undefined;
   }
 
-  const { declaredTotal: declaredFooterTotal, totalRowIndices } = detectFooterTotal(
+  const { declaredTotal: declaredFooterTotal, totalRowIndices, blocks } = detectFooterTotal(
     table.dataRows,
     (text) => normalizeHeader(text) === "total",
     parseMoney
   );
 
   const rows: NormalizedCommissionRow[] = [];
+  // Alineado 1:1 con table.dataRows (null en las posiciones de fila
+  // "Total") — permite sumar el netAmount real de cada BLOQUE después,
+  // sin perder la correspondencia de índices al filtrar filas "Total".
+  const rowByDataRowIndex: (NormalizedCommissionRow | null)[] = [];
 
   table.dataRows.forEach((row: PdfTextRow, index: number) => {
-    if (totalRowIndices.has(index)) return;
+    if (totalRowIndices.has(index)) {
+      rowByDataRowIndex.push(null);
+      return;
+    }
 
     const { record, mismatched } = rowToRecord(row, headerCells);
     const warnings: string[] = [];
@@ -118,7 +134,7 @@ export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdf
       }
     }
 
-    rows.push({
+    const normalizedRow: NormalizedCommissionRow = {
       source: config.source,
       externalMemberId: col(record, "Member ID") || null,
       memberName: col(record, "Name") || null,
@@ -136,12 +152,23 @@ export async function parseOrangeStylePdf(buffer: Buffer, config: OrangeStylePdf
       paidAt: parseIsoOrderDate(col(record, "Paid At")),
       sourceRowNumber: index + 1,
       warnings,
-    });
+    };
+    rows.push(normalizedRow);
+    rowByDataRowIndex.push(normalizedRow);
   });
 
   // Un solo carrier por reporte — nunca se adivina cuál es el
   // "correcto" si el archivo trae más de uno (ver carrier-detection.ts).
   const detectedCarrierRaw = detectSingleCarrier(rows);
 
-  return { rows, declaredTotal: declaredFooterTotal, detectedCarrierRaw };
+  const footerBlocks = blocks.map((b) => {
+    const actualNetSum = b.dataRowIndices
+      .map((i) => rowByDataRowIndex[i])
+      .filter((r): r is NormalizedCommissionRow => r !== null)
+      .reduce((sum, r) => sum.plus(new Prisma.Decimal(r.netAmount ?? r.receivedAmount)), new Prisma.Decimal(0))
+      .toFixed(2);
+    return { declaredTotal: b.declaredTotal, actualNetSum };
+  });
+
+  return { rows, declaredTotal: declaredFooterTotal, detectedCarrierRaw, footerBlocks };
 }

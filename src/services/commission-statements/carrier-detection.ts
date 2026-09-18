@@ -9,8 +9,31 @@
 // bloquea la subida completa (nunca se adivina cuál es el "correcto").
 // ---------------------------------------------------------------------------
 
+// Fase 1.1 — variantes reales confirmadas de Blue Cross Blue Shield que
+// NO normalizan igual que el nombre canónico del catálogo
+// ("BLUE CROSS BLUE SHIELD (BCBS)") solo quitando paréntesis: a un
+// adapter le falta "Shield", a otro le sobra "and". Autorizado por el
+// usuario tras revisar los archivos reales (Fase 1.1, UAT "carrier no
+// reconocido"). Nunca se adivina una variante nueva no confirmada —
+// solo estas 2 formas reales se mapean explícitamente; "Blue Cross
+// Blue Shield (ACA)" ya normaliza igual que el canónico sin necesidad
+// de alias (el sufijo entre paréntesis ya se quita arriba).
+// Fase 1.1 — "Kaiser" (reportado tal cual, sin "Permanente", en 4
+// archivos reales de Kaiser) autorizado por el usuario como alias
+// EXACTO hacia el nombre canónico del catálogo ("KAISER PERMANENTE").
+// Coincidencia de clave EXACTA sobre el texto ya limpiado (nunca
+// fuzzy/substring) — "Kaiser Foundation", "Kaiser SC" o cualquier otro
+// texto que solo CONTENGA "kaiser" nunca calza esta clave y sigue
+// normalizando a su propio valor distinto, sin alias.
+const CARRIER_ALIASES: Record<string, string> = {
+  "blue cross and blue shield": "blue cross blue shield",
+  "blue cross blue": "blue cross blue shield",
+  kaiser: "kaiser permanente",
+};
+
 // Normaliza para COMPARAR (nunca para mostrar): quita sufijos entre
-// paréntesis (ej. "Oscar ( ACA)" -> "oscar"), colapsa espacios, minúsculas.
+// paréntesis (ej. "Oscar ( ACA)" -> "oscar"), colapsa espacios, minúsculas,
+// y resuelve alias de carrier reales confirmados (ver CARRIER_ALIASES).
 export function normalizeCarrierForComparison(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const cleaned = raw
@@ -18,7 +41,8 @@ export function normalizeCarrierForComparison(raw: string | null | undefined): s
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
-  return cleaned || null;
+  if (!cleaned) return null;
+  return CARRIER_ALIASES[cleaned] ?? cleaned;
 }
 
 export class MultipleCarriersError extends Error {}

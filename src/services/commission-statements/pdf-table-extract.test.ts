@@ -159,6 +159,87 @@ describe("pdf-table-extract / adaptadores PDF — reportes de varias páginas (F
 });
 
 // ---------------------------------------------------------------------------
+// Fase 1.1 — UAT real "OSCAR MARZO (1)": un archivo real trajo 2 tablas
+// independientes en LA MISMA página (cada una con su propio encabezado
+// repetido y su propio footer "Total"), a diferencia del caso de varias
+// PÁGINAS de arriba (donde el último footer ya es el acumulado). Aquí
+// ningún footer es "el general" — el total real del archivo es la SUMA
+// de ambos bloques, y cada bloque debe reconciliar con sus propias
+// filas de forma independiente (nunca se confía solo en el combinado:
+// un bloque de más y otro de menos podrían cancelarse).
+// ---------------------------------------------------------------------------
+describe("pdf-table-extract / adaptadores PDF — columna 'Status' opcional (Fase 1.1, UAT real)", () => {
+  const HEADERS_NO_STATUS = ["Member ID", "Name", "Agent", "State", "Carrier", "Rate", "Members", "Subtotal", "Asistencia", "Total", "Effective Date", "Paid At"];
+  function dataRowNoStatus(i: number, subtotal: string, assistance: string, total: string): string[] {
+    return [`OSC${1000 + i}`, `Sintetico Nombre${i}`, "Agent Test", "IL", "Oscar", "25.00", "1", subtotal, assistance, total, "2026-01-01", "2026-01-15"];
+  }
+
+  it("un reporte real sin columna 'Status' se parsea igual (Status queda null, nunca bloquea el archivo)", async () => {
+    const pdf = buildTestTablePdf([HEADERS_NO_STATUS, dataRowNoStatus(1, "25.00", "3.00", "22.00"), footerRow("22.00")]);
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "sin-status.pdf");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].status).toBeNull();
+    expect(result.rows[0].memberName).toBe("Sintetico Nombre1");
+    expect(result.declaredTotal).toBe("22.00");
+  });
+
+  it("un reporte CON columna 'Status' sigue capturando su valor normalmente (no se rompe el caso preferido)", async () => {
+    const pdf = buildTestTablePdf([HEADERS, dataRow(1, "25.00", "3.00", "22.00"), footerRow("22.00")]);
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "con-status.pdf");
+    expect(result.rows[0].status).toBe("ACTIVE");
+  });
+});
+
+describe("pdf-table-extract / adaptadores PDF — bloques múltiples en la misma página (Fase 1.1, UAT real)", () => {
+  it("2 bloques en 1 página, cada uno con su propio Total: declaredTotal es la SUMA de ambos bloques, nunca solo el último", async () => {
+    const block1 = [
+      dataRow(1, "20.00", "3.00", "17.00"),
+      dataRow(2, "25.00", "3.00", "22.00"),
+      dataRow(3, "25.00", "3.00", "22.00"),
+      dataRow(4, "18.00", "3.00", "15.00"),
+      footerRow("76.00"),
+    ];
+    const block2 = [
+      dataRow(5, "20.00", "3.00", "17.00"),
+      dataRow(6, "20.00", "3.00", "17.00"),
+      dataRow(7, "20.00", "3.00", "17.00"),
+      footerRow("51.00"),
+    ];
+    // Una sola página: encabezado + bloque1 + encabezado repetido + bloque2.
+    const pdf = buildTestTablePdf([HEADERS, ...block1, HEADERS, ...block2]);
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "oscar-marzo-1-dos-bloques.pdf");
+
+    expect(result.rows).toHaveLength(7);
+    const netSum = result.rows
+      .reduce((sum, r) => sum.plus(new Prisma.Decimal(r.netAmount ?? "0")), new Prisma.Decimal(0))
+      .toFixed(2);
+    expect(netSum).toBe("127.00");
+    // Nunca "51.00" (el último footer) ni "76.00" (el primero) — el
+    // combinado real es la suma de los 2 bloques.
+    expect(result.declaredTotal).toBe("127.00");
+
+    expect(result.footerBlocks).toHaveLength(2);
+    expect(result.footerBlocks?.[0]).toEqual({ declaredTotal: "76.00", actualNetSum: "76.00" });
+    expect(result.footerBlocks?.[1]).toEqual({ declaredTotal: "51.00", actualNetSum: "51.00" });
+  });
+
+  it("2 bloques en la misma página donde el combinado cuadra mate pero UN bloque individual no reconcilia: footerBlocks expone el bloque roto", async () => {
+    const block1 = [dataRow(1, "20.00", "3.00", "17.00"), footerRow("20.00")]; // declara 20, real 17 (+3 de más)
+    const block2 = [dataRow(2, "20.00", "3.00", "17.00"), footerRow("14.00")]; // declara 14, real 17 (-3 de menos)
+    const pdf = buildTestTablePdf([HEADERS, ...block1, HEADERS, ...block2]);
+    const result = await OrangeOwnPdfAdapter.parse(pdf, "oscar-bloques-se-cancelan.pdf");
+
+    // Combinado: 20+14=34, suma real de netos: 17+17=34 — "cuadra" en
+    // el agregado, pero cada bloque individual está mal.
+    expect(result.declaredTotal).toBe("34.00");
+    expect(result.footerBlocks).toEqual([
+      { declaredTotal: "20.00", actualNetSum: "17.00" },
+      { declaredTotal: "14.00", actualNetSum: "17.00" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Regresión dirigida — Fase 025.5.2, Corrección 2: el PDF real de
 // Orange/Oscar suministrado en Fase 025.5.1 tiene 3 filas (no 4), con
 // netos $22/$22/$15 = $59, footer $59.00 — confirmado por extracción
