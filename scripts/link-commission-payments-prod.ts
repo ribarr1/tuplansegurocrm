@@ -27,6 +27,23 @@ import type { AuthorizedUser } from "../src/lib/authorization";
 // Idempotente: si no quedan pagos con commissionExpectationId = null,
 // termina sin cambiar nada (0 vinculados), sin importar cuántas veces
 // se ejecute.
+//
+// EJECUCIÓN: este script importa (transitivamente, vía
+// linkPendingPaymentsToExpectation) módulos marcados con
+// `import "server-only"` — un guard real que solo debe protegerlos de
+// una importación accidental desde un Client Component de Next.js,
+// nunca de una ejecución operacional legítima como esta. `tsx` por sí
+// solo no lo tolera fuera del bundler de Next.js, así que este script
+// SIEMPRE debe invocarse con el shim dedicado (ver
+// scripts/server-only-shim.cjs — no toca ni desactiva el guard real, y
+// nunca se aplica dentro de `next dev`/`build`/`start`):
+//
+//   node --require ./scripts/server-only-shim.cjs --import tsx scripts/link-commission-payments-prod.ts [--apply|--verify]
+//
+// Ejecutarlo con solo `npx tsx scripts/link-commission-payments-prod.ts`
+// falla con "This module cannot be imported from a Client Component
+// module" — ese es exactamente el guard de server-only funcionando
+// como se espera fuera de Next.js, no un bug de este script.
 // ---------------------------------------------------------------------------
 
 // Resultado observado y ya verificado en DEV con esta misma base de
@@ -114,6 +131,18 @@ async function printPlan(plan: Awaited<ReturnType<typeof computeLinkagePlan>>) {
   console.log(`  Expectativas involucradas:    ${plan.expectationsInvolved}`);
 }
 
+// El estado "ya aplicado" (idempotente) NO es simplemente
+// "orphanedCount === 0": los 26 pagos sin regla/expectativa confiable
+// se quedan huérfanos PARA SIEMPRE (nunca tendrán una
+// CommissionExpectation esperando), así que orphanedCount sigue en 26
+// incluso después de una corrección exitosa. La señal real de "ya se
+// aplicó" es que ya no queda NADA vinculable (wouldLink === 0) Y el
+// total ya vinculado alcanzó el esperado — nunca se confunde esto con
+// "no hay nada pendiente en la tabla".
+function alreadyApplied(plan: Awaited<ReturnType<typeof computeLinkagePlan>>): boolean {
+  return plan.wouldLink === 0 && plan.alreadyLinked >= EXPECTED_LINKABLE;
+}
+
 async function dryRun() {
   console.log(`Base de datos objetivo: ${describeDatabaseTarget()}`);
   console.log("\n=== DRY RUN — no se modifica absolutamente nada ===\n");
@@ -121,13 +150,13 @@ async function dryRun() {
   await printPlan(plan);
 
   console.log("\n--- Comparación contra el resultado ya verificado en DEV ---");
-  if (plan.orphanedCount === 0) {
-    console.log(`  No hay pagos pendientes — la corrección ya fue aplicada (o no aplica). Nada que hacer.`);
-  } else if (plan.wouldLink === EXPECTED_LINKABLE) {
+  if (alreadyApplied(plan)) {
+    console.log(`  Ya no queda nada vinculable (vinculados=${plan.alreadyLinked}) — la corrección ya fue aplicada. Nada que hacer.`);
+  } else if (plan.totalPayments === EXPECTED_TOTAL_PAYMENTS && plan.wouldLink === EXPECTED_LINKABLE) {
     console.log(`  OK: se vincularían ${plan.wouldLink} pagos, igual que en DEV (${EXPECTED_LINKABLE}). Listo para --apply.`);
   } else {
     console.log(
-      `  ADVERTENCIA: se vincularían ${plan.wouldLink} pagos, pero en DEV fueron ${EXPECTED_LINKABLE}. ` +
+      `  ADVERTENCIA: totalPayments=${plan.totalPayments} (esperado ${EXPECTED_TOTAL_PAYMENTS}), se vincularían ${plan.wouldLink} (esperado ${EXPECTED_LINKABLE}). ` +
         `El estado de PROD difiere del que se validó en DEV — --apply se detendrá automáticamente hasta que esto se entienda.`
     );
   }
@@ -139,8 +168,9 @@ async function apply() {
   const plan = await computeLinkagePlan();
   await printPlan(plan);
 
-  if (plan.orphanedCount === 0) {
-    console.log("\nNo hay pagos pendientes de vincular — nada que aplicar (operación idempotente, 0 cambios).");
+  if (alreadyApplied(plan)) {
+    console.log("\nYa no queda nada vinculable — nada que aplicar (operación idempotente, 0 cambios).");
+    await verify();
     return;
   }
 
