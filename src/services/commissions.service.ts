@@ -185,12 +185,20 @@ function attachDerived(expectation: ExpectationWithPayments) {
   };
 }
 
+// CORRECCIÓN — usaba `role !== "AGENT"`, pero `isAgent` es la condición
+// de negocio real e independiente del rol (ver schema.prisma: "Un
+// ADMIN puede además ser agente... nunca se exige role=AGENT para
+// esto"), el mismo criterio que ya usa listActiveAgents() para poblar
+// este mismo desplegable. Con el criterio viejo, un ADMIN con
+// isAgent=true (ej. el dueño de la agencia) aparecía como opción
+// seleccionable pero SIEMPRE era rechazado al guardar — el
+// desplegable ofrecía una opción que el backend nunca aceptaba.
 async function assertActiveAgentId(agentId: string): Promise<void> {
   const agent = await prisma.user.findUnique({
     where: { id: agentId },
-    select: { id: true, role: true, isActive: true },
+    select: { id: true, isAgent: true, isActive: true },
   });
-  if (!agent || !agent.isActive || agent.role !== "AGENT") {
+  if (!agent || !agent.isActive || !agent.isAgent) {
     throw new AppError("VALIDATION_ERROR", "agentId: Selecciona un agente activo válido.");
   }
 }

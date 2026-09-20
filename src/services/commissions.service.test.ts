@@ -52,6 +52,12 @@ async function makeActor(
       email: `${label.toLowerCase()}.${Date.now()}.${Math.random().toString(36).slice(2)}@test.local`,
       role,
       isActive,
+      // role=AGENT SIEMPRE implica isAgent=true en el flujo real (ver
+      // users.service.ts::createUser) — este helper crea el User
+      // directo con Prisma (nunca pasa por ese servicio), así que debe
+      // replicar la misma invariante a mano, o un AGENT de prueba
+      // quedaría en un estado que la app real nunca produce.
+      isAgent: role === "AGENT",
     },
   });
   createdUserIds.push(user.id);
@@ -192,7 +198,7 @@ describe("commissions.service", () => {
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("E) agentId de un ADMIN (no AGENT) falla VALIDATION_ERROR", async () => {
+  it("E) agentId de un ADMIN sin isAgent falla VALIDATION_ERROR", async () => {
     const holder = await makePerson();
     const policy = await makePolicyFor(admin, holder);
     await expect(
@@ -200,9 +206,41 @@ describe("commissions.service", () => {
         policyId: policy.id,
         period: nextPeriod(),
         expectedAmount: "75.00",
-        agentId: admin.id,
+        agentId: admin.id, // makeActor nunca fija isAgent -> false por default
       })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  // CORRECCIÓN — bug real reportado en producción: assertActiveAgentId
+  // exigía role==="AGENT", pero el criterio de negocio documentado en
+  // schema.prisma (campo isAgent) dice explícitamente "un ADMIN puede
+  // además ser agente... nunca se exige role=AGENT para esto" — el
+  // mismo criterio que ya usa listActiveAgents() para poblar el
+  // desplegable de "Agente" en el formulario. Con el bug, un ADMIN con
+  // isAgent=true (ej. el dueño de la agencia) aparecía como opción
+  // seleccionable en el formulario pero SIEMPRE era rechazado al
+  // guardar, incluso sin cambiar el valor ya guardado.
+  it("E2) agentId de un ADMIN CON isAgent=true se acepta (el dueño de la agencia que también vende)", async () => {
+    const adminAgent = await makeActor("ADMIN", "admin-agent-comm");
+    await prisma.user.update({ where: { id: adminAgent.id }, data: { isAgent: true } });
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder);
+    const exp = trackExpectation(
+      await createCommissionExpectation(admin, {
+        policyId: policy.id,
+        period: nextPeriod(),
+        expectedAmount: "75.00",
+        agentId: adminAgent.id,
+      })
+    );
+    expect(exp.agentId).toBe(adminAgent.id);
+
+    // El mismo criterio aplica al EDITAR — es exactamente el flujo que
+    // falló en producción (editar una expectativa ya guardada, sin
+    // siquiera cambiar el agente, y recibir "Selecciona un agente
+    // activo válido").
+    const updated = await updateCommissionExpectation(admin, exp.id, { agentId: adminAgent.id });
+    expect(updated.agentId).toBe(adminAgent.id);
   });
 
   it("F) agentId de un AGENT inactivo falla VALIDATION_ERROR", async () => {
