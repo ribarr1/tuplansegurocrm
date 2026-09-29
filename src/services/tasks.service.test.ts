@@ -354,6 +354,43 @@ describe("tasks.service", () => {
     expect(items.map((t) => t.id)).toContain(task.id);
   });
 
+  // Listado de tareas (/tasks): el titular de la póliza debe venir
+  // incluido en la misma consulta de listTasks (vía policySummarySelect
+  // -> holder), sin necesidad de una consulta adicional por fila.
+  it("W2) listTasks incluye el titular de la póliza con número asignado", async () => {
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder);
+    await prisma.policy.update({ where: { id: policy.id }, data: { policyNumber: "ABC123" } });
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea W2"), policyId: policy.id })
+    );
+    const { items } = await listTasks(admin, { policyId: policy.id });
+    const found = items.find((t) => t.id === task.id);
+    expect(found?.policy?.holder.id).toBe(holder.id);
+    expect(found?.policy?.holder.firstName).toBe(holder.firstName);
+    expect(found?.policy?.holder.lastName).toBe(holder.lastName);
+    expect(found?.policy?.policyNumber).toBe("ABC123");
+  });
+
+  it("W3) listTasks incluye el titular aunque la póliza no tenga número", async () => {
+    const holder = await makePerson();
+    const policy = await makePolicyFor(admin, holder);
+    const task = trackTask(
+      await createTask(admin, { title: uniqueName("Tarea W3"), policyId: policy.id })
+    );
+    const { items } = await listTasks(admin, { policyId: policy.id });
+    const found = items.find((t) => t.id === task.id);
+    expect(found?.policy?.holder.id).toBe(holder.id);
+    expect(found?.policy?.policyNumber).toBeNull();
+  });
+
+  it("W4) listTasks: tarea sin póliza asociada mantiene policy = null", async () => {
+    const task = trackTask(await createTask(admin, { title: uniqueName("Tarea W4") }));
+    const { items } = await listTasks(admin, { search: task.title });
+    const found = items.find((t) => t.id === task.id);
+    expect(found?.policy).toBeNull();
+  });
+
   // X) "usuario inactive bloqueado": misma razón documentada en los
   // servicios anteriores — cada función recibe un actor ya resuelto
   // por requireSessionUser()/requireSessionRole(), que ya rechaza

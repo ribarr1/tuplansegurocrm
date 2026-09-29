@@ -218,11 +218,21 @@ export default async function TasksPage({
                     </TableCell>
                     <TableCell>
                       {task.policy ? (
-                        <Link href={`/policies/${task.policy.id}`} className="underline">
-                          {task.policy.policyNumber ?? "sin número"}
+                        <Link href={`/contacts/${task.policy.holder.id}`} className="underline">
+                          {task.policy.holder.firstName} {task.policy.holder.lastName}
                         </Link>
                       ) : (
                         "—"
+                      )}
+                      {task.policy && (
+                        <>
+                          {" — "}
+                          <Link href={`/policies/${task.policy.id}`} className="underline">
+                            {task.policy.policyNumber
+                              ? `Póliza ${task.policy.policyNumber}`
+                              : "Sin número asignado"}
+                          </Link>
+                        </>
                       )}
                     </TableCell>
                     <TableCell>
