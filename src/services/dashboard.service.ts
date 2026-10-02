@@ -7,6 +7,7 @@ import { listBirthdays } from "@/services/birthdays.service";
 import { listPolicies, listExpiringPolicies } from "@/services/policies.service";
 import { getCommissionTotalsForPeriod } from "@/services/commissions.service";
 import { getGoogleReviewCounts } from "@/services/google-reviews.service";
+import { getLeadCounts } from "@/services/leads.service";
 import { TASK_CLOSED_STATUSES } from "@/schemas/task.schema";
 
 // ---------------------------------------------------------------------------
@@ -228,25 +229,26 @@ export async function getDashboard(actor: AuthorizedUser) {
     getPoliciesBlock(actor),
   ]);
 
-  // ASSISTANT no tiene ningún acceso a Comisiones (Fase 016) — el
-  // Dashboard respeta exactamente la misma regla: para ese rol, la
-  // clave "commissions" ni siquiera se agrega al DTO (no se pone en
-  // null, se omite por completo), mismo criterio que la redacción de
-  // campos financieros de HealthPolicyDetail para ASSISTANT.
+  // ASSISTANT no tiene ningún acceso a Comisiones (Fase 016) ni a
+  // Leads (Fase 026) — el Dashboard respeta exactamente la misma
+  // regla: para ese rol, ninguna de esas claves se agrega al DTO (no
+  // se ponen en null, se omiten por completo), mismo criterio que la
+  // redacción de campos financieros de HealthPolicyDetail para
+  // ASSISTANT.
   if (actor.role === "ASSISTANT") {
     return { tasks, premiums, birthdays, policies };
   }
 
-  const commissions = await getCommissionsBlock(actor);
+  const [commissions, leads] = await Promise.all([getCommissionsBlock(actor), getLeadCounts(actor)]);
 
   // Fase 025.5 (UAT-10): Reseñas de Google es EXCLUSIVAMENTE ADMIN —
   // ni siquiera un AGENT (aunque isAgent=true) recibe esta clave, mismo
   // criterio "se omite por completo" de arriba para comisiones/ASSISTANT.
   if (actor.role !== "ADMIN") {
-    return { tasks, premiums, birthdays, policies, commissions };
+    return { tasks, premiums, birthdays, policies, commissions, leads };
   }
   const googleReviews = await getGoogleReviewCounts(actor);
-  return { tasks, premiums, birthdays, policies, commissions, googleReviews };
+  return { tasks, premiums, birthdays, policies, commissions, leads, googleReviews };
 }
 
 export type DashboardData = Awaited<ReturnType<typeof getDashboard>>;

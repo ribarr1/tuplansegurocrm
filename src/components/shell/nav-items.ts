@@ -9,6 +9,7 @@ import {
   Cake,
   BarChart3,
   Settings,
+  Magnet,
 } from "lucide-react";
 
 export type NavItem = {
@@ -30,6 +31,7 @@ export type NavItem = {
 // ocultarlo en la UI (ver docs/DECISIONS.md, Fase 016).
 export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, enabled: true },
+  { label: "Leads", href: "/leads", icon: Magnet, enabled: true },
   { label: "Contactos", href: "/contacts", icon: Users, enabled: true },
   { label: "Pólizas", href: "/policies", icon: FileText, enabled: true },
   { label: "Tareas", href: "/tasks", icon: CheckSquare, enabled: true },

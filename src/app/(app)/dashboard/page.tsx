@@ -302,6 +302,57 @@ export default async function DashboardPage() {
         )}
       </section>
 
+      {/* LEADS ---------------------------------------------------------- */}
+      {/* Solo ADMIN/AGENT — ASSISTANT no tiene acceso al módulo de Leads
+          (Fase 026) y el DTO ni siquiera trae esta clave para ese rol.
+          "Sin asignar" es una condición INDEPENDIENTE de cualquier
+          estado (puede coincidir con cualquiera), nunca se suma como un
+          contador más del total — ver leads.service.ts::getLeadCounts. */}
+      {data.leads && (
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-muted-foreground">Leads</h3>
+            <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/leads" />}>
+              Ver leads
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Link href="/leads?followUpStatus=NEW" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.new}</span>
+              <span className="text-sm text-muted-foreground">Nuevos</span>
+            </Link>
+            <Link href="/leads?assignedToId=unassigned" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.unassigned}</span>
+              <span className="text-sm text-muted-foreground">Sin asignar</span>
+            </Link>
+            <Link href="/leads?followUpStatus=IN_FOLLOW_UP" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.inFollowUp}</span>
+              <span className="text-sm text-muted-foreground">En seguimiento</span>
+            </Link>
+            <Link href="/leads?followUpStatus=CONTACTED" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.contacted}</span>
+              <span className="text-sm text-muted-foreground">Contactados</span>
+            </Link>
+            <Link href="/leads?followUpStatus=QUOTE_SENT" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.quoteSent}</span>
+              <span className="text-sm text-muted-foreground">Cotización enviada</span>
+            </Link>
+            <Link href="/leads?followUpStatus=AWAITING_DECISION" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.awaitingDecision}</span>
+              <span className="text-sm text-muted-foreground">Pendientes de decisión</span>
+            </Link>
+            <Link href="/leads?followUpStatus=CONVERTED" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.converted}</span>
+              <span className="text-sm text-muted-foreground">Convertidos</span>
+            </Link>
+            <Link href="/leads?followUpStatus=CLOSED" className="flex flex-col gap-1 rounded-lg border border-border/80 bg-card p-4 shadow-xs transition-colors hover:border-ring/50 hover:bg-muted/30">
+              <span className="font-heading text-2xl font-semibold text-foreground">{data.leads.closed}</span>
+              <span className="text-sm text-muted-foreground">Cerrados</span>
+            </Link>
+          </div>
+        </section>
+      )}
+
       {/* DINERO ------------------------------------------------------- */}
       {/* Solo ADMIN/AGENT — ASSISTANT no tiene ningún acceso a Comisiones
           (Fase 016) y el DTO ni siquiera trae esta clave para ese rol. */}

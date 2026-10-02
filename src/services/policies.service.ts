@@ -576,10 +576,38 @@ export async function getPoliciesForPerson(actor: AuthorizedUser, rawPersonId: u
 // se asume esto automáticamente si holderCovered no viene explícito.
 // Nunca confía en policyType/carrier enviados por el navegador: siempre
 // se derivan de Product en el servidor.
-export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
+// `tx` opcional (Fase 026, Fábrica de leads): permite a un llamador
+// (convertLead) participar en SU PROPIA transacción externa en vez de
+// abrir una nueva — necesario para que "crear/vincular la Person" y
+// "crear la Policy" sean una única operación atómica real. Cuando se
+// provee, la lectura del titular (`holder`) y de sus hogares DEBE
+// pasar por ese mismo `tx` — si el titular es una Person creada en la
+// MISMA transacción externa (todavía sin confirmar), una lectura por
+// `prisma` (otra conexión) no la vería. El resto de las lecturas
+// (producto/carrier/elegibilidad/usuario procesador) consultan datos
+// que esta operación nunca escribe, así que seguir usando `prisma`
+// para ellas es seguro incluso dentro de una transacción externa.
+// Cuando `tx` se omite (todo llamador existente), el comportamiento es
+// IDÉNTICO al de antes: abre su propia transacción y devuelve el
+// detalle completo vía `getPolicyById`.
+export async function createPolicy(
+  actor: AuthorizedUser,
+  rawInput: unknown
+): Promise<Awaited<ReturnType<typeof getPolicyById>>>;
+export async function createPolicy(
+  actor: AuthorizedUser,
+  rawInput: unknown,
+  tx: Prisma.TransactionClient
+): Promise<{ id: string }>;
+export async function createPolicy(
+  actor: AuthorizedUser,
+  rawInput: unknown,
+  tx?: Prisma.TransactionClient
+): Promise<Awaited<ReturnType<typeof getPolicyById>> | { id: string }> {
   const input = parseOrThrow(createPolicySchema, rawInput);
+  const db = tx ?? prisma;
 
-  const holder = await prisma.person.findUnique({
+  const holder = await db.person.findUnique({
     where: { id: input.holderId },
     select: { id: true, assignedAgentId: true },
   });
@@ -596,7 +624,7 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
   // pertenece a varios o a ninguno; esta era una omisión real (Policy.
   // householdId nunca se poblaba desde este flujo, solo desde el
   // importador legacy).
-  const holderHouseholds = await prisma.householdMember.findMany({
+  const holderHouseholds = await db.householdMember.findMany({
     where: { personId: input.holderId },
     select: { householdId: true },
     distinct: ["householdId"],
@@ -659,60 +687,66 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
   // representa cobertura simultánea real.
   if (product.policyType === "HEALTH" && input.status === "ACTIVE") {
     for (const member of membersToCreate) {
-      await assertNoOverlappingHealthCoverage(prisma, member.personId, input.effectiveDate!, resolvedTerminationDate);
+      await assertNoOverlappingHealthCoverage(db, member.personId, input.effectiveDate!, resolvedTerminationDate);
     }
   }
 
+  const writePolicy = async (writeTx: Prisma.TransactionClient): Promise<string> => {
+    const created = await writeTx.policy.create({
+      data: {
+        holderId: input.holderId,
+        householdId,
+        productId: input.productId,
+        businessSource,
+        policyNumber: input.policyNumber,
+        status: input.status,
+        effectiveDate: input.effectiveDate,
+        terminationDate: resolvedTerminationDate,
+        premiumAmount: input.premiumAmount,
+        billingFrequency: input.billingFrequency,
+        nextPaymentDueDate: input.nextPaymentDueDate,
+        paymentManagementMode: input.paymentManagementMode,
+        ...deriveLegacyPaymentFlags(input.paymentManagementMode),
+        paymentStatus: input.paymentStatus,
+        operationType: input.operationType,
+        processedById,
+        // Solo tiene efecto real en pólizas HEALTH — para el resto se
+        // ignora silenciosamente aunque venga en el input (regla de
+        // aplicación, ver docs/DECISIONS.md).
+        healthCoverageSource: product.policyType === "HEALTH" ? input.healthCoverageSource : null,
+      },
+    });
+    for (const member of membersToCreate) {
+      await writeTx.policyMember.create({
+        data: { policyId: created.id, personId: member.personId, role: member.role },
+      });
+    }
+    await recordAuditEvent(writeTx, {
+      actor,
+      entityType: "Policy",
+      entityId: created.id,
+      action: "POLICY_CREATE",
+      policyId: created.id,
+      householdId,
+      contactPersonId: input.holderId,
+      summary: `Póliza ${product.policyType} creada`,
+    });
+    // Hallazgo #2 de UAT (Fase 022): recomputar Prospecto/Cliente de
+    // cada persona recién cubierta — nunca solo del titular, todos los
+    // miembros cubiertos entran a la misma regla.
+    for (const member of membersToCreate) {
+      await recomputePersonContactStatus(writeTx, member.personId, actor);
+    }
+    return created.id;
+  };
+
   let policyId: string;
   try {
-    policyId = await prisma.$transaction(async (tx) => {
-      const created = await tx.policy.create({
-        data: {
-          holderId: input.holderId,
-          householdId,
-          productId: input.productId,
-          businessSource,
-          policyNumber: input.policyNumber,
-          status: input.status,
-          effectiveDate: input.effectiveDate,
-          terminationDate: resolvedTerminationDate,
-          premiumAmount: input.premiumAmount,
-          billingFrequency: input.billingFrequency,
-          nextPaymentDueDate: input.nextPaymentDueDate,
-          paymentManagementMode: input.paymentManagementMode,
-          ...deriveLegacyPaymentFlags(input.paymentManagementMode),
-          paymentStatus: input.paymentStatus,
-          operationType: input.operationType,
-          processedById,
-          // Solo tiene efecto real en pólizas HEALTH — para el resto se
-          // ignora silenciosamente aunque venga en el input (regla de
-          // aplicación, ver docs/DECISIONS.md).
-          healthCoverageSource: product.policyType === "HEALTH" ? input.healthCoverageSource : null,
-        },
-      });
-      for (const member of membersToCreate) {
-        await tx.policyMember.create({
-          data: { policyId: created.id, personId: member.personId, role: member.role },
-        });
-      }
-      await recordAuditEvent(tx, {
-        actor,
-        entityType: "Policy",
-        entityId: created.id,
-        action: "POLICY_CREATE",
-        policyId: created.id,
-        householdId,
-        contactPersonId: input.holderId,
-        summary: `Póliza ${product.policyType} creada`,
-      });
-      // Hallazgo #2 de UAT (Fase 022): recomputar Prospecto/Cliente de
-      // cada persona recién cubierta — nunca solo del titular, todos los
-      // miembros cubiertos entran a la misma regla.
-      for (const member of membersToCreate) {
-        await recomputePersonContactStatus(tx, member.personId, actor);
-      }
-      return created.id;
-    });
+    // Con `tx` externo: se escribe DIRECTO sobre esa transacción (sin
+    // abrir una nueva — Prisma no admite transacciones anidadas), así
+    // que un fallo posterior en el flujo del llamador revierte también
+    // esta Policy. Sin `tx`: comportamiento idéntico al de siempre.
+    policyId = tx ? await writePolicy(tx) : await prisma.$transaction(writePolicy);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2003") {
@@ -727,6 +761,12 @@ export async function createPolicy(actor: AuthorizedUser, rawInput: unknown) {
     throw error;
   }
 
+  // Con `tx` externo, la transacción del llamador todavía no confirmó
+  // — un `getPolicyById` vía `prisma` (otra conexión) no vería esta
+  // fila todavía. Se devuelve solo el id; el llamador vuelve a
+  // consultar el detalle completo DESPUÉS de que su transacción
+  // confirme (ver leads.service.ts::convertLead).
+  if (tx) return { id: policyId };
   return getPolicyById(actor, policyId);
 }
 

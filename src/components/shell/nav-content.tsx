@@ -11,7 +11,9 @@ import type { UserRole } from "@/generated/prisma/client";
 // en el menú. No basta con deshabilitarlo: se omite por completo.
 export function NavContent({ role, onNavigate }: { role: UserRole; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const items = NAV_ITEMS.filter((item) => !(role === "ASSISTANT" && item.href === "/commissions"));
+  const items = NAV_ITEMS.filter(
+    (item) => !(role === "ASSISTANT" && (item.href === "/commissions" || item.href === "/leads"))
+  );
 
   return (
     <div className="flex h-full flex-col justify-between">

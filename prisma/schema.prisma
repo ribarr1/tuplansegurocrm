@@ -72,13 +72,13 @@ enum PolicyType {
 // (Better Auth), separadas de este modelo. emailVerified/image son
 // campos técnicos requeridos por Better Auth, sin uso de negocio.
 model User {
-  id            String   @id @default(uuid()) @db.Uuid
-  name          String
-  email         String   @unique
-  emailVerified Boolean  @default(false)
-  image         String?
-  role          UserRole @default(AGENT)
-  isActive      Boolean  @default(true)
+  id               String    @id @default(uuid()) @db.Uuid
+  name             String
+  email            String    @unique
+  emailVerified    Boolean   @default(false)
+  image            String?
+  role             UserRole  @default(AGENT)
+  isActive         Boolean   @default(true)
   // Fase 025.4 (UAT-03/07): independiente de `role`. `role` es
   // autorización (qué puede HACER en el CRM); `isAgent` es una
   // condición de negocio (si puede tener licencias/contratos/pólizas/
@@ -89,7 +89,7 @@ model User {
   // 017: todo User con role=AGENT existente pasa a isAgent=true (ese
   // rol siempre implicó ser agente); ADMIN/ASSISTANT existentes NUNCA
   // se tocan automáticamente. Ver docs/DECISIONS.md.
-  isAgent       Boolean  @default(false)
+  isAgent          Boolean   @default(false)
   // CORRECCIÓN (activación de usuarios): null = todavía no estableció
   // su propia contraseña por invitación (cuenta "pendiente de
   // activación"); se fija UNA sola vez, al activar. Concepto DISTINTO
@@ -98,7 +98,7 @@ model User {
   // isActive=true y sin embargo pendiente de activación (nunca ha
   // iniciado sesión todavía). Nunca se usa isActive para representar
   // este estado.
-  activatedAt   DateTime?
+  activatedAt      DateTime?
   // PREPRODUCCIÓN — MFA (Sección 1-3). Campo NATIVO del plugin
   // `twoFactor` de Better Auth (ver node_modules/better-auth/dist/
   // plugins/two-factor/schema.mjs) — no inventado aquí. true solo
@@ -106,19 +106,19 @@ model User {
   // antes). La obligatoriedad para ADMIN se aplica en la capa de
   // autorización (src/lib/authorization.ts), NUNCA leyendo este campo
   // como única fuente de verdad de sesión — ver getSessionUser.
-  twoFactorEnabled Boolean @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  twoFactorEnabled Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  twoFactor                         TwoFactor?
-  assignedPeople                   Person[]                @relation("PersonAssignedAgent")
-  reviewStatusUpdates               Person[]                @relation("PersonReviewStatusUpdatedBy")
-  processedPolicies                Policy[]                @relation("PolicyProcessedBy")
-  assignedTasks                    Task[]                  @relation("TaskAssignedTo")
-  createdTasks                     Task[]                  @relation("TaskCreatedBy")
-  createdNotes                     Note[]                  @relation("NoteCreatedBy")
+  twoFactor                        TwoFactor?
+  assignedPeople                   Person[]                        @relation("PersonAssignedAgent")
+  reviewStatusUpdates              Person[]                        @relation("PersonReviewStatusUpdatedBy")
+  processedPolicies                Policy[]                        @relation("PolicyProcessedBy")
+  assignedTasks                    Task[]                          @relation("TaskAssignedTo")
+  createdTasks                     Task[]                          @relation("TaskCreatedBy")
+  createdNotes                     Note[]                          @relation("NoteCreatedBy")
   commissionExpectations           CommissionExpectation[]
-  overriddenCommissionExpectations CommissionExpectation[] @relation("CommissionExpectationOverriddenBy")
+  overriddenCommissionExpectations CommissionExpectation[]         @relation("CommissionExpectationOverriddenBy")
   uploadedDocuments                PolicyDocument[]
   uploadedCommissionStatements     CommissionStatement[]
   commissionStatementApplyBatches  CommissionStatementApplyBatch[]
@@ -129,6 +129,13 @@ model User {
   licenses                         AgentLicense[]
   carrierContracts                 AgentCarrierContract[]
   portalCredentials                AgentPortalCredential[]
+  assignedLeads                    Lead[]                          @relation("LeadAssignedTo")
+  createdLeads                     Lead[]                          @relation("LeadCreatedBy")
+  createdLeadCredentials           LeadIntegrationCredential[]     @relation("LeadCredentialCreatedBy")
+  leadActivities                   LeadActivity[]                  @relation("LeadActivityAuthor")
+  leadAssignmentsAsPreviousAgent   LeadAssignmentHistory[]         @relation("LeadAssignmentHistoryPrevious")
+  leadAssignmentsAsNewAgent        LeadAssignmentHistory[]         @relation("LeadAssignmentHistoryNew")
+  leadAssignmentsPerformed         LeadAssignmentHistory[]         @relation("LeadAssignmentHistoryBy")
 
   @@map("users")
 }
@@ -251,7 +258,7 @@ model ClientPortalCredential {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
-  person Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+  person  Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
   carrier Carrier? @relation(fields: [carrierId], references: [id], onDelete: SetNull)
   policy  Policy?  @relation(fields: [policyId], references: [id], onDelete: SetNull)
 
@@ -281,12 +288,12 @@ model ClientPortalCredential {
 // last4 se guarda SIEMPRE por separado en texto plano, exclusivamente
 // para poder mostrar "Visa •••• 1234" sin descifrar nada.
 model PaymentMethod {
-  id       String            @id @default(uuid()) @db.Uuid
-  personId String            @db.Uuid
+  id       String  @id @default(uuid()) @db.Uuid
+  personId String  @db.Uuid
   // Relación OPCIONAL a una póliza específica — un método de pago puede
   // aplicar a una póliza en particular o quedar general para la
   // persona (nunca obliga a elegir una).
-  policyId String?           @db.Uuid
+  policyId String? @db.Uuid
 
   type      PaymentMethodType
   isDefault Boolean           @default(false)
@@ -336,9 +343,9 @@ model PaymentMethod {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  person        Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  person        Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
   policy        Policy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
-  consentByUser User?  @relation(fields: [consentByUserId], references: [id], onDelete: SetNull)
+  consentByUser User?   @relation(fields: [consentByUserId], references: [id], onDelete: SetNull)
 
   @@index([personId])
   @@map("payment_methods")
@@ -372,19 +379,19 @@ enum PaymentConsentUse {
 // Identidad central. Nunca se duplica al pasar de prospecto a cliente:
 // el cambio se refleja en contactStatus.
 model Person {
-  id              String        @id @default(uuid()) @db.Uuid
-  firstName       String
-  middleName      String?
-  lastName        String
-  secondLastName  String?
-  preferredName   String?
-  dateOfBirth     DateTime?     @db.Date
-  sex             PersonSex     @default(UNKNOWN)
-  email           String?
-  phone           String?
-  contactStatus   ContactStatus @default(PROSPECT)
-  source          String?
-  assignedAgentId String?       @db.Uuid
+  id                      String             @id @default(uuid()) @db.Uuid
+  firstName               String
+  middleName              String?
+  lastName                String
+  secondLastName          String?
+  preferredName           String?
+  dateOfBirth             DateTime?          @db.Date
+  sex                     PersonSex          @default(UNKNOWN)
+  email                   String?
+  phone                   String?
+  contactStatus           ContactStatus      @default(PROSPECT)
+  source                  String?
+  assignedAgentId         String?            @db.Uuid
   // Fase 025.5 (UAT-10): seguimiento administrativo de reseñas de
   // Google — pertenece a Person (no a Policy) porque el seguimiento es
   // único por CONTACTO, aunque tenga varias pólizas. PENDING_REQUEST
@@ -401,24 +408,25 @@ model Person {
   reviewRequestedAt       DateTime?
   reviewPublishedAt       DateTime?
   reviewStatusUpdatedById String?            @db.Uuid
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
 
-  assignedAgent        User?                       @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
-  reviewStatusUpdatedBy User?                      @relation("PersonReviewStatusUpdatedBy", fields: [reviewStatusUpdatedById], references: [id], onDelete: SetNull)
-  householdMembers     HouseholdMember[]
-  holderPolicies       Policy[]                    @relation("PolicyHolder")
-  policyMemberships    PolicyMember[]              @relation("PolicyMemberPerson")
-  tasks                Task[]
-  notes                Note[]
-  birthdayGreetings    BirthdayGreeting[]
-  providers            PersonProvider[]
-  medications          PersonMedication[]
-  auditEvents          AuditEvent[]
-  sensitiveIdentity    PersonSensitiveIdentity?
-  immigrationDocuments PersonImmigrationDocument[]
-  portalCredentials    ClientPortalCredential[]
-  paymentMethods       PaymentMethod[]
+  assignedAgent         User?                       @relation("PersonAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  reviewStatusUpdatedBy User?                       @relation("PersonReviewStatusUpdatedBy", fields: [reviewStatusUpdatedById], references: [id], onDelete: SetNull)
+  householdMembers      HouseholdMember[]
+  holderPolicies        Policy[]                    @relation("PolicyHolder")
+  policyMemberships     PolicyMember[]              @relation("PolicyMemberPerson")
+  tasks                 Task[]
+  notes                 Note[]
+  birthdayGreetings     BirthdayGreeting[]
+  providers             PersonProvider[]
+  medications           PersonMedication[]
+  auditEvents           AuditEvent[]
+  sensitiveIdentity     PersonSensitiveIdentity?
+  immigrationDocuments  PersonImmigrationDocument[]
+  portalCredentials     ClientPortalCredential[]
+  paymentMethods        PaymentMethod[]
+  leads                 Lead[]
 
   @@index([lastName])
   @@index([phone])
@@ -487,10 +495,10 @@ model Carrier {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  products                 Product[]
-  agentContracts           AgentCarrierContract[]
-  agentPortalCredentials   AgentPortalCredential[]
-  clientPortalCredentials  ClientPortalCredential[]
+  products                Product[]
+  agentContracts          AgentCarrierContract[]
+  agentPortalCredentials  AgentPortalCredential[]
+  clientPortalCredentials ClientPortalCredential[]
 
   @@map("carriers")
 }
@@ -655,27 +663,28 @@ model Policy {
   createdAt              DateTime              @default(now())
   updatedAt              DateTime              @updatedAt
 
-  holder                 Person                    @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
-  household              Household?                @relation(fields: [householdId], references: [id], onDelete: SetNull)
-  product                Product                   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  processedBy            User?                     @relation("PolicyProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
-  previousPolicy         Policy?                   @relation("PolicyRenewal", fields: [previousPolicyId], references: [id], onDelete: Restrict)
-  renewedInto            Policy?                   @relation("PolicyRenewal")
-  members                PolicyMember[]
-  healthDetail           HealthPolicyDetail?
-  tasks                  Task[]
-  notes                  Note[]
-  commissionExpectations CommissionExpectation[]
+  holder                  Person                    @relation("PolicyHolder", fields: [holderId], references: [id], onDelete: Restrict)
+  household               Household?                @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  product                 Product                   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  processedBy             User?                     @relation("PolicyProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  previousPolicy          Policy?                   @relation("PolicyRenewal", fields: [previousPolicyId], references: [id], onDelete: Restrict)
+  renewedInto             Policy?                   @relation("PolicyRenewal")
+  members                 PolicyMember[]
+  healthDetail            HealthPolicyDetail?
+  tasks                   Task[]
+  notes                   Note[]
+  commissionExpectations  CommissionExpectation[]
   // Fase 025.5.5 (UAT-16/17): link directo, independiente de si ya
   // existe una CommissionExpectation para el período del pago.
-  commissionPayments     CommissionPayment[]
-  documents              PolicyDocument[]
-  commissionRules        CommissionRule[]
-  auditEvents            AuditEvent[]
-  externalReferences     PolicyExternalReference[]
-  statementRows          CommissionStatementRow[]
+  commissionPayments      CommissionPayment[]
+  documents               PolicyDocument[]
+  commissionRules         CommissionRule[]
+  auditEvents             AuditEvent[]
+  externalReferences      PolicyExternalReference[]
+  statementRows           CommissionStatementRow[]
   clientPortalCredentials ClientPortalCredential[]
-  paymentMethods         PaymentMethod[]
+  paymentMethods          PaymentMethod[]
+  leadConversion          Lead?
 
   @@index([holderId])
   @@index([productId])
@@ -702,8 +711,8 @@ model PolicyMember {
   role      PolicyMemberRole
   createdAt DateTime         @default(now())
 
-  policy Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
-  person Person @relation("PolicyMemberPerson", fields: [personId], references: [id], onDelete: Restrict)
+  policy                 Policy                   @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  person                 Person                   @relation("PolicyMemberPerson", fields: [personId], references: [id], onDelete: Restrict)
   matchedByStatementRows CommissionStatementRow[]
 
   @@unique([policyId, personId])
@@ -891,6 +900,11 @@ model Task {
   completedAt  DateTime?
   personId     String?      @db.Uuid
   policyId     String?      @db.Uuid
+  // Fase 026: vínculo aditivo opcional con Lead — mismo patrón de FK
+  // explícita que personId/policyId (nunca entityType/entityId
+  // polimórfico). No reemplaza personId/policyId: una tarea de
+  // atención de un lead sin persona/póliza todavía usa solo leadId.
+  leadId       String?      @db.Uuid
   assignedToId String?      @db.Uuid
   createdById  String?      @db.Uuid
   createdAt    DateTime     @default(now())
@@ -898,12 +912,14 @@ model Task {
 
   person     Person? @relation(fields: [personId], references: [id], onDelete: Restrict)
   policy     Policy? @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  lead       Lead?   @relation(fields: [leadId], references: [id], onDelete: Restrict)
   assignedTo User?   @relation("TaskAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
   createdBy  User?   @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([assignedToId, status, dueAt])
   @@index([personId])
   @@index([policyId])
+  @@index([leadId])
   @@map("tasks")
 }
 
@@ -1287,13 +1303,13 @@ model Verification {
 // registro por usuario (relación 1:1 — Better Auth nunca crea más de
 // una fila por userId en este proyecto, que solo usa TOTP).
 model TwoFactor {
-  id                     String    @id @default(uuid()) @db.Uuid
-  secret                 String
-  backupCodes            String
-  userId                 String    @unique @db.Uuid
-  verified               Boolean   @default(true)
-  failedVerificationCount Int      @default(0)
-  lockedUntil            DateTime?
+  id                      String    @id @default(uuid()) @db.Uuid
+  secret                  String
+  backupCodes             String
+  userId                  String    @unique @db.Uuid
+  verified                Boolean   @default(true)
+  failedVerificationCount Int       @default(0)
+  lockedUntil             DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1450,20 +1466,20 @@ enum CommissionBusinessModality {
 }
 
 model CommissionStatement {
-  id              String                    @id @default(uuid()) @db.Uuid
-  source          String
-  fileName        String
-  fingerprint     String                    @unique
-  statementPeriod String?
-  uploadedById    String?                   @db.Uuid
-  uploadedAt      DateTime                  @default(now())
-  status          CommissionStatementStatus @default(PREVIEW)
-  totalRows       Int
-  matchedRows     Int                       @default(0)
-  unmatchedRows   Int                       @default(0)
-  ambiguousRows   Int                       @default(0)
-  appliedRows     Int                       @default(0)
-  receivedTotal   Decimal                   @db.Decimal(12, 2)
+  id                  String                      @id @default(uuid()) @db.Uuid
+  source              String
+  fileName            String
+  fingerprint         String                      @unique
+  statementPeriod     String?
+  uploadedById        String?                     @db.Uuid
+  uploadedAt          DateTime                    @default(now())
+  status              CommissionStatementStatus   @default(PREVIEW)
+  totalRows           Int
+  matchedRows         Int                         @default(0)
+  unmatchedRows       Int                         @default(0)
+  ambiguousRows       Int                         @default(0)
+  appliedRows         Int                         @default(0)
+  receivedTotal       Decimal                     @db.Decimal(12, 2)
   // Fase 025.5.5 (UAT-21): un statement puede recibir VARIAS
   // aplicaciones parciales — `appliedAt` queda como la fecha de la
   // aplicación MÁS RECIENTE (nunca se sobrescribe con null), y
@@ -1471,18 +1487,18 @@ model CommissionStatement {
   // al menos una fila. El detalle de cada aplicación individual (quién,
   // cuántas filas, montos) vive en `applyBatches`, nunca en estos dos
   // campos escalares.
-  appliedAt       DateTime?
-  firstAppliedAt  DateTime?
+  appliedAt           DateTime?
+  firstAppliedAt      DateTime?
   // Nullable: los adaptadores CSV/XLSX de Fase 020 no los establecen
   // (siguen sin agencia/modalidad explícitas, fuera del alcance de
   // esta fase) — solo los adaptadores PDF nuevos los fijan siempre.
-  payerAgency          CommissionPayerAgency?
-  businessModality     CommissionBusinessModality?
-  assistanceTotal      Decimal                     @default(0) @db.Decimal(12, 2)
-  netTotal             Decimal                     @default(0) @db.Decimal(12, 2)
-  declaredFooterTotal  Decimal?                    @db.Decimal(12, 2)
-  footerMatchesNet     Boolean?
-  adapterVersion       String                      @default("1")
+  payerAgency         CommissionPayerAgency?
+  businessModality    CommissionBusinessModality?
+  assistanceTotal     Decimal                     @default(0) @db.Decimal(12, 2)
+  netTotal            Decimal                     @default(0) @db.Decimal(12, 2)
+  declaredFooterTotal Decimal?                    @db.Decimal(12, 2)
+  footerMatchesNet    Boolean?
+  adapterVersion      String                      @default("1")
   // Fase 025.5.3: el carrier real se DETECTA del contenido del PDF,
   // nunca se selecciona en la UI (esa selección es solo agencia+
   // modalidad, ver payerAgency/businessModality arriba). Texto tal como
@@ -1492,8 +1508,8 @@ model CommissionStatement {
   // el carrier detectado no existe en el catálogo de carriers del CRM;
   // null para statements que no fijan agencia/modalidad (CSV/XLSX de
   // Fase 020, fuera de alcance de esta validación).
-  detectedCarrierName  String?
-  carrierRecognized    Boolean?
+  detectedCarrierName String?
+  carrierRecognized   Boolean?
   // Fase 025.5.5: true cuando `declaredFooterTotal` NO reconcilia con la
   // suma de netAmount de las filas efectivamente mostradas en el
   // preview (footerMatchesNet=false) — típico de un reporte
@@ -1502,9 +1518,9 @@ model CommissionStatement {
   // declarado no puede confiarse y el apply se bloquea hasta revisión
   // manual. Default false: los reportes históricos ya aplicados nunca
   // quedan bloqueados retroactivamente por este campo.
-  footerAmbiguous Boolean @default(false)
+  footerAmbiguous     Boolean                     @default(false)
 
-  uploadedBy   User?                          @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedBy   User?                           @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
   rows         CommissionStatementRow[]
   applyBatches CommissionStatementApplyBatch[]
 
@@ -1564,47 +1580,47 @@ enum CommissionStatementRowMatchStatus {
 // operativos seguros (state, carrier, saleType, rate, memberCount,
 // agentName) — nunca datos sensibles, nunca la fila cruda completa.
 model CommissionStatementRow {
-  id                   String                            @id @default(uuid()) @db.Uuid
-  statementId          String                            @db.Uuid
-  rowNumber            Int
-  externalId           String?
-  displayName          String?
+  id                    String                            @id @default(uuid()) @db.Uuid
+  statementId           String                            @db.Uuid
+  rowNumber             Int
+  externalId            String?
+  displayName           String?
   // receivedAmount = Subtotal (bruto) — SIEMPRE lo que entra a
   // CommissionPayment.amount al aplicar, nunca Total. assistanceAmount/
   // netAmount son informativos (reporte/preview), nunca generan un
   // CommissionPayment propio — Asistencia es un gasto separado, nunca
   // un chargeback ni una reducción de lo esperado (ver
   // docs/COMMISSION_RECONCILIATION.md).
-  receivedAmount       Decimal                           @db.Decimal(12, 2)
-  assistanceAmount     Decimal                           @default(0) @db.Decimal(12, 2)
-  netAmount            Decimal                           @default(0) @db.Decimal(12, 2)
-  effectiveDate        DateTime?                         @db.Date
-  paidAt               DateTime?                         @db.Date
-  matchStatus          CommissionStatementRowMatchStatus @default(UNMATCHED)
-  matchedPolicyId      String?                           @db.Uuid
-  matchedExpectationId String?                           @db.Uuid
+  receivedAmount        Decimal                           @db.Decimal(12, 2)
+  assistanceAmount      Decimal                           @default(0) @db.Decimal(12, 2)
+  netAmount             Decimal                           @default(0) @db.Decimal(12, 2)
+  effectiveDate         DateTime?                         @db.Date
+  paidAt                DateTime?                         @db.Date
+  matchStatus           CommissionStatementRowMatchStatus @default(UNMATCHED)
+  matchedPolicyId       String?                           @db.Uuid
+  matchedExpectationId  String?                           @db.Uuid
   // Fase 025.5.6 (UAT-22): solo se usa/exige para Orange Referidas —
   // esa modalidad paga por MIEMBRO cubierto, no por póliza agregada
   // (una póliza familiar puede tener 3 filas, una por miembro). Orange
   // Propias y Elite Referidas mantienen la vinculación agregada a
   // Policy y dejan esto null. Nunca se infiere solo por nombre — debe
   // pertenecer a `matchedPolicyId` (ver policy-candidates.ts).
-  matchedPolicyMemberId String?                          @db.Uuid
-  errorCode            String?
-  metadata             Json?
+  matchedPolicyMemberId String?                           @db.Uuid
+  errorCode             String?
+  metadata              Json?
   // Hash de (fuente + externalId/nombre normalizado + periodo + monto)
   // — nunca el fingerprint del ARCHIVO completo (eso ya existe en
   // CommissionStatement.fingerprint) — permite detectar que ESTA fila
   // puntual ya fue aplicada antes en otra importación, aunque el
   // archivo completo sea distinto (ej. un reporte corregido/reenviado
   // que repite algunas filas ya pagadas).
-  rowFingerprint       String?
+  rowFingerprint        String?
 
-  statement          CommissionStatement    @relation(fields: [statementId], references: [id], onDelete: Cascade)
-  matchedPolicy      Policy?                @relation(fields: [matchedPolicyId], references: [id], onDelete: SetNull)
-  matchedExpectation CommissionExpectation? @relation(fields: [matchedExpectationId], references: [id], onDelete: SetNull)
-  matchedPolicyMember PolicyMember?         @relation(fields: [matchedPolicyMemberId], references: [id], onDelete: SetNull)
-  payment            CommissionPayment?
+  statement           CommissionStatement    @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  matchedPolicy       Policy?                @relation(fields: [matchedPolicyId], references: [id], onDelete: SetNull)
+  matchedExpectation  CommissionExpectation? @relation(fields: [matchedExpectationId], references: [id], onDelete: SetNull)
+  matchedPolicyMember PolicyMember?          @relation(fields: [matchedPolicyMemberId], references: [id], onDelete: SetNull)
+  payment             CommissionPayment?
 
   @@index([statementId])
   @@index([matchedPolicyId])
@@ -1612,4 +1628,304 @@ model CommissionStatementRow {
   @@index([matchedPolicyMemberId])
   @@index([rowFingerprint])
   @@map("commission_statement_rows")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 026 — Fábrica de leads (V1)
+//
+// Lead es una entidad NUEVA e independiente de Person: una consulta
+// comercial cruda puede no corresponder a ningún contacto real todavía
+// (dato inválido, duplicado, nunca contestado). Person.contactStatus
+// sigue describiendo la relación GENERAL con la agencia (ver
+// docs/DECISIONS.md, "Opportunity futura"); Lead es exactamente esa
+// entidad reservada, acotada a la etapa de captación/seguimiento previa
+// a crear una póliza. linkedPersonId vincula sin fusionar ni duplicar
+// datos personales — nunca sobrescribe los de Person.
+//
+// Task/Note ya establecieron el patrón: FKs explícitas opcionales, no
+// entityType/entityId polimórfico. Lead sigue el mismo patrón para su
+// vínculo con Task (Task.leadId, aditivo).
+// ---------------------------------------------------------------------------
+
+enum LeadSource {
+  GOOGLE
+  META
+  WEB
+  MANUAL
+  OTHER
+}
+
+enum LeadStage {
+  LEAD
+  PROSPECT
+  CLIENT
+}
+
+enum LeadFollowUpStatus {
+  NEW
+  IN_FOLLOW_UP
+  CONTACTED
+  QUOTE_SENT
+  AWAITING_DECISION
+  CONVERTED
+  CLOSED
+}
+
+enum LeadCloseReason {
+  NOT_INTERESTED
+  NO_RESPONSE
+  INVALID_DATA
+  NOT_ELIGIBLE
+  DOES_NOT_WANT_CONTACT
+  OTHER
+}
+
+enum LeadActivityType {
+  CALL
+  WHATSAPP
+  EMAIL
+  NOTE
+}
+
+enum LeadAssignmentMechanism {
+  MANUAL
+}
+
+// Credencial de una integración externa (Google Ads, Meta, un
+// formulario web, etc.) autenticada por API. El origen (`source`) de
+// cada Lead recibido por esta vía se determina por ESTA credencial,
+// nunca por el campo `source` que el remitente externo pudiera incluir
+// en el payload — un remitente nunca puede declararse "GOOGLE" si su
+// credencial es de otra integración. `credentialKey` es un
+// identificador público (no secreto) que permite localizar la
+// credencial sin recorrer todos los hashes; `hashedSecret` nunca se
+// expone ni se registra en logs.
+model LeadIntegrationCredential {
+  id                 String     @id @default(uuid()) @db.Uuid
+  label              String
+  source             LeadSource
+  credentialKey      String     @unique
+  hashedSecret       String
+  isActive           Boolean    @default(true)
+  // Secretos PROPIOS del conector (Fase 026 — Preparación para
+  // producción), nunca el `hashedSecret` de arriba (ese autentica
+  // `/api/leads/intake` genérico; esto es lo que cada plataforma
+  // exige para SU mecanismo — google_key de Google, app secret/page
+  // token/verify token de Meta). Un solo blob cifrado (AES-256-GCM,
+  // subclave propia derivada de PII_ENCRYPTION_KEY — ver
+  // lead-connector-crypto.ts, mismo patrón que financial-crypto.ts)
+  // en vez de columnas sueltas: cada proveedor tiene su propia forma,
+  // y ninguno de estos valores se expone ni se registra en logs.
+  // Null para la fuente WEB (no necesita secretos adicionales).
+  connectorSecrets   String?
+  // Mapeo de preguntas PERSONALIZADAS del formulario (Google
+  // column_id / Meta field_data[].name) hacia residenceState /
+  // productInterest — configurable por ADMIN SIN desplegar código
+  // cada vez que cambia un formulario (ver § "Mapeo de preguntas
+  // personalizadas", docs/DECISIONS.md). NUNCA cifrado (un nombre de
+  // campo no es un secreto) y NUNCA mezclado con connectorSecrets.
+  // Null = sin mapeo configurado todavía; esos campos quedan en
+  // formResponses sin intentar extraerlos (nunca se inventa un valor).
+  customFieldMapping Json?
+  createdById        String?    @db.Uuid
+  createdAt          DateTime   @default(now())
+  revokedAt          DateTime?
+
+  createdBy     User?                     @relation("LeadCredentialCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  leads         Lead[]
+  webhookEvents LeadInboundWebhookEvent[]
+
+  @@map("lead_integration_credentials")
+}
+
+// Estado de un evento de webhook entrante (Google/Meta) — la
+// DURABILIDAD de la recepción asíncrona vive aquí: la fila se escribe
+// (commit confirmado) ANTES de responder éxito a la plataforma, y
+// ANTES de encolar el trabajo en pg-boss. Separa dos idempotencias
+// distintas (Fase 026, Preparación para producción, §6):
+//   - Idempotencia del EVENTO de la plataforma: @@unique([source,
+//     integrationCredentialId, externalEventId]) — un reenvío del
+//     MISMO evento (ej. Meta reintentando tras no recibir 200 a
+//     tiempo) nunca crea una segunda fila ni se vuelve a procesar si
+//     ya se procesó.
+//   - Idempotencia de CREACIÓN del lead: delegada por completo a
+//     intakeLead()/Lead.originalPayloadSnapshot, ya implementada — el
+//     worker llama exactamente a esa misma función, nunca duplica su
+//     lógica. Esto es lo que hace segura la recuperación "cayó
+//     después de crear el Lead pero antes de marcar PROCESSED": un
+//     reintento del mismo evento vuelve a llamar intakeLead con el
+//     mismo externalId, que reconoce el Lead ya creado y lo devuelve
+//     sin duplicar — el worker simplemente termina de marcar PROCESSED.
+enum LeadWebhookEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  DEAD_LETTER
+}
+
+model LeadInboundWebhookEvent {
+  id                      String                 @id @default(uuid()) @db.Uuid
+  source                  LeadSource
+  integrationCredentialId String                 @db.Uuid
+  // Identificador ESTABLE del evento/lead según la plataforma (Google:
+  // lead_id: Meta: leadgen_id) — nunca un timestamp ni un valor
+  // generado por nosotros en cada intento (produciría conflictos
+  // falsos en cada reintento, ver §6).
+  externalEventId         String
+  // Copia íntegra y DURADERA de lo recibido (tras verificar
+  // autenticidad) — nunca se reconstruye después; es la única fuente
+  // de verdad de "qué llegó realmente" para reprocesar sin depender
+  // de que la plataforma reenvíe.
+  rawPayload              Json
+  status                  LeadWebhookEventStatus @default(PENDING)
+  attempts                Int                    @default(0)
+  lastError               String?
+  receivedAt              DateTime               @default(now())
+  processedAt             DateTime?
+  createdLeadId           String?                @db.Uuid
+
+  integrationCredential LeadIntegrationCredential @relation(fields: [integrationCredentialId], references: [id], onDelete: Restrict)
+
+  @@unique([source, integrationCredentialId, externalEventId])
+  @@index([status, receivedAt])
+  @@map("lead_inbound_webhook_events")
+}
+
+// Rate limiting compartido entre instancias — Postgres, NUNCA la
+// misma tabla que los trabajos del worker (operación completamente
+// distinta: un contador por ventana de tiempo, no un estado de
+// procesamiento). Incremento atómico vía UPSERT ... ON CONFLICT DO
+// UPDATE (ver lead-rate-limit.ts). Limpieza: ventanas vencidas se
+// eliminan periódicamente desde un cron de pg-boss (ver
+// scripts/lead-webhook-worker.ts) — nunca crece sin límite.
+model LeadRateLimitWindow {
+  id          String   @id @default(uuid()) @db.Uuid
+  bucketKey   String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@unique([bucketKey, windowStart])
+  @@index([windowStart])
+  @@map("lead_rate_limit_windows")
+}
+
+// Consulta comercial recibida de una fuente externa o creada
+// manualmente por un ADMIN. `stage` (comercial) y `followUpStatus`
+// (operativo) se mantienen deliberadamente separados — ver
+// docs/DECISIONS.md. `consentGiven` es nullable de tres estados: true
+// (autorización afirmativa), false (negativa explícita), null (la
+// fuente no informó nada) — nunca se infiere.
+//
+// Idempotencia: (integrationCredentialId, externalId) identifica un
+// reenvío de la MISMA solicitud por la MISMA integración — dos
+// integraciones distintas pueden coincidir en un externalId ajeno sin
+// colisionar. Toda solicitud externa debe enviar externalId o
+// idempotencyKey (regla de aplicación, ver leads.schema.ts); Postgres
+// no aplica UNIQUE sobre filas con valor NULL en esas columnas, así
+// que ambos índices conviven sin bloquear leads sin esos campos.
+model Lead {
+  id                      String             @id @default(uuid()) @db.Uuid
+  fullName                String
+  phone                   String
+  phoneNormalized         String
+  email                   String?
+  residenceState          String?
+  productInterest         PolicyType?
+  source                  LeadSource
+  integrationCredentialId String?            @db.Uuid
+  externalId              String?
+  idempotencyKey          String?
+  campaignId              String?
+  campaignName            String?
+  originalInquiryAt       DateTime?
+  receivedAt              DateTime           @default(now())
+  consentGiven            Boolean?
+  consentText             String?
+  consentDate             DateTime?
+  consentSource           String?
+  formResponses           Json?
+  // Instantánea INMUTABLE de los campos comparables del payload
+  // original de recepción (nombre, teléfono normalizado, correo,
+  // etc.) — nunca se reescribe después de crear el lead, ni siquiera
+  // por "Editar datos". Es la referencia real contra la que se
+  // compara un reenvío con la misma externalId/idempotencyKey; los
+  // campos editables del propio Lead (que SÍ cambian con el tiempo)
+  // nunca sirven para esa comparación. Null en leads creados
+  // manualmente (sin claves de idempotencia que comparar) o en
+  // leads anteriores a este campo — ver leads.service.ts e
+  // docs/DECISIONS.md.
+  originalPayloadSnapshot Json?
+  stage                   LeadStage          @default(LEAD)
+  followUpStatus          LeadFollowUpStatus @default(NEW)
+  closeReason             LeadCloseReason?
+  closeReasonDetail       String?
+  assignedToId            String?            @db.Uuid
+  linkedPersonId          String?            @db.Uuid
+  convertedPolicyId       String?            @unique @db.Uuid
+  createdById             String?            @db.Uuid
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  integrationCredential LeadIntegrationCredential? @relation(fields: [integrationCredentialId], references: [id], onDelete: SetNull)
+  assignedTo            User?                      @relation("LeadAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy             User?                      @relation("LeadCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  linkedPerson          Person?                    @relation(fields: [linkedPersonId], references: [id], onDelete: SetNull)
+  convertedPolicy       Policy?                    @relation(fields: [convertedPolicyId], references: [id], onDelete: SetNull)
+  activities            LeadActivity[]
+  assignmentHistory     LeadAssignmentHistory[]
+  tasks                 Task[]
+
+  @@unique([integrationCredentialId, externalId])
+  @@unique([integrationCredentialId, idempotencyKey])
+  @@index([phoneNormalized])
+  @@index([assignedToId])
+  @@index([stage, followUpStatus])
+  @@index([receivedAt])
+  @@index([linkedPersonId])
+  @@map("leads")
+}
+
+// Actividad manual registrada sobre un Lead (llamada, WhatsApp, correo,
+// nota). Registrar una actividad NUNCA envía mensajes ni realiza
+// llamadas reales — es solo el registro operativo de que ocurrió.
+model LeadActivity {
+  id           String           @id @default(uuid()) @db.Uuid
+  leadId       String           @db.Uuid
+  type         LeadActivityType
+  occurredAt   DateTime         @default(now())
+  authorUserId String           @db.Uuid
+  outcome      String?
+  note         String?
+  nextActionAt DateTime?
+  createdAt    DateTime         @default(now())
+
+  lead   Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  author User @relation("LeadActivityAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([leadId, occurredAt])
+  @@map("lead_activities")
+}
+
+// Historial de asignación/reasignación de un Lead. `mechanism` queda
+// como enum (hoy solo MANUAL) para admitir otro mecanismo en el futuro
+// (Fase futura) sin romper los registros existentes — no se crean
+// aquí estructuras de paquetes/round-robin todavía.
+model LeadAssignmentHistory {
+  id              String                  @id @default(uuid()) @db.Uuid
+  leadId          String                  @db.Uuid
+  previousAgentId String?                 @db.Uuid
+  newAgentId      String?                 @db.Uuid
+  mechanism       LeadAssignmentMechanism @default(MANUAL)
+  assignedById    String                  @db.Uuid
+  assignedAt      DateTime                @default(now())
+  reason          String?
+
+  lead          Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  previousAgent User? @relation("LeadAssignmentHistoryPrevious", fields: [previousAgentId], references: [id], onDelete: SetNull)
+  newAgent      User? @relation("LeadAssignmentHistoryNew", fields: [newAgentId], references: [id], onDelete: SetNull)
+  assignedBy    User  @relation("LeadAssignmentHistoryBy", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  @@index([leadId, assignedAt])
+  @@map("lead_assignment_history")
 }

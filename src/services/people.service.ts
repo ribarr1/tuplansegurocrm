@@ -8,6 +8,7 @@ import {
   listPeopleQuerySchema,
   personIdSchema,
   UNASSIGNED_AGENT_FILTER,
+  type CreatePersonInput,
 } from "@/schemas/person.schema";
 import type { Prisma, ContactStatus } from "@/generated/prisma/client";
 import { recordAuditEvent, buildDiff } from "@/services/audit.service";
@@ -233,7 +234,46 @@ export async function getPersonById(actor: AuthorizedUser, rawId: unknown) {
   return person;
 }
 
-export async function createPerson(actor: AuthorizedUser, rawInput: unknown) {
+async function createPersonInTx(
+  tx: Prisma.TransactionClient,
+  actor: AuthorizedUser,
+  input: CreatePersonInput,
+  assignedAgentId: string | null
+) {
+  const person = await tx.person.create({
+    // Hallazgo #2 de UAT (Fase 022): TODO contacto nuevo nace como
+    // PROSPECT, sin excepción — nunca se crea directamente como
+    // Cliente desde este flujo (el import legacy es un camino
+    // completamente separado, src/import/apply.ts, que sí puede
+    // fijar CLIENT por razones históricas). Volverse Cliente es
+    // siempre una consecuencia automática de tener cobertura activa
+    // (recomputePersonContactStatus), nunca una elección al crear.
+    data: { ...input, contactStatus: "PROSPECT", assignedAgentId },
+    select: detailSelect,
+  });
+  await recordAuditEvent(tx, {
+    actor,
+    entityType: "Person",
+    entityId: person.id,
+    action: "CONTACT_CREATE",
+    contactPersonId: person.id,
+    summary: `Contacto creado: ${person.firstName} ${person.lastName}`,
+  });
+  return person;
+}
+
+// `tx` opcional (Fase 026, Fábrica de leads): permite a un llamador
+// (convertLead) participar en SU PROPIA transacción externa en vez de
+// abrir una nueva — necesario para que "crear la Person" y "crear la
+// Policy" sean una única operación atómica real (si la Policy falla
+// después, la Person creada aquí se revierte también, sin necesidad de
+// un borrado compensatorio). Cuando se omite (todo llamador existente),
+// el comportamiento es IDÉNTICO al de antes: abre su propia transacción.
+export async function createPerson(
+  actor: AuthorizedUser,
+  rawInput: unknown,
+  tx?: Prisma.TransactionClient
+) {
   assertCanCreate(actor);
   const input = parseOrThrow(createPersonSchema, rawInput);
 
@@ -242,28 +282,8 @@ export async function createPerson(actor: AuthorizedUser, rawInput: unknown) {
     input.assignedAgentId
   );
 
-  return prisma.$transaction(async (tx) => {
-    const person = await tx.person.create({
-      // Hallazgo #2 de UAT (Fase 022): TODO contacto nuevo nace como
-      // PROSPECT, sin excepción — nunca se crea directamente como
-      // Cliente desde este flujo (el import legacy es un camino
-      // completamente separado, src/import/apply.ts, que sí puede
-      // fijar CLIENT por razones históricas). Volverse Cliente es
-      // siempre una consecuencia automática de tener cobertura activa
-      // (recomputePersonContactStatus), nunca una elección al crear.
-      data: { ...input, contactStatus: "PROSPECT", assignedAgentId },
-      select: detailSelect,
-    });
-    await recordAuditEvent(tx, {
-      actor,
-      entityType: "Person",
-      entityId: person.id,
-      action: "CONTACT_CREATE",
-      contactPersonId: person.id,
-      summary: `Contacto creado: ${person.firstName} ${person.lastName}`,
-    });
-    return person;
-  });
+  if (tx) return createPersonInTx(tx, actor, input, assignedAgentId);
+  return prisma.$transaction((innerTx) => createPersonInTx(innerTx, actor, input, assignedAgentId));
 }
 
 export async function updatePerson(

@@ -1,0 +1,402 @@
+{
+  "info": {
+    "name": "Fábrica de Leads — Recepción (Fase 026)",
+    "description": "Casos mínimos de prueba local para POST /api/leads/intake. Reemplaza {{webAuthorization}}/{{googleAuthorization}} con el valor real generado en /settings/lead-credentials (nunca el de este archivo, que no contiene secretos reales). Las operaciones internas (asignar, convertir, cerrar, actividades, contadores) usan sesión de usuario autenticada por cookie (Better Auth) y Server Actions de Next.js, no esta API — se prueban desde la aplicación y con las pruebas automatizadas de src/services/leads.service.test.ts, no con Postman.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Lead nuevo — WEB",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"María Pérez\",\n  \"phone\": \"3051234567\",\n  \"email\": \"maria@example.com\",\n  \"residenceState\": \"FL\",\n  \"productInterest\": \"HEALTH\",\n  \"externalId\": \"web-form-0001\",\n  \"campaignId\": \"spring-2026\",\n  \"campaignName\": \"Campaña de primavera\",\n  \"originalInquiryAt\": \"2026-09-30T14:00:00.000Z\",\n  \"consentGiven\": true,\n  \"consentText\": \"Acepto ser contactado por TuPlanSeguro USA.\",\n  \"consentSource\": \"checkbox del formulario\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+              "pm.test(\"stage = LEAD, followUpStatus = NEW\", () => {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.stage).to.eql('LEAD');",
+              "  pm.expect(body.followUpStatus).to.eql('NEW');",
+              "  pm.expect(body.duplicate).to.eql(false);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Lead nuevo — GOOGLE (otra credencial)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{googleAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Pedro Gómez\",\n  \"phone\": \"3059876543\",\n  \"idempotencyKey\": \"google-click-aaa111\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+              "pm.test(\"source viene de la credencial, no del payload\", () => {",
+              "  // El payload no envía `source` — nunca existe ese campo en el schema.",
+              "  pm.response.to.not.be.error;",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Campos opcionales ausentes (solo nombre + teléfono)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Ana Torres\",\n  \"phone\": \"3051112222\",\n  \"idempotencyKey\": \"minimal-0001\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"201 Created\", () => pm.response.to.have.status(201));"] }
+        }
+      ]
+    },
+    {
+      "name": "4a. Teléfono inválido",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Teléfono Inválido\",\n  \"phone\": \"abc\",\n  \"idempotencyKey\": \"invalid-phone-0001\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"400 Validation error\", () => pm.response.to.have.status(400));"] }
+        }
+      ]
+    },
+    {
+      "name": "4b. Nombre ausente",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"phone\": \"3051112222\",\n  \"idempotencyKey\": \"no-name-0001\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"400 Validation error\", () => pm.response.to.have.status(400));"] }
+        }
+      ]
+    },
+    {
+      "name": "5a. Credencial ausente",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Sin Credencial\",\n  \"phone\": \"3051112222\",\n  \"idempotencyKey\": \"no-cred-0001\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"401 Unauthorized\", () => pm.response.to.have.status(401));"] }
+        }
+      ]
+    },
+    {
+      "name": "5b. Credencial inválida",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer leadcred_000000000000.invalidsecret" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Credencial Inválida\",\n  \"phone\": \"3051112222\",\n  \"idempotencyKey\": \"bad-cred-0001\"\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"401 Unauthorized\", () => pm.response.to.have.status(401));"] }
+        }
+      ]
+    },
+    {
+      "name": "6. Reenvío del mismo externalId, MISMOS datos (no duplica)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"María Pérez\",\n  \"phone\": \"3051234567\",\n  \"email\": \"maria@example.com\",\n  \"residenceState\": \"FL\",\n  \"productInterest\": \"HEALTH\",\n  \"externalId\": \"web-form-0001\",\n  \"campaignId\": \"spring-2026\",\n  \"campaignName\": \"Campaña de primavera\",\n  \"originalInquiryAt\": \"2026-09-30T14:00:00.000Z\",\n  \"consentGiven\": true,\n  \"consentText\": \"Acepto ser contactado por TuPlanSeguro USA.\",\n  \"consentSource\": \"checkbox del formulario\"\n}"
+        },
+        "description": "Cuerpo IDÉNTICO al de la petición 1 — un reenvío real (ej. el navegador reintentando tras un timeout) nunca debe tratarse como un dato distinto."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"200 OK (reenvío, no 201)\", () => pm.response.to.have.status(200));",
+              "pm.test(\"duplicate = true\", () => pm.expect(pm.response.json().duplicate).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6b. Reutilizar el mismo externalId con OTROS datos (409)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Otra Persona Totalmente Distinta\",\n  \"phone\": \"3059990000\",\n  \"externalId\": \"web-form-0001\"\n}"
+        },
+        "description": "Mismo externalId que la petición 1, pero nombre/teléfono distintos — nunca debe devolver silenciosamente el lead original como si fuera el mismo reenvío."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"409 Conflict\", () => pm.response.to.have.status(409));",
+              "pm.test(\"mensaje claro de clave reutilizada\", () => {",
+              "  pm.expect(pm.response.json().error).to.include('ya fue utilizado con otros datos');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Reenvíos simultáneos (ver nota)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Concurrencia\",\n  \"phone\": \"3054445555\",\n  \"externalId\": \"concurrent-0001\"\n}"
+        },
+        "description": "Postman no dispara solicitudes simultáneas de forma nativa. Esta llamada por sí sola solo prueba el caso normal; el caso de CONCURRENCIA real (dos inserciones a la vez con el mismo externalId) está cubierto por una prueba automatizada: src/services/leads.service.test.ts, caso 'G'."
+      },
+      "response": []
+    },
+    {
+      "name": "8. Nueva consulta con teléfono de persona existente",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Consulta de contacto existente\",\n  \"phone\": \"REPLACE_WITH_AN_EXISTING_PERSON_PHONE\",\n  \"idempotencyKey\": \"existing-phone-0001\"\n}"
+        },
+        "description": "Reemplaza el teléfono por el de una Person real ya cargada en tu base local (Contactos). La respuesta debe traer personMatch.matched = true, y debe crearse una tarea de atención SIN asignar en /tasks (o visible en el detalle del lead)."
+      },
+      "response": []
+    },
+    {
+      "name": "9. Teléfono compartido por varias personas (ambiguo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "{{webAuthorization}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"Consulta ambigua\",\n  \"phone\": \"REPLACE_WITH_A_PHONE_SHARED_BY_TWO_PEOPLE\",\n  \"idempotencyKey\": \"ambiguous-phone-0001\"\n}"
+        },
+        "description": "La respuesta debe traer personMatch.matched = false y personMatch.ambiguous = true — revisa el detalle del lead en /leads/{id} para ver ambos contactos candidatos."
+      },
+      "response": []
+    },
+    {
+      "name": "10. Google — Simulación de webhook",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/leads/intake/google",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"lead_id\": \"google-lead-sim-0001\",\n  \"google_key\": \"{{googleVerificationKey}}\",\n  \"campaign_id\": \"camp-sim-1\",\n  \"lead_submit_time\": \"2026-10-01T12:00:00Z\",\n  \"user_column_data\": [\n    { \"column_id\": \"FULL_NAME\", \"string_value\": \"Simulación Google\" },\n    { \"column_id\": \"PHONE_NUMBER\", \"string_value\": \"3051230000\" },\n    { \"column_id\": \"EMAIL\", \"string_value\": \"simulacion@example.com\" }\n  ]\n}"
+        },
+        "description": "Configura primero una credencial GOOGLE en /settings/lead-credentials con una verificationKey de prueba, y pega ese mismo valor en la variable de entorno googleVerificationKey. Respuesta esperada: 200 {}. El lead aparece en /leads tras unos segundos (lo recoge npm run worker:leads)."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"200 OK\", () => pm.response.to.have.status(200));"] }
+        }
+      ]
+    },
+    {
+      "name": "11. Google — google_key inválida (401)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/leads/intake/google",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"lead_id\": \"google-lead-sim-0002\",\n  \"google_key\": \"clave-incorrecta\",\n  \"user_column_data\": [\n    { \"column_id\": \"FULL_NAME\", \"string_value\": \"No debería crearse\" },\n    { \"column_id\": \"PHONE_NUMBER\", \"string_value\": \"3051230001\" }\n  ]\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"401 Unauthorized\", () => pm.response.to.have.status(401));"] }
+        }
+      ]
+    },
+    {
+      "name": "12. Meta — Verificación de webhook (GET)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/leads/intake/meta?hub.mode=subscribe&hub.verify_token={{metaVerifyToken}}&hub.challenge=1234567890"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Responde el challenge exacto\", () => pm.expect(pm.response.text()).to.eql('1234567890'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13. Meta — Simulación de evento leadgen (POST, firma calculada automáticamente)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Hub-Signature-256", "value": "{{metaComputedSignature}}" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake/meta",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"object\": \"page\",\n  \"entry\": [\n    {\n      \"id\": \"{{metaPageId}}\",\n      \"changes\": [\n        {\n          \"field\": \"leadgen\",\n          \"value\": {\n            \"leadgen_id\": \"meta-lead-sim-0001\",\n            \"page_id\": \"{{metaPageId}}\",\n            \"form_id\": \"form-sim-1\",\n            \"created_time\": 1759334400\n          }\n        }\n      ]\n    }\n  ]\n}"
+        },
+        "description": "Requiere un pre-request script (ver pestaña Pre-request Script de esta petición en Postman) que calcule X-Hub-Signature-256 = 'sha256=' + HMAC-SHA256(cuerpo, metaAppSecret) y lo guarde en la variable metaComputedSignature — Postman no puede firmar el cuerpo de forma nativa sin un script. Sin un Page Access Token real configurado, el worker fallará al recuperar field_data de la Graph API: eso es ESPERADO en esta simulación — confirma que el evento queda registrado (200 en esta respuesta) y luego FAILED/DEAD_LETTER en /settings/lead-credentials, nunca que se cree un lead con datos inventados."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const CryptoJS = require('crypto-js');",
+              "const body = pm.request.body.raw;",
+              "const secret = pm.environment.get('metaAppSecret');",
+              "const hash = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.environment.set('metaComputedSignature', 'sha256=' + hash);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"200 OK\", () => pm.response.to.have.status(200));"] }
+        }
+      ]
+    },
+    {
+      "name": "14. Meta — firma inválida (403)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Hub-Signature-256", "value": "sha256=0000000000000000000000000000000000000000000000000000000000000000" }
+        ],
+        "url": "{{baseUrl}}/api/leads/intake/meta",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"object\": \"page\",\n  \"entry\": [{ \"id\": \"{{metaPageId}}\", \"changes\": [{ \"field\": \"leadgen\", \"value\": { \"leadgen_id\": \"meta-lead-sim-0002\" } }] }]\n}"
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test(\"403 Forbidden\", () => pm.response.to.have.status(403));"] }
+        }
+      ]
+    }
+  ]
+}

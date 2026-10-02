@@ -31,6 +31,11 @@ import type {
   CardBrand,
   BankAccountType,
   PaymentConsentUse,
+  LeadSource,
+  LeadStage,
+  LeadFollowUpStatus,
+  LeadCloseReason,
+  LeadActivityType,
 } from "@/generated/prisma/client";
 
 // Duplicado deliberadamente de COMMISSION_DERIVED_STATUS_VALUES
@@ -383,4 +388,57 @@ export const IMMIGRATION_DOCUMENT_TYPE_LABELS: Record<ImmigrationDocumentType, s
   PERMANENT_RESIDENT_CARD: "Tarjeta de residente permanente",
   EMPLOYMENT_AUTHORIZATION_DOCUMENT: "Permiso de trabajo / EAD",
   OTHER: "Otro documento",
+};
+
+export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
+  GOOGLE: "Google",
+  META: "Meta",
+  WEB: "Formulario web",
+  MANUAL: "Manual",
+  OTHER: "Otro",
+};
+
+export const LEAD_STAGE_LABELS: Record<LeadStage, string> = {
+  LEAD: "Lead",
+  PROSPECT: "Prospecto",
+  CLIENT: "Cliente",
+};
+
+export const LEAD_FOLLOW_UP_STATUS_LABELS: Record<LeadFollowUpStatus, string> = {
+  NEW: "Nuevo",
+  IN_FOLLOW_UP: "En seguimiento",
+  CONTACTED: "Contactado",
+  QUOTE_SENT: "Cotización enviada",
+  AWAITING_DECISION: "Pendiente de decisión",
+  CONVERTED: "Convertido",
+  CLOSED: "Cerrado",
+};
+
+export const LEAD_FOLLOW_UP_STATUS_BADGE_VARIANT: Record<
+  LeadFollowUpStatus,
+  "default" | "secondary" | "outline" | "destructive"
+> = {
+  NEW: "secondary",
+  IN_FOLLOW_UP: "default",
+  CONTACTED: "default",
+  QUOTE_SENT: "default",
+  AWAITING_DECISION: "secondary",
+  CONVERTED: "outline",
+  CLOSED: "destructive",
+};
+
+export const LEAD_CLOSE_REASON_LABELS: Record<LeadCloseReason, string> = {
+  NOT_INTERESTED: "Sin interés",
+  NO_RESPONSE: "No responde",
+  INVALID_DATA: "Datos inválidos",
+  NOT_ELIGIBLE: "No elegible",
+  DOES_NOT_WANT_CONTACT: "No desea más contacto",
+  OTHER: "Otro",
+};
+
+export const LEAD_ACTIVITY_TYPE_LABELS: Record<LeadActivityType, string> = {
+  CALL: "Llamada",
+  WHATSAPP: "WhatsApp",
+  EMAIL: "Correo",
+  NOTE: "Nota",
 };

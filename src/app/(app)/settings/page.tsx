@@ -55,6 +55,19 @@ export default async function SettingsPage() {
             </CardContent>
           </Card>
         </Link>
+
+        {actor.role === "ADMIN" && (
+          <Link href="/settings/lead-credentials">
+            <Card className="transition-colors hover:bg-muted/40">
+              <CardHeader>
+                <CardTitle>Credenciales de leads</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                Administra las credenciales de integración para recibir leads por API.
+              </CardContent>
+            </Card>
+          </Link>
+        )}
       </div>
     </div>
   );
