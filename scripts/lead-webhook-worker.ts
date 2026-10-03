@@ -18,7 +18,7 @@ import {
 } from "../src/services/lead-webhook-events.service";
 import { cleanupExpiredRateLimitWindows } from "../src/lib/lead-rate-limit";
 import { decryptConnectorSecretsObject } from "../src/lib/lead-connector-crypto";
-import { mapGoogleLeadToIntakePayload, mapMetaFieldDataToIntakePayload } from "../src/lib/lead-source-mapping";
+import { mapGoogleLeadToIntakePayload, mapMetaFieldDataToIntakePayload, toExternalId } from "../src/lib/lead-source-mapping";
 import { intakeLead } from "../src/services/leads.service";
 import { logLeadWorkerEvent } from "../src/lib/lead-observability";
 import type { Job } from "pg-boss";
@@ -96,8 +96,11 @@ export async function processWebhookEvent(eventId: string): Promise<void> {
       if (secrets?.provider !== "META") {
         throw new Error("Credencial Meta sin configuración de conector válida.");
       }
-      const rawPayload = event.rawPayload as { leadgen_id?: string; page_id?: string; form_id?: string; created_time?: number };
-      const leadgenId = rawPayload.leadgen_id ?? event.externalEventId;
+      // Meta envía leadgen_id como NÚMERO en el webhook (docs oficiales)
+      // — se normaliza a string; el externalEventId guardado por la
+      // ruta es la misma cadena y sirve de respaldo.
+      const rawPayload = event.rawPayload as { leadgen_id?: string | number };
+      const leadgenId = toExternalId(rawPayload.leadgen_id, "leadgen_id") ?? event.externalEventId;
       // Recuperación de datos cuando el evento solo trae identificadores
       // (§5B) — llamada autenticada a la Graph API. Versión de API: ver
       // docs/LEAD_SOURCES_OFFICIAL_REFERENCES.md (confirmar vigente
@@ -105,7 +108,7 @@ export async function processWebhookEvent(eventId: string): Promise<void> {
       // tiempo).
       const graphVersion = process.env.META_GRAPH_API_VERSION || "v21.0";
       const response = await fetch(
-        `https://graph.facebook.com/${graphVersion}/${leadgenId}?fields=created_time,id,ad_id,form_id,field_data&access_token=${encodeURIComponent(secrets.pageAccessToken)}`
+        `https://graph.facebook.com/${graphVersion}/${encodeURIComponent(leadgenId)}?fields=created_time,id,ad_id,form_id,field_data&access_token=${encodeURIComponent(secrets.pageAccessToken)}`
       );
       if (!response.ok) {
         throw new Error(`Graph API respondió ${response.status} al recuperar el lead.`);

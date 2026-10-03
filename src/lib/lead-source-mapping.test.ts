@@ -62,7 +62,8 @@ describe("lead-source-mapping — Google", () => {
       { residenceStateFieldKey: "custom_state_99", productInterestFieldKey: "custom_product_11" }
     );
     expect(mapped.residenceState).toBe("FL");
-    expect(mapped.productInterest).toBe("Dental");
+    // Se normaliza a mayúsculas para coincidir con el catálogo (DENTAL).
+    expect(mapped.productInterest).toBe("DENTAL");
     // Los campos mapeados nunca quedan además duplicados en formResponses.
     expect(mapped.formResponses).toBeUndefined();
   });
@@ -135,12 +136,12 @@ describe("lead-source-mapping — Meta", () => {
     const mapped = mapMetaFieldDataToIntakePayload(
       [
         { name: "full_name", values: ["Lucía Fernández"] },
-        { name: "interes_producto", values: ["Vida"] },
+        { name: "interes_producto", values: ["life"] },
       ],
       { leadgenId: "leadgen-4" },
       { productInterestFieldKey: "interes_producto" }
     );
-    expect(mapped.productInterest).toBe("Vida");
+    expect(mapped.productInterest).toBe("LIFE");
     // Consumido por el mapeo personalizado: ya no aparece duplicado en formResponses.
     expect(mapped.formResponses).toBeUndefined();
   });

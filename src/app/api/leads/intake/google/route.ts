@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { findActiveCredentialBySource, getDecryptedConnectorSecrets } from "@/services/lead-credentials.service";
 import { recordInboundWebhookEvent, enqueueInboundWebhookEvent } from "@/services/lead-webhook-events.service";
-import { verifyGoogleWebhookKey, type GoogleLeadWebhookPayload } from "@/lib/lead-source-mapping";
+import {
+  verifyGoogleWebhookKey,
+  quoteLargeIntegerIds,
+  toExternalId,
+  type GoogleLeadWebhookPayload,
+} from "@/lib/lead-source-mapping";
 import { checkLeadIntakeRateLimit } from "@/lib/lead-rate-limit";
 import { logLeadWebhookEvent } from "@/lib/lead-observability";
 import type { Prisma } from "@/generated/prisma/client";
@@ -43,14 +48,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Payload demasiado grande." }, { status: 413 });
   }
 
+  // Los ids de 64 bits (campaign_id, form_id, ...) se citan antes de
+  // parsear para no perder precisión en silencio (ver
+  // quoteLargeIntegerIds).
   let body: GoogleLeadWebhookPayload;
   try {
-    body = JSON.parse(rawBody) as GoogleLeadWebhookPayload;
+    const parsed: unknown = JSON.parse(quoteLargeIntegerIds(rawBody));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return NextResponse.json({ message: "JSON inválido." }, { status: 400 });
+    }
+    body = parsed as GoogleLeadWebhookPayload;
   } catch {
     return NextResponse.json({ message: "JSON inválido." }, { status: 400 });
   }
 
-  if (!body.lead_id || !body.google_key) {
+  let leadId: string | undefined;
+  try {
+    leadId = toExternalId(body.lead_id, "lead_id");
+  } catch {
+    leadId = undefined;
+  }
+
+  if (!leadId || typeof body.google_key !== "string" || !body.google_key) {
     logLeadWebhookEvent({ correlationId, source: "GOOGLE", result: "INVALID_PAYLOAD", durationMs: Date.now() - startedAt });
     return NextResponse.json({ message: "Faltan campos requeridos (lead_id, google_key)." }, { status: 400 });
   }
@@ -94,8 +113,12 @@ export async function POST(request: NextRequest) {
     const { event } = await recordInboundWebhookEvent({
       source: "GOOGLE",
       integrationCredentialId: matchedCredentialId,
-      externalEventId: body.lead_id,
-      rawPayload: body as unknown as Prisma.InputJsonValue,
+      externalEventId: leadId,
+      // La google_key ya cumplió su función (autenticar esta petición);
+      // se REDACTA antes de guardar la evidencia para no dejar un
+      // secreto en claro en la base de datos. El resto del payload se
+      // conserva íntegro.
+      rawPayload: { ...body, google_key: "[REDACTED]" } as unknown as Prisma.InputJsonValue,
     });
     await enqueueInboundWebhookEvent(event.id);
     logLeadWebhookEvent({

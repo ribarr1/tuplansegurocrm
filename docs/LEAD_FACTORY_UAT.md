@@ -158,3 +158,25 @@ Separación explícita que debe mantenerse en cualquier reporte futuro: los punt
 
 - Los pasos 4–7 (asignar, convertir, cerrar, actividades) usan sesión de usuario normal (cookies), no la API de Postman — pruébalos siempre desde la app.
 - Ningún paso de esta guía debe tocar producción. Los pasos 8–9 requieren `npm run worker:leads` corriendo además de `npm run dev`.
+
+## 11. Google — payload real de la prueba (`is_test`) y recuperación del evento (2026-10-02)
+
+**Estado de verificación (sin ambigüedad):**
+
+| Qué | Estado |
+|---|---|
+| Fallo de Google con el payload recibido DESDE la plataforma (`campaignId: expected string, received number`, evento `8b77c063-75fe-4aca-b52f-68bff1c9bd53`) | **Error confirmado en producción** |
+| Corrección + regresión con el payload completo de esa prueba (fixture con `google_key` placeholder) en `src/lib/lead-source-adapters.regression.test.ts` (P–V), `scripts/lead-webhook-worker.regression.test.ts` (G1–G5) y `src/app/api/leads/intake/webhooks.routes.test.ts` (R1–R3) | Ejecutado, en verde, **solo local/base aislada** — aún no confirmado en producción |
+| Meta: tipos numéricos de `leadgen_id`/`page_id`, `state` fuera de catálogo, falla/reintento de Graph API | **Simulado** (mock de `fetch`; sin credenciales ni cuentas reales): `webhooks.routes.test.ts` (R4–R6), `lead-webhook-worker.regression.test.ts` (M1–M2) |
+| WEB: lead recibido desde Postman en producción | Exitoso (reportado por el negocio) — la ruta y `intakeLead` **no se modificaron** |
+| Meta desde la cuenta real | **Pendiente** |
+| Formulario web real (instalación del envío servidor-a-servidor y prueba) | **Pendiente** |
+
+**Comportamiento explícito con ese payload:**
+- `is_test=true` se procesa **como un lead normal** (se crea un Lead de fuente Google). Es la forma de comprobar la tubería completa con la prueba oficial. El lead de prueba (`FirstName LastName`) se cierra manualmente desde `/leads` (motivo "Datos inválidos") una vez verificado; no hay filtro automático de pruebas.
+- Nombre, correo y teléfono se mapean; `campaignId` se guarda como texto (`"23729418209"`).
+- **`REGION="California"` NO llena `residenceState`.** `REGION` no es un campo estándar mapeado, así que `Region`, `City` y `Postal Code` quedan visibles en "Respuestas del formulario". Aunque se configure el mapeo (en `/settings/lead-credentials` > credencial GOOGLE > "Mapear preguntas personalizadas" > Estado de residencia = `REGION`), `"California"` es un nombre completo y el CRM solo acepta códigos de dos letras (`CA`): **seguiría sin mapearse** (queda en las respuestas; no se inventa la traducción). Solo un valor ya en código (`CA`) se mapearía. No se amplió el alcance con una tabla de traducción de nombres.
+- No hay consentimiento en el payload: `consentGiven` queda sin informar (`null`), nunca `true`/`false` inventado.
+- `google_key` no aparece en lead, `formResponses`, logs ni respuestas; para eventos nuevos tampoco en `rawPayload` (queda `"[REDACTED]"`).
+
+**Validación real pendiente**: tras desplegar, usar "Enviar datos de prueba" de Google Ads de nuevo (nuevo `lead_id`) y confirmar `PROCESSED` + un solo lead. Esa prueba real no se ha ejecutado.

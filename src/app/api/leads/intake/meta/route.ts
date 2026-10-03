@@ -4,7 +4,7 @@ import { findActiveCredentialBySource, getDecryptedConnectorSecrets } from "@/se
 import { recordInboundWebhookEvent, enqueueInboundWebhookEvent } from "@/services/lead-webhook-events.service";
 import { checkLeadIntakeRateLimit } from "@/lib/lead-rate-limit";
 import { logLeadWebhookEvent } from "@/lib/lead-observability";
-import { timingSafeEqualStrings, verifyMetaSignature } from "@/lib/lead-source-mapping";
+import { timingSafeEqualStrings, verifyMetaSignature, quoteLargeIntegerIds, toExternalId } from "@/lib/lead-source-mapping";
 import type { Prisma } from "@/generated/prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -58,8 +58,9 @@ export async function GET(request: NextRequest) {
 type MetaWebhookBody = {
   object?: string;
   entry?: {
-    id?: string; // page_id
-    changes?: { field?: string; value?: { leadgen_id?: string; page_id?: string; form_id?: string; created_time?: number; ad_id?: string; adgroup_id?: string } }[];
+    id?: string | number; // page_id
+    // Meta envía estos ids como NÚMERO (docs oficiales) — ver toExternalId.
+    changes?: { field?: string; value?: { leadgen_id?: string | number; page_id?: string | number; form_id?: string | number; created_time?: number; ad_id?: string | number; adgroup_id?: string | number } }[];
   }[];
 };
 
@@ -107,7 +108,13 @@ export async function POST(request: NextRequest) {
 
   let body: MetaWebhookBody;
   try {
-    body = JSON.parse(rawBody) as MetaWebhookBody;
+    // La firma ya se verificó contra el cuerpo CRUDO; citar los ids
+    // grandes solo afecta al parseo posterior (ver quoteLargeIntegerIds).
+    const parsed: unknown = JSON.parse(quoteLargeIntegerIds(rawBody));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
+    }
+    body = parsed as MetaWebhookBody;
   } catch {
     logLeadWebhookEvent({ correlationId, source: "META", result: "INVALID_PAYLOAD", durationMs: Date.now() - startedAt });
     return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
@@ -131,9 +138,18 @@ export async function POST(request: NextRequest) {
   // procesa bajo una credencial ajena.
   const acceptedEventIds: string[] = [];
   for (const change of leadgenChanges) {
-    const pageId = change.value?.page_id;
-    if (matchedPageId && pageId && pageId !== matchedPageId) continue;
-    const leadgenId = change.value?.leadgen_id;
+    // page_id/leadgen_id llegan como número: se comparan y guardan
+    // como string (antes, `number !== string` descartaba EN SILENCIO
+    // todo evento con page_id configurado).
+    let pageId: string | undefined;
+    let leadgenId: string | undefined;
+    try {
+      pageId = toExternalId(change.value?.page_id, "page_id");
+      leadgenId = toExternalId(change.value?.leadgen_id, "leadgen_id");
+    } catch {
+      return NextResponse.json({ error: "Identificador inválido." }, { status: 400 });
+    }
+    if (matchedPageId && pageId && pageId !== matchedPageId.trim()) continue;
     if (!leadgenId) continue;
 
     try {

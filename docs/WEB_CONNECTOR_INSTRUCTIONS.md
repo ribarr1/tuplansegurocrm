@@ -82,3 +82,7 @@ Los clics de Google Ads/Meta que llevan a un visitante al formulario de la web (
 ## Estado de esta integración
 
 **API preparada + instrucciones entregadas — NO implementado en la web real.** `POST /api/leads/intake` ya está en producción (`https://crm.tuplansegurousa.com/api/leads/intake`) y probado contra el contrato descrito aquí (ver `docs/LEAD_FACTORY_UAT.md`, secciones 1–7). Lo que falta, y sigue pendiente, es: instalar el envío servidor-a-servidor de este documento en el servidor real de tuplansegurousa.com, y probarlo de extremo a extremo contra producción (un envío real del formulario de la web → lead visible en el CRM). Este repositorio no tiene acceso al código de la web — si se comparte ese acceso, se puede ayudar a implementarlo directamente; mientras tanto, estas instrucciones son el entregable completo para que el equipo de la web lo instale. **Recordatorio no negociable**: la credencial nunca debe exponerse en el navegador (ver regla de seguridad arriba).
+
+## Contrato estricto (revisado 2026-10-02 — sin cambios de código)
+
+La ruta no convierte tipos: `campaignId`/`campaignName`/`externalId`/`idempotencyKey` deben ser **strings** (un número devuelve `400`), y los campos opcionales vacíos deben **omitirse** (no enviar `null`; `JSON.stringify` ya omite `undefined`). `residenceState` debe ser un código de 2 letras (`FL`), `productInterest` uno de los valores del catálogo (`HEALTH`, `LIFE`, `DENTAL`…). El envío desde Postman a producción ya fue exitoso; la instalación en la web real sigue pendiente.

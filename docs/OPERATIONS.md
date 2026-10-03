@@ -117,3 +117,24 @@ El worker (`npm run worker:leads`, equivalente a `node --require ./scripts/serve
 ## 4. Alcance real del conector Web (§5)
 
 El conector Web **NO está instalado en el servidor de la web real** — lo que existe es: (a) `POST /api/leads/intake` en este CRM, ya en producción y probado contra el mismo contrato que las secciones 1–7 del UAT verifican, y (b) `docs/WEB_CONNECTOR_INSTRUCTIONS.md`, instrucciones + ejemplo de código servidor-a-servidor entregados para que se instalen en el servidor de la página web de TuPlanSeguro USA. **La instalación de ese envío en el servidor web real, y su prueba completa de extremo a extremo, siguen pendientes** — no se declaran hechas en ningún reporte de este trabajo. La credencial de ese conector (`CRM_LEAD_WEB_CREDENTIAL`) **nunca debe exponerse en el navegador** — vive únicamente en el entorno del servidor que hace el `POST`, nunca en código/HTML/JS servido al cliente, reiterado también en `docs/WEB_CONNECTOR_INSTRUCTIONS.md`.
+
+## 5. Despliegue de la corrección de conectores y recuperación del evento de Google (procedimiento — NO ejecutado)
+
+Contexto: la corrección vive en `src/lib/lead-source-mapping.ts`, las rutas `/api/leads/intake/google` y `/meta`, y `scripts/lead-webhook-worker.ts`. **No hay migraciones nuevas, ni variables de entorno nuevas, ni cambios de dependencias.** No se cambia `PII_ENCRYPTION_KEY`.
+
+### Desplegar (con el script de despliegue existente del VPS, sin reemplazarlo)
+1. Con el commit de la corrección ya en `main`, ejecutar el despliegue habitual. **Deben actualizarse AMBOS procesos con la misma imagen/código: la app (`crm`) y el worker `tuplanseguro-leads-worker`.** Si solo se reconstruye la app, el worker seguiría procesando con el mapeo viejo y fallando igual.
+2. `npx prisma migrate status` (o equivalente del flujo): debe indicar que no hay migraciones pendientes (028–031 ya aplicadas).
+3. Revisar los logs del worker: `Worker iniciado — escuchando trabajos.`
+
+### Recuperar el evento `8b77c063-75fe-4aca-b52f-68bff1c9bd53`
+Reglas: **no borrar el evento, no reemplazar su payload, no crear otro en su lugar.** El procesamiento depende de `externalId = lead_id`, así que un reintento nunca duplica el lead (`intakeLead` es idempotente; probado en `lead-webhook-events.service.test.ts::C` y `scripts/lead-webhook-worker.regression.test.ts::G2`).
+
+- **Si el evento sigue `FAILED`/pendiente de reintento automático** (intentos < 8): el trabajo de pg-boss está durable en `lead_queue` y se reintenta solo con espera exponencial (≈15 s base). Al arrancar el worker nuevo, el siguiente reintento usa el código corregido y lo procesa. **No hace falta ninguna acción.**
+- **Si ya llegó a `DEAD_LETTER`** (8 intentos) o el reintento automático no ocurre: un ADMIN entra a `/settings/lead-credentials` > sección "Eventos de webhook fallidos / pendientes de revisión", localiza el evento (fuente GOOGLE, `externalEventId` = el `lead_id` del payload) y pulsa **Reintentar**. Esto (`retryWebhookEvent`) lo vuelve a `PENDING`, limpia `lastError`, registra el audit `LEAD_WEBHOOK_EVENT_RETRY` y lo encola. No se puede reintentar un evento ya `PROCESSED`. Si por algún motivo no se encola de inmediato, el barrido cada minuto lo recoge.
+- **Verificar que terminó con un solo lead**:
+  1. El evento desaparece de la lista de fallidos.
+  2. En `/leads`, buscar `FirstName LastName`: debe haber **un** lead, fuente Google, campaña `23729418209`, y en "Respuestas del formulario": City, Postal Code, Region.
+  3. Opcional, solo lectura (`psql`, no modifica nada): `SELECT status, attempts, "createdLeadId", "lastError" FROM lead_inbound_webhook_events WHERE id = '8b77c063-75fe-4aca-b52f-68bff1c9bd53';` (esperado `PROCESSED` y `createdLeadId` no nulo) y `SELECT count(*) FROM leads WHERE "externalId" = '<lead_id del payload>';` (esperado `1`).
+  4. Cerrar el lead de prueba (`is_test`) manualmente si no se quiere conservar.
+- **Nota de seguridad**: ese evento conserva la `google_key` real en su `rawPayload` (se guardó antes de la redacción). Ver `docs/SECURITY.md` ("`google_key` y evidencia…") para decidir si rotarla.
